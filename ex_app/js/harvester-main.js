@@ -9,7 +9,6 @@
 	// The recorder's WebSocket goes to HaRP directly (AppAPI's PHP proxy has none).
 	const RECORDER = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${OC.webroot || ''}/exapps/harvester/ws/record`
 	const VIEWPORT = { width: 1280, height: 800 }
-	const STATUS = { ok: '✔', failed: '✖', auth: '🔒' }
 	const BLANK = { name: '', source: 'site', target: '/Harvester', schedule: '0 6 * * *', options: {}, tags: [], enabled: true }
 	let sources = []
 	let presets = []
@@ -59,19 +58,24 @@
 	async function renderJobs(root) {
 		const jobs = await api('GET', '/jobs')
 		const table = el('table', { class: 'harvester-jobs' },
-			el('tr', {}, ...['Job', 'Folder', 'Schedule', 'Tags', 'Last run', ''].map((h) => el('th', { text: h }))))
+			el('thead', {}, el('tr', {}, ...['Job', 'Folder', 'Schedule', 'Tags', 'Last run', ''].map((h) => el('th', { text: h })))))
+		const body = el('tbody', {})
 		for (const job of jobs) {
-			const status = job.running ? '⏳ running' : `${STATUS[job.last_status] || ''} ${job.last_message || ''}`
-			table.append(el('tr', {},
-				el('td', { text: job.enabled ? job.name : `${job.name} (paused)` }),
-				el('td', { text: job.target }),
-				el('td', { text: job.schedule }),
-				el('td', { text: job.tags.join(', ') }),
-				el('td', { text: `${when(job.last_run)} ${status}` }),
+			const state = job.running ? 'running' : job.last_status || 'never'
+			const label = { running: 'Running', ok: 'OK', failed: 'Failed', auth: 'Sign-in refused', never: 'Not run yet' }[state] || state
+			body.append(el('tr', {},
+				el('td', {}, el('strong', { text: job.name }), job.enabled ? '' : el('span', { class: 'harvester-chip', text: 'paused' })),
+				el('td', { class: 'harvester-muted', text: job.target }),
+				el('td', {}, el('code', { text: job.schedule })),
+				el('td', {}, ...job.tags.map((tag) => el('span', { class: 'harvester-chip', text: tag }))),
 				el('td', {},
+					el('span', { class: `harvester-status harvester-status-${state}`, text: label }),
+					el('div', { class: 'harvester-muted', text: job.last_run ? `${when(job.last_run)} · ${job.last_message || ''}` : '' })),
+				el('td', { class: 'harvester-actions' },
 					el('button', { text: 'Run now', onclick: async () => { await api('POST', `/jobs/${job.id}/run`); show(root) } }),
 					el('button', { text: 'Edit', onclick: () => renderForm(root, job) }),
 					el('button', {
+						class: 'error',
 						text: 'Delete',
 						onclick: async () => {
 							if (confirm(`Delete ${job.name}? The files it downloaded stay.`)) {
@@ -81,11 +85,16 @@
 						},
 					}))))
 		}
+		table.append(body)
 		root.replaceChildren(
-			el('h2', { text: 'Harvester' }),
-			el('p', { text: 'Fetches files from websites into your folders on a schedule, and tags them.' }),
-			jobs.length ? table : el('p', { text: 'No jobs yet.' }),
-			el('button', { class: 'primary', text: 'New job', onclick: () => renderStart(root) }))
+			el('div', { class: 'harvester-header' },
+				el('div', {},
+					el('h2', { text: 'Harvester' }),
+					el('p', { class: 'harvester-muted', text: 'Fetches files from websites into your folders on a schedule, and tags them.' })),
+				el('button', { class: 'primary', text: 'New job', onclick: () => renderStart(root) })),
+			jobs.length ? table : el('div', { class: 'harvester-empty' },
+				el('p', { text: 'No jobs yet.' }),
+				el('p', { class: 'harvester-muted', text: 'A job fetches the files of one site: record it in the browser, or start from a template.' })))
 	}
 
 	// A new job: blank (recorded in the browser) or from a template with its parameters.
@@ -365,7 +374,7 @@
 		field('Folder', target, 'In your files, e.g. /Magazines/iX.'),
 		field('Schedule', schedule, 'Cron: minute hour day month weekday (UTC). 0 6 * * * is daily at 06:00.'),
 		field('Tags', tags, 'Comma-separated; may use the link’s values, e.g. {year}. A tag whose value a file lacks is left out.'),
-		field('Enabled', enabled),
+		el('label', { class: 'harvester-check' }, enabled, el('span', { text: 'Enabled: runs on its schedule' })),
 		options,
 		error,
 		el('button', { class: 'primary', type: 'submit', text: 'Save' }),
@@ -383,30 +392,62 @@
 		}
 	}
 
+	// Nextcloud's look: its colours, radii and spacing variables, its buttons and inputs.
 	document.head.append(el('style', {}, `
-		#harvester { padding: 16px 24px; max-width: 1500px; }
-		#harvester table { width: 100%; border-collapse: collapse; margin: 12px 0; }
-		#harvester th, #harvester td { text-align: left; padding: 6px; border-bottom: 1px solid var(--color-border); }
-		#harvester .harvester-field { display: flex; flex-direction: column; margin: 8px 0; max-width: 700px; }
+		#harvester {
+			flex: 1 1 auto; min-width: 0; overflow: auto;
+			background: var(--color-main-background); color: var(--color-main-text);
+			border-radius: var(--body-container-radius, var(--border-radius-large));
+			padding: calc(var(--default-grid-baseline, 4px) * 6) calc(var(--default-grid-baseline, 4px) * 8);
+		}
+		#harvester h2 { margin: 0 0 4px; font-size: 1.5em; }
+		#harvester h3 { margin: 16px 0 8px; font-size: 1.15em; }
+		#harvester .harvester-muted { color: var(--color-text-maxcontrast); }
+		#harvester .harvester-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+		#harvester .harvester-header p { margin: 0; }
+		#harvester .harvester-empty { padding: 48px 0; text-align: center; }
+		#harvester table { width: 100%; border-collapse: collapse; }
+		#harvester th { text-align: start; font-weight: normal; color: var(--color-text-maxcontrast); padding: 8px; border-bottom: 1px solid var(--color-border); }
+		#harvester td { padding: 10px 8px; border-bottom: 1px solid var(--color-border); vertical-align: top; }
+		#harvester tbody tr:hover { background: var(--color-background-hover); }
+		#harvester .harvester-actions { white-space: nowrap; text-align: end; }
+		#harvester .harvester-actions button { margin-inline-start: 4px; }
+		#harvester .harvester-chip { display: inline-block; margin: 0 4px 2px 0; padding: 0 8px; border-radius: var(--border-radius-pill, 999px); background: var(--color-background-dark); font-size: 0.9em; }
+		#harvester .harvester-status { display: inline-block; padding: 0 8px; border-radius: var(--border-radius-pill, 999px); font-size: 0.9em; background: var(--color-background-dark); }
+		#harvester .harvester-status-ok { background: var(--color-success); color: var(--color-success-text, #fff); }
+		#harvester .harvester-status-failed, #harvester .harvester-status-auth { background: var(--color-error); color: var(--color-error-text, #fff); }
+		#harvester .harvester-status-running { background: var(--color-primary-element); color: var(--color-primary-element-text); }
+		#harvester .harvester-field { display: flex; flex-direction: column; gap: 2px; margin: 12px 0; max-width: 700px; }
+		#harvester .harvester-field > span { font-weight: bold; }
+		#harvester .harvester-check { display: flex; align-items: center; gap: 8px; margin: 12px 0; }
 		#harvester .harvester-field small { color: var(--color-text-maxcontrast); }
-		#harvester fieldset { border: 1px solid var(--color-border); padding: 8px 12px; margin: 12px 0; }
-		#harvester .harvester-error { color: var(--color-error); }
-		#harvester .harvester-credentials { margin-top: 24px; }
+		#harvester .harvester-field input:not([type=checkbox]), #harvester .harvester-field select, #harvester .harvester-field textarea { width: 100%; margin: 0; }
+		#harvester fieldset { border: 1px solid var(--color-border); border-radius: var(--border-radius-large); padding: 8px 16px; margin: 16px 0; max-width: 760px; }
+		#harvester legend { padding: 0 4px; font-weight: bold; }
+		#harvester form > button, #harvester .harvester-card button { margin: 8px 8px 0 0; }
+		#harvester .harvester-error { color: var(--color-error-text, var(--color-error)); }
+		#harvester .harvester-credentials { margin-top: 24px; max-width: 760px; }
 		#harvester .harvester-card { border: 1px solid var(--color-border); border-radius: var(--border-radius-large); padding: 12px 16px; margin: 12px 0; max-width: 760px; }
-		#harvester .harvester-recipe, #harvester .harvester-pattern { font-family: monospace; width: 100%; }
-		#harvester .harvester-toolbar { display: flex; gap: 4px; margin: 8px 0; }
-		#harvester .harvester-url { flex: 1; }
-		#harvester .harvester-stage { display: flex; gap: 12px; align-items: flex-start; }
-		#harvester .harvester-screen { flex: 3; min-width: 0; aspect-ratio: 1280 / 800; border: 1px solid var(--color-border); background: var(--color-background-dark); cursor: crosshair; }
+		#harvester .harvester-recipe, #harvester .harvester-pattern { font-family: var(--font-face-monospace, monospace); }
+		#harvester .harvester-toolbar { display: flex; gap: 4px; margin: 8px 0; align-items: center; }
+		#harvester .harvester-url { flex: 1; margin: 0; }
+		#harvester .harvester-modes label { margin-inline-end: 12px; }
+		#harvester .harvester-stage { display: flex; gap: 12px; align-items: flex-start; margin-top: 8px; }
+		#harvester .harvester-screen { flex: 3; min-width: 0; aspect-ratio: 1280 / 800; border: 1px solid var(--color-border); border-radius: var(--border-radius); background: var(--color-background-dark); cursor: crosshair; }
 		#harvester .harvester-screen:focus { outline: 2px solid var(--color-primary-element); }
 		#harvester .harvester-steps { flex: 1; min-width: 300px; max-height: 80vh; overflow: auto; overflow-wrap: anywhere; font-size: 90%; }
-		#harvester .harvester-level { border-left: 3px solid var(--color-primary-element); padding-left: 8px; margin: 8px 0; }
-		#harvester .harvester-value { background: var(--color-primary-element-light); border-radius: 4px; padding: 0 4px; margin-right: 4px; font-family: monospace; }
+		#harvester .harvester-level { border-inline-start: 3px solid var(--color-primary-element); padding-inline-start: 8px; margin: 8px 0; }
+		#harvester .harvester-value { background: var(--color-primary-element-light); border-radius: 4px; padding: 0 4px; margin-inline-end: 4px; font-family: var(--font-face-monospace, monospace); }
 	`))
 
 	document.addEventListener('DOMContentLoaded', async () => {
 		const root = el('div', { id: 'harvester' })
-		;(document.querySelector('#content') || document.body).append(root)
+		// AppAPI's page is an empty <div id="content"> inside Nextcloud's <main id="content">: with
+		// Nextcloud's styles for #content it is a fixed box over the page, and anything next to it
+		// is squeezed and covered. Harvester takes its place as the page's content area.
+		const placeholder = document.querySelector('#content #content')
+		if (placeholder) placeholder.replaceWith(root)
+		else (document.querySelector('#content') || document.body).append(root)
 		;[sources, presets] = await Promise.all([api('GET', '/sources'), api('GET', '/presets')])
 		show(root)
 	})
