@@ -175,3 +175,62 @@ def test_a_bad_pattern_is_refused_and_saving_needs_no_network():
     with pytest.raises(SourceError, match="regular expression"):
         Releases({"repository": "https://github.com/o/r", "asset_pattern": "("}, {}, None)
     Releases({"repository": "https://github.com/o/r"}, {}, None)
+
+
+def gitlab_site(seen_headers: list):
+    """gitlab.example: Forgejo's API knows nothing (404), GitLab's lists a project's releases."""
+    releases = [
+        {
+            "tag_name": "v2.0.0",
+            "name": "2.0",
+            "released_at": "2026-09-01T10:00:00Z",
+            "assets": {
+                "links": [
+                    {
+                        "id": 7,
+                        "name": "tool-2.0.0.tar.gz",
+                        "url": "https://gitlab.example/x",
+                        "direct_asset_url": (
+                            "https://gitlab.example/group/sub/tool/-/releases/v2.0.0/downloads/tool.tar.gz"
+                        ),
+                    },
+                    {"id": 8, "name": "notes.txt", "url": "https://gitlab.example/y"},
+                ],
+                "sources": [{"format": "zip", "url": "https://gitlab.example/archive.zip"}],
+            },
+        }
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_headers.append(dict(request.headers))
+        if request.url.path.startswith("/api/v1/"):
+            return httpx.Response(404, json={"message": "not found"})
+        if request.url.raw_path.startswith(b"/api/v4/projects/group%2Fsub%2Ftool/releases"):
+            return httpx.Response(200, json=releases)
+        return httpx.Response(404)
+
+    return handler
+
+
+def test_gitlab_projects_in_groups_with_their_asset_links():
+    headers: list = []
+    client = httpx.Client(transport=httpx.MockTransport(gitlab_site(headers)))
+    gitlab = Releases(
+        {"repository": "https://gitlab.example/group/sub/tool/-/releases", "asset_pattern": r"\.tar\.gz$"},
+        {"token": "glpat-secret"},
+        client,
+    )
+    items = list(gitlab.items(lambda key: False))
+    assert [item.path for item in items] == ["v2.0.0/tool-2.0.0.tar.gz"], "the archives of the sources left out"
+    assert items[0].url.endswith("/downloads/tool.tar.gz") and items[0].values["year"] == 2026
+    assert gitlab.forge == "gitlab", "an unknown server: Forgejo's API asked first, then GitLab's"
+    assert headers[-1].get("private-token") == "glpat-secret" and "authorization" not in headers[-1]
+
+
+def test_gitlab_com_and_codeberg_are_known_by_their_names():
+    gitlab = Releases({"repository": "https://gitlab.com/group/tool"}, {}, None)
+    assert gitlab.forge == "gitlab"
+    assert gitlab.api(1) == "https://gitlab.com/api/v4/projects/group%2Ftool/releases?per_page=30&page=1"
+    codeberg = Releases({"repository": "https://codeberg.org/forgejo/forgejo"}, {}, None)
+    assert codeberg.forge == "forgejo"
+    assert codeberg.api(1) == "https://codeberg.org/api/v1/repos/forgejo/forgejo/releases?limit=30&page=1"

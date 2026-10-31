@@ -1,4 +1,4 @@
-"""The assets of a repository's releases, on GitHub or on a Forgejo or Gitea server.
+"""The assets of a repository's releases, on GitHub, on GitLab or on a Forgejo or Gitea server.
 
 The releases come from the forge's API, newest first; drafts never, prereleases when the job asks.
 A token (the job's account) is needed for private repositories, and avoids GitHub's low limit for
@@ -12,7 +12,7 @@ import re
 import time
 from collections.abc import Callable, Iterator
 from typing import BinaryIO
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import httpx
 
@@ -23,20 +23,25 @@ from .base import AuthError, Item, Option, Source, SourceError
 from .download import Response
 
 PER_PAGE = 30
+# The forges: auto finds it by the host's name, or by asking an unknown server's API.
+FORGES = ("auto", "github", "gitlab", "forgejo")
 
 
 class Releases(Source):
     """The assets of a repository's releases."""
 
     name = "releases"
-    title = "Release downloads (GitHub, Forgejo)"
-    description = "The files attached to a repository's releases on GitHub, or on a Forgejo or Gitea server."
+    title = "Release downloads (GitHub, GitLab, Codeberg, Forgejo)"
+    description = (
+        "The files attached to a repository's releases on GitHub, GitLab or Codeberg, or on a Forgejo, Gitea or "
+        "GitLab server of your own."
+    )
     credentials = ("token",)
     options = {
         "repository": Option(
             "Repository",
             "",
-            "Its address, e.g. https://github.com/owner/name.",
+            "Its address, e.g. https://github.com/owner/name or https://gitlab.com/group/subgroup/name.",
             kind="url",
             placeholder="https://github.com/owner/name",
         ),
@@ -57,17 +62,33 @@ class Releases(Source):
             values=("repo", "tag", "version", "name", "filename", "stem", "ext", "year", "month", "day"),
         ),
         "max_pages": Option("Pages", 1, "At most this many pages of 30 releases (the newest first).", minimum=1),
+        "forge": Option(
+            "Forge",
+            "auto",
+            "auto: github.com, gitlab.com and codeberg.org by their name, another server asked (Forgejo or Gitea, "
+            "then GitLab).",
+            choices=FORGES,
+        ),
         **download.DOWNLOAD_OPTIONS,
     }
     pause = 1.0
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        repository = str(self.settings["repository"]).strip().rstrip("/").removesuffix(".git")
+        # A GitLab page's address names the project before "/-/" (".../-/releases").
+        repository = (
+            str(self.settings["repository"]).strip().split("/-/", maxsplit=1)[0].rstrip("/").removesuffix(".git")
+        )
         parsed = urlparse(repository)
         parts = [part for part in parsed.path.split("/") if part]
+        self.host = (parsed.hostname or "").lower()
+        self.forge = self._forge(str(self.settings["forge"]))
         problems = []
-        if not allowed_url(repository) or len(parts) != 2:
+        if self.forge not in FORGES:
+            problems.append(f"unknown forge {self.settings['forge']}")
+        # GitLab's projects may sit in groups of groups (group/subgroup/project).
+        enough = len(parts) >= 2 if self.forge in ("gitlab", "auto") else len(parts) == 2
+        if not allowed_url(repository) or not enough:
             problems.append(f"{repository or 'no repository'} is not a repository's address (https://host/owner/name)")
         try:
             self.pattern = re.compile(str(self.settings["asset_pattern"]))
@@ -76,16 +97,35 @@ class Releases(Source):
         problems += download.problems(self.settings)
         if problems:
             raise SourceError("; ".join(problems))
-        self.host = (parsed.hostname or "").lower()
-        self.owner, self.repo = parts
-        self.github = self.host in ("github.com", "www.github.com")
+        self.project = "/".join(parts)
+        self.owner, self.repo = "/".join(parts[:-1]), parts[-1]
         self.token = str(self.secrets.get("token", "") or "").strip()
         self.sleep: Callable[[float], None] = time.sleep
+
+    def _forge(self, chosen: str) -> str:
+        """The forge: chosen, or by the host's name (auto stays auto for another server)."""
+        if chosen != "auto":
+            return chosen
+        if self.host in ("github.com", "www.github.com"):
+            return "github"
+        if self.host in ("gitlab.com", "www.gitlab.com"):
+            return "gitlab"
+        if self.host in ("codeberg.org", "gitea.com"):
+            return "forgejo"  # Codeberg runs Forgejo; gitea.com, Gitea: the same API
+        return "auto"
+
+    @property
+    def github(self) -> bool:
+        """Whether the repository is on GitHub."""
+        return self.forge == "github"
 
     def api(self, page: int) -> str:
         """The page of the repository's releases."""
         if self.github:
             return f"https://api.github.com/repos/{self.owner}/{self.repo}/releases?per_page={PER_PAGE}&page={page}"
+        if self.forge == "gitlab":
+            project = quote(self.project, safe="")
+            return f"https://{self.host}/api/v4/projects/{project}/releases?per_page={PER_PAGE}&page={page}"
         return f"https://{self.host}/api/v1/repos/{self.owner}/{self.repo}/releases?limit={PER_PAGE}&page={page}"
 
     def headers(self, accept: str = "application/json") -> dict[str, str]:
@@ -94,22 +134,42 @@ class Releases(Source):
         if self.github:
             headers["X-GitHub-Api-Version"] = "2022-11-28"
         if self.token:
-            headers["Authorization"] = f"Bearer {self.token}" if self.github else f"token {self.token}"
+            if self.forge == "gitlab":
+                headers["PRIVATE-TOKEN"] = self.token
+            else:
+                headers["Authorization"] = f"Bearer {self.token}" if self.github else f"token {self.token}"
         return headers
+
+    def resolve(self) -> httpx.Response | None:
+        """An unknown server's forge: Forgejo or Gitea when its API knows the repository, else
+        GitLab when its API knows the project. Returns the answer it got: the first page."""
+        if self.forge != "auto":
+            return None
+        assert self.client is not None
+        self.forge = "forgejo"
+        answer = self.client.get(self.api(1), headers=self.headers())
+        if answer.status_code != 404:
+            return answer
+        self.forge = "gitlab"
+        answer = self.client.get(self.api(1), headers=self.headers())
+        if answer.status_code == 404:
+            raise SourceError(f"neither a Forgejo, Gitea nor GitLab repository at {self.host}/{self.project}")
+        return answer
 
     def releases(self) -> Iterator[dict]:
         """The repository's releases, newest first, page after page."""
         assert self.client is not None
+        first = self.resolve()
         for page in range(1, int(self.settings["max_pages"]) + 1):
-            response = self.client.get(self.api(page), headers=self.headers())
+            response = (
+                first if page == 1 and first is not None else self.client.get(self.api(page), headers=self.headers())
+            )
             if response.status_code == 403 and response.headers.get("x-ratelimit-remaining") == "0":
                 raise SourceError("GitHub's limit for requests is reached: try later, or set a token")
             if response.status_code in (401, 403):
                 raise AuthError(f"{self.host} refused the token ({response.status_code})")
             if response.status_code == 404:
-                raise SourceError(
-                    f"no repository {self.owner}/{self.repo} on {self.host} (a private one needs a token)"
-                )
+                raise SourceError(f"no repository {self.project} on {self.host} (a private one needs a token)")
             response.raise_for_status()
             found = response.json()
             if not isinstance(found, list):
@@ -129,14 +189,31 @@ class Releases(Source):
                 "version": tag[1:] if re.match(r"v\d", tag) else tag,
                 "name": str(release.get("name") or tag),
             }
-            published = str(release.get("published_at") or release.get("created_at") or "")
+            published = str(
+                release.get("published_at") or release.get("released_at") or release.get("created_at") or ""
+            )
             date = re.match(r"(\d{4})-(\d{2})-(\d{2})", published)
             if date:
                 values |= {"year": int(date[1]), "month": int(date[2]), "day": int(date[3])}
-            for asset in release.get("assets") or []:
+            for asset in self.assets(release):
                 item = self.asset(asset, values)
                 if item and not seen(item.key):
                     yield item
+
+    def assets(self, release: dict) -> list[dict]:
+        """A release's files: GitHub's and Forgejo's assets, GitLab's asset links (the archives of
+        the sources left out)."""
+        assets = release.get("assets") or []
+        if isinstance(assets, dict):  # GitLab: {"links": [...], "sources": [...]}
+            return [
+                {
+                    "name": link.get("name"),
+                    "browser_download_url": link.get("direct_asset_url") or link.get("url"),
+                    "id": link.get("id"),
+                }
+                for link in assets.get("links") or []
+            ]
+        return assets
 
     def asset(self, asset: dict, values: dict) -> Item | None:
         """The release's file, when its name matches the job's pattern."""
@@ -153,7 +230,7 @@ class Releases(Source):
         # A file of the job's type gets its extension when the name has none.
         path = download.with_extension(path, self.settings)
         return Item(
-            key=link or f"{self.host}/{self.owner}/{self.repo}/assets/{asset.get('id')}",
+            key=link or f"{self.host}/{self.project}/assets/{asset.get('id')}",
             path=path,
             # A private repository's GitHub links need the API and the token.
             url=str(asset.get("url") or link) if self.github and self.token else link,
@@ -168,6 +245,7 @@ class Releases(Source):
         # The token goes to the forge only, not to where a download link redirects (a storage host).
         if not (api_asset or urlparse(url).hostname == self.host):
             headers.pop("Authorization", None)
+            headers.pop("PRIVATE-TOKEN", None)
         return download.http(WithHeaders(self.client, headers))(url)
 
     def fetch(self, item: Item, dest: BinaryIO) -> None:
