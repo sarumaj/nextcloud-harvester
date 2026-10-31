@@ -7,7 +7,7 @@
 	<description><![CDATA[Jobs that fetch files from websites into a folder of your files, on a schedule, and
 tag them. A site is described by a recipe: recorded in the app's browser, which proposes the
 links' patterns and outlines what they match, or taken from a template (heise's magazines).]]></description>
-	<version>0.3.1</version>
+	<version>0.3.2</version>
 	<licence>agpl</licence>
 	<author>Dawid Ciepiela</author>
 	<namespace>Harvester</namespace>
@@ -25,7 +25,7 @@ links' patterns and outlines what they match, or taken from a template (heise's 
 		<docker-install>
 			<registry>ghcr.io/sarumaj</registry>
 			<image>harvester</image>
-			<image-tag>0.3.1</image-tag>
+			<image-tag>0.3.2</image-tag>
 		</docker-install>
 		<routes>
 			<route>
