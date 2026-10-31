@@ -59,21 +59,30 @@ A tag `vX.Y.Z` (the version and the image tag in `appinfo/info.xml`) runs
 - **Archive:** `harvester-X.Y.Z.tar.gz`, the source the image is built from, on the Forgejo
   release (signed with `APP_SIGNING_KEY` when set).
 - **Image:** built with Kaniko (the runners' job containers have no Docker socket and no user
-  namespaces, so neither Docker nor Buildah works there) and pushed as `X.Y.Z`, the same build
-  and digest, to every registry that has a token:
-  - Forgejo's `git.ciepiela.org/dawid/harvester`: secret `REGISTRY_TOKEN`, an access token of
-    `dawid` with the scope `write:package` (the job's own token may not push packages).
-  - GitHub's `ghcr.io/<owner>/harvester`: secret `GHCR_TOKEN`, a classic GitHub token with
-    `write:packages`; variables `GHCR_USER` (its account) and `GHCR_OWNER` (the account or
-    organisation the package belongs to). A new package on ghcr.io is private: make it
-    public once, under the package's settings, so that other servers can pull it.
+  namespaces, so neither Docker nor Buildah works there) and pushed as `X.Y.Z` and `latest`, the
+  same build and digest, to every registry that has a token:
+  - GitHub's `ghcr.io/<GHCR_OWNER>/harvester`, the one `info.xml` names (registry
+    `ghcr.io/sarumaj`, image `harvester`): secret `GHCR_TOKEN`, a classic GitHub token with
+    `write:packages`; variables `GHCR_USER` (its account) and `GHCR_OWNER`. A new package on
+    ghcr.io is private: make it public once, under the package's settings.
+  - Forgejo's `git.ciepiela.org/dawid/harvester`: secret `PACKAGES_TOKEN`, the owner's token with
+    `write:package` (the job's own token may not push packages).
 
   Without a token the image is still built (the build is checked), and not pushed.
 
-For the app store, `info.xml`'s `docker-install` must then name the public image (e.g.
-registry `ghcr.io`, image `<owner>/harvester`); the homelab's registration names its own
-local image regardless. Then the store's certificate for `harvester` signs the archive, and
-the release can be published there as the other apps are.
+**Taking the image from Forgejo instead of ghcr.io:** AppAPI pulls from the one registry in
+`info.xml` and has no fallback of its own, but a deploy daemon can map a registry to another,
+replacing only that part of the image's name. That is why the registry part holds the owner:
+
+```bash
+occ app_api:daemon:registry:add <daemon> --registry-from=ghcr.io/sarumaj --registry-to=git.ciepiela.org/dawid
+```
+
+The homelab registers the app with its own local image (`local.homelab/harvester`) and needs
+neither.
+
+For the app store, the store's certificate for `harvester` then signs the archive, and the
+release can be published there as the other apps are.
 
 ## Licence
 

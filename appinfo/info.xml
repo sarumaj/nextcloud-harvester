@@ -19,8 +19,11 @@ links' patterns and outlines what they match, or taken from a template (heise's 
 		<nextcloud min-version="32" max-version="35"/>
 	</dependencies>
 	<external-app>
+		<!-- The registry part includes the owner, so that an admin can take the same image from
+		     Forgejo instead: AppAPI replaces only this part when the deploy daemon maps registry
+		     ghcr.io/sarumaj to git.ciepiela.org/dawid (occ app_api:daemon:registry:add). -->
 		<docker-install>
-			<registry>local.homelab</registry>
+			<registry>ghcr.io/sarumaj</registry>
 			<image>harvester</image>
 			<image-tag>0.3.0</image-tag>
 		</docker-install>

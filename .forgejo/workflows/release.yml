@@ -8,18 +8,20 @@
 # that version, so a tag that differs from info.xml fails here.
 #
 # Registries (the same build, so the same digest, in each):
-# - Forgejo's: git.ciepiela.org/dawid/harvester, with REGISTRY_TOKEN, a token of the
-#   repository's owner with the scope write:package (the job's own token may not push
-#   packages: 401 reqPackageAccess, measured 2026-10-31);
 # - GitHub's: ghcr.io/<GHCR_OWNER>/harvester, with GHCR_TOKEN, a GitHub token (classic, scope
-#   write:packages) of GHCR_USER, both variables of the repository.
+#   write:packages) of GHCR_USER (variables). info.xml names this one: registry
+#   ghcr.io/<GHCR_OWNER>, image harvester (a mismatch is warned about);
+# - Forgejo's: git.ciepiela.org/<owner>/harvester, with PACKAGES_TOKEN, the owner's token with
+#   the scope write:package (the job's own token may not push packages: 401 reqPackageAccess,
+#   measured 2026-10-31). The fallback: an admin maps ghcr.io/<GHCR_OWNER> to
+#   git.ciepiela.org/<owner> (occ app_api:daemon:registry:add), as AppAPI replaces only the
+#   registry part of the image's name.
 # Without a token the image is built and checked, not pushed.
 #
-# Not published on the Nextcloud app store yet: info.xml still names the homelab's local
-# image (local.homelab/harvester).
+# Not published on the Nextcloud app store yet (no store certificate for harvester).
 #
 # Secrets: APP_SIGNING_KEY, the private key of an app store certificate for harvester (PEM);
-# REGISTRY_TOKEN and GHCR_TOKEN as above. Variables: GHCR_USER, GHCR_OWNER.
+# PACKAGES_TOKEN and GHCR_TOKEN as above. Variables: GHCR_USER, GHCR_OWNER.
 #
 # Run by hand ("tag": an existing tag) to make the release of a tag pushed before this
 # workflow existed: fj actions dispatch release.yml main -I tag=v0.3.0.
@@ -39,6 +41,9 @@ enable-email-notifications: true
 jobs:
   release:
     runs-on: docker
+    outputs:
+      registry: ${{ steps.version.outputs.registry }}
+      image: ${{ steps.version.outputs.image }}
     container: docker.io/library/debian:bookworm-slim
     timeout-minutes: 15
     env:
@@ -57,12 +62,17 @@ jobs:
           git checkout -q "$TAG"
 
       - name: Check the tag is the app's version and image tag
+        id: version
         run: |
           version=$(sed -n 's:.*<version>\(.*\)</version>.*:\1:p' appinfo/info.xml)
           image=$(sed -n 's:.*<image-tag>\(.*\)</image-tag>.*:\1:p' appinfo/info.xml)
           test "v$version" = "$TAG" || { echo "info.xml says version $version, the tag is $TAG"; exit 1; }
           test "$image" = "$version" || { echo "info.xml's image tag $image differs from its version $version"; exit 1; }
           echo "VERSION=$version" >> "$GITHUB_ENV"
+          {
+            echo "registry=$(sed -n 's:.*<registry>\(.*\)</registry>.*:\1:p' appinfo/info.xml)"
+            echo "image=$(sed -n 's:.*<image>\(.*\)</image>.*:\1:p' appinfo/info.xml)"
+          } >> "$GITHUB_OUTPUT"
 
       # The source the image is built from (what Git tracks, without CI and tests), in a
       # folder named as the app, reproducible from the tag.
@@ -114,8 +124,10 @@ jobs:
     steps:
       - name: Build and push the image
         env:
-          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          INFO_REGISTRY: ${{ needs.release.outputs.registry }}
+          INFO_IMAGE: ${{ needs.release.outputs.image }}
           GHCR_USER: ${{ vars.GHCR_USER }}
           GHCR_OWNER: ${{ vars.GHCR_OWNER }}
         run: |
@@ -125,13 +137,16 @@ jobs:
           auths="" destinations=""
           add() {  # registry, user, token, image
             auths="$auths${auths:+,}\"$1\":{\"auth\":\"$(printf '%s:%s' "$2" "$3" | base64 | tr -d '\n')\"}"
-            destinations="$destinations --destination=$4:$version"
-            echo "Pushing to $4:$version"
+            destinations="$destinations --destination=$4:$version --destination=$4:latest"
+            echo "Pushing to $4:$version and :latest"
           }
-          if [ -n "$REGISTRY_TOKEN" ]; then add "$host" "$OWNER" "$REGISTRY_TOKEN" "$host/$OWNER/harvester"; fi
           if [ -n "$GHCR_TOKEN" ] && [ -n "$GHCR_USER" ] && [ -n "$GHCR_OWNER" ]; then
             add ghcr.io "$GHCR_USER" "$GHCR_TOKEN" "ghcr.io/$GHCR_OWNER/harvester"
+            if [ "$INFO_REGISTRY/$INFO_IMAGE" != "ghcr.io/$GHCR_OWNER/harvester" ]; then
+              echo "::warning::info.xml names $INFO_REGISTRY/$INFO_IMAGE, the image goes to ghcr.io/$GHCR_OWNER/harvester"
+            fi
           fi
+          if [ -n "$PACKAGES_TOKEN" ]; then add "$host" "$OWNER" "$PACKAGES_TOKEN" "$host/$OWNER/harvester"; fi
           printf '{"auths":{%s}}' "$auths" > /kaniko/.docker/config.json
           if [ -z "$destinations" ]; then
             echo "::warning::No registry token: the image is built, not pushed"
