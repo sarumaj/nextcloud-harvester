@@ -127,6 +127,8 @@ class FakeNextcloud:  # pylint: disable=too-few-public-methods
         self.notifications = self
         self.app_cfg = type("Config", (), {"endpoint": "https://cloud.example/"})()
         self.user = ""
+        # Set by the tests that store files.
+        self.files = None
 
     def set_user(self, user):
         self.user = user
@@ -205,7 +207,7 @@ class FakeFiles:
 
 def test_the_nextcloud_library_takes_a_missing_file_for_one_to_download():
     nc = FakeNextcloud()
-    nc.files = FakeFiles()  # type: ignore[attr-defined]
+    nc.files = FakeFiles()
     library = NextcloudLibrary(nc)  # type: ignore[arg-type]
     job = Job(user="u", name="n", source="fake", target="/Zeitschriften/ix", schedule="* * * * *")
     seen: set[str] = set()
