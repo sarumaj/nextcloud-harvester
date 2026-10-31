@@ -137,8 +137,7 @@ class Releases(Source):
         except (KeyError, ValueError) as error:
             raise SourceError(str(error).strip("'\"")) from error
         # A file of the job's type gets its extension when the name has none.
-        if not posixpath.splitext(path)[1]:
-            path += download.extension(self.settings)
+        path = download.with_extension(path, self.settings)
         return Item(
             key=link or f"{self.host}/{self.owner}/{self.repo}/assets/{asset.get('id')}",
             path=path,

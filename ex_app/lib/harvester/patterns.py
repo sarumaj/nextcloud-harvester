@@ -59,16 +59,29 @@ def render(template: str, values: dict) -> str:
 
 
 def render_path(template: str, values: dict) -> str:
-    """The file's path from the template, without leaving the job's folder."""
-    return posixpath.normpath("/" + render(template, values)).lstrip("/")
+    """The file's path from the template, without leaving the job's folder; each part without
+    what Nextcloud refuses in a name (control characters, backslashes, leading or trailing
+    spaces and trailing dots)."""
+    path = posixpath.normpath("/" + render(template, values)).lstrip("/")
+    parts = []
+    for part in path.split("/"):
+        part = re.sub(r"[\x00-\x1f\x7f\\]+", " ", part).strip().rstrip(".").strip()
+        if part and part != ".":
+            parts.append(part)
+    return "/".join(parts)
+
+
+# Nextcloud's longest tag name.
+MAX_TAG = 64
 
 
 def render_tags(templates: list[str], values: dict) -> list[str]:
-    """The tags from their templates; one naming a value the file lacks is left out."""
+    """The tags from their templates; one naming a value the file lacks is left out, a long one
+    (an email's subject, say) shortened to what Nextcloud keeps."""
     tags = []
     for template in templates:
         try:
-            tag = render(template, values).strip()
+            tag = render(template, values).strip()[:MAX_TAG].strip()
         except (KeyError, ValueError):
             continue
         if tag:

@@ -77,14 +77,18 @@ class Gallery(Source):
             done = self.run(command, capture_output=True, text=True, timeout=LIST_TIMEOUT, check=False)
         except subprocess.TimeoutExpired as error:
             raise SourceError(f"gallery-dl took longer than {LIST_TIMEOUT} s for {self.url}") from error
-        if done.returncode != 0:
-            lines = [line for line in (done.stderr or "").splitlines() if line.strip()]
-            raise SourceError(f"gallery-dl: {lines[-1] if lines else f'exit {done.returncode}'}")
+        lines = [line for line in (done.stderr or "").splitlines() if line.strip()]
         try:
             messages = json.loads(done.stdout or "[]")
-        except ValueError as error:
-            raise SourceError(f"gallery-dl gave no JSON for {self.url}") from error
-        return messages if isinstance(messages, list) else []
+        except ValueError:
+            messages = None
+        # gallery-dl exits non-zero also after a partial failure (one page of many): what it did
+        # list is used; only an empty or broken listing is the job's failure.
+        if not isinstance(messages, list):
+            raise SourceError(f"gallery-dl gave no JSON for {self.url}" + (f": {lines[-1]}" if lines else ""))
+        if done.returncode != 0 and not messages:
+            raise SourceError(f"gallery-dl: {lines[-1] if lines else f'exit {done.returncode}'}")
+        return messages
 
     def items(self, seen: Callable[[str], bool]) -> Iterator[Item]:
         for message in self.listing():
@@ -93,7 +97,13 @@ class Gallery(Source):
             url, data = str(message[1]), message[2] if isinstance(message[2], dict) else {}
             if not allowed_url(url):
                 continue
-            key = f"{data.get('category', 'gallery')}:{data.get('id') or url}"
+            # The files of one post share its id and differ in num (Pixiv, DeviantArt, ...).
+            post = data.get("id")
+            key = (
+                f"{data.get('category', 'gallery')}:{post}:{data.get('num', 0)}"
+                if post
+                else f"{data.get('category', 'gallery')}:{url}"
+            )
             if seen(key):
                 continue
             yield self.item(key, url, data)

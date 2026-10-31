@@ -72,6 +72,13 @@ def extension(settings: dict) -> str:
     return FILE_TYPES[str(settings.get("file_type", "any"))][1]
 
 
+def with_extension(path: str, settings: dict) -> str:
+    """The path with the job's file type's extension when it does not end with it already (a
+    name with a dot of its own, "v2.0 notes", still gets ".pdf")."""
+    extension_ = extension(settings)
+    return path + extension_ if extension_ and not path.lower().endswith(extension_) else path
+
+
 def http(client: httpx.Client) -> Opener:
     """Downloads over HTTP with the client (its cookies, its headers)."""
 

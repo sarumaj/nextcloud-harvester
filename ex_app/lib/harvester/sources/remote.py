@@ -57,13 +57,18 @@ FORBIDDEN_KEY = re.compile(
     r"(_file|_files|_command|_path)$|^(ssh|ca_cert|client_cert|client_key|config_dir|cache_dir|temp_dir)$"
 )
 # Keys that name the remote's server: a URL or a host.
-SERVER_KEYS = ("url", "endpoint", "host", "auth", "auth_url", "server")
+SERVER_KEYS = ("url", "endpoint", "host", "auth", "auth_url", "server", "token_url", "storage_url")
 TIMEOUT = 900
 
 
 def parse_config(text: str) -> tuple[str, dict[str, str]]:
     """The remote's name and settings in an rclone configuration with one remote; SourceError when
     the configuration is not one, or names something the app may not reach."""
+    # configparser reads an indented line as the previous value's continuation, rclone as a key of
+    # its own: a command or a file could hide in a value. Every setting is one line, not indented.
+    for number, line in enumerate(text.splitlines(), 1):
+        if line[:1] in (" ", "\t") and line.strip():
+            raise SourceError(f"line {number} of the rclone configuration is indented: settings may not be")
     parser = configparser.ConfigParser(interpolation=None)
     try:
         parser.read_string(text)
@@ -80,6 +85,8 @@ def parse_config(text: str) -> tuple[str, dict[str, str]]:
     if kind not in ALLOWED_TYPES:
         raise SourceError(f"remotes of type {kind or '(none)'} are not allowed")
     for key, value in settings.items():
+        if "\n" in value or "\r" in value:
+            raise SourceError(f"the remote's setting {key} spans several lines")
         if FORBIDDEN_KEY.search(key):
             raise SourceError(f"the remote's setting {key} is not allowed (a file or a command of the app)")
         if key in SERVER_KEYS and value:
@@ -210,12 +217,16 @@ class Remote(Source):  # pylint: disable=too-many-instance-attributes
             yield Item(key=key, path=target, url=key, values=values)
 
     def fetch(self, item: Item, dest: BinaryIO) -> None:
-        with self.popen(self._command("cat", item.url), stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
-            assert process.stdout is not None and process.stderr is not None
-            for chunk in iter(lambda: process.stdout.read(1 << 20), b""):  # type: ignore[union-attr]
-                dest.write(chunk)
-            error = process.stderr.read().decode("utf-8", "replace")
-            if process.wait(timeout=TIMEOUT) != 0:
+        # rclone's messages go to a file: a pipe read only at the end could fill up and stall it.
+        with tempfile.TemporaryFile() as messages:
+            with self.popen(self._command("cat", item.url), stdout=subprocess.PIPE, stderr=messages) as process:
+                assert process.stdout is not None
+                for chunk in iter(lambda: process.stdout.read(1 << 20), b""):  # type: ignore[union-attr]
+                    dest.write(chunk)
+                code = process.wait(timeout=TIMEOUT)
+            if code != 0:
+                messages.seek(0)
+                error = messages.read().decode("utf-8", "replace")
                 raise SourceError(f"rclone could not read {item.url}: {last_line(error)}")
 
     def close(self) -> None:

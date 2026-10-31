@@ -18,7 +18,7 @@ from harvester.browser.recorder import Recorder
 from harvester.executor import Executor, credential_key, load_session, save_session, session_key
 from harvester.presets import PRESETS, make_job
 from harvester.runner import COMMON_OPTIONS
-from harvester.sources import SOURCES, SourceError
+from harvester.sources import FULL_PASS, SOURCES, SourceError
 from harvester.store import Job, Store
 
 STATE: dict = {}
@@ -94,8 +94,19 @@ def own_job(job_id: int, nc: NextcloudApp) -> Job:
     return job
 
 
+# Options that count something and must be at least 1 (0 would fetch nothing, ever).
+AT_LEAST_ONE = ("max_items", "max_pages", "max_entries")
+
+
 def checked(body: JobIn) -> JobIn:
     """The job, if its source accepts its options (a recipe that can run, for instance)."""
+    for name in AT_LEAST_ONE:
+        if name in body.options:
+            try:
+                if int(body.options[name]) < 1:
+                    raise ValueError
+            except (TypeError, ValueError) as error:
+                raise HTTPException(422, f"{name} must be a number of at least 1") from error
     try:
         SOURCES[body.source](body.options, {}, None).close()
     except SourceError as error:
@@ -155,7 +166,12 @@ def create_job(body: JobIn, nc: NC) -> dict:
 def update_job(job_id: int, body: JobIn, nc: NC) -> dict:
     """Changes a job's settings."""
     job = own_job(job_id, nc)
-    return vars(store().save(Job(id=job.id, user=job.user, created=job.created, **checked(body).model_dump())))
+    saved = store().save(Job(id=job.id, user=job.user, created=job.created, **checked(body).model_dump()))
+    # Another source or recipe lists other files: "known files end the run" waits for its first
+    # complete pass again.
+    if saved.source != job.source or saved.options != job.options:
+        store().forget(job.id or 0, FULL_PASS)
+    return vars(saved)
 
 
 @APP.delete("/api/jobs/{job_id}")
@@ -219,7 +235,10 @@ async def record(websocket: WebSocket, nc: NC) -> None:
     try:
         if job:
             kept = await asyncio.to_thread(load_session, nc, job)
-            start = json.loads(str(job.options.get("recipe") or "{}") or "{}").get("start", "")
+            try:
+                start = json.loads(str(job.options.get("recipe") or "{}") or "{}").get("start", "")
+            except (ValueError, AttributeError):
+                start = ""  # a job of another source, or a recipe being edited: the page alone
             await recorder.start(kept, job.challenge_url or start)
             await recorder.handle({"type": "mode", "mode": "browse"})
         else:
@@ -234,7 +253,8 @@ async def record(websocket: WebSocket, nc: NC) -> None:
                     await recorder.handle(message)
             except Exception as error:  # pylint: disable=broad-exception-caught
                 # A step the page could not do (an element gone, a timeout): the recording goes on.
-                await websocket.send_json({"type": "error", "message": str(error).splitlines()[0]})
+                text = (str(error) or type(error).__name__).splitlines()[0]
+                await websocket.send_json({"type": "error", "message": text})
     except (WebSocketDisconnect, asyncio.TimeoutError):
         pass
     finally:

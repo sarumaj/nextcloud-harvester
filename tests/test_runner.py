@@ -7,13 +7,16 @@ import json
 import sqlite3
 import time
 
+import pytest
+
 from nc_py_api import NextcloudException, NextcloudExceptionNotFound
 
 from harvester import executor as executor_module
 from harvester import runner
 from harvester.executor import is_due
+from harvester.patterns import render_tags
 from harvester.nextcloud import NextcloudLibrary
-from harvester.sources import ChallengeError, Item, Source
+from harvester.sources import ChallengeError, Item, Source, SourceError
 from harvester.store import Job, Store
 
 
@@ -248,3 +251,81 @@ def test_tagging_survives_tags_already_there_and_hidden_ones():
     # A run that broke off after a file was tagged: it is found again and tagged again.
     library.tag(1, ["mine"])
     assert NextcloudLibrary(nc).find("/x/a.txt") == 1  # type: ignore[arg-type]
+
+
+class PartlyBroken(FakeSource):
+    """Items a, b and c; b's site answers an error page."""
+
+    def fetch(self, item, dest):
+        if item.key == "b":
+            raise SourceError("https://site.example/b answered 500")
+        dest.write(item.key.encode())
+
+
+def test_a_file_that_fails_does_not_block_the_others():
+    job = Job(user="u", name="n", source="fake", target="/In", schedule="* * * * *")
+    seen: set[str] = set()
+    library = FakeLibrary()
+    message = runner.run(job, PartlyBroken({}, {}, None), library, seen.__contains__, seen.add, lambda s: None)
+    assert message == "2 downloaded, 1 failed (tried again next run): https://site.example/b answered 500"
+    assert seen == {"a", "c"}, "b is tried again next run; no complete pass yet"
+
+
+def test_a_run_where_every_file_fails_fails():
+    class Broken(FakeSource):
+        """Every file's site answers an error page."""
+
+        def fetch(self, item, dest):
+            raise SourceError(f"{item.key} answered 500")
+
+    job = Job(user="u", name="n", source="fake", target="/In", schedule="* * * * *")
+    with pytest.raises(SourceError, match="a answered 500 \\(and 2 more\\)"):
+        runner.run(job, Broken({}, {}, None), FakeLibrary(), lambda key: False, lambda key: None, lambda s: None)
+
+
+def test_an_empty_file_name_is_not_the_jobs_folder():
+    class Nameless(FakeSource):
+        """An item whose name came out empty."""
+
+        def items(self, seen):
+            yield Item(key="x", path="", url="https://site.example/x")
+
+    job = Job(user="u", name="n", source="fake", target="/In", schedule="* * * * *")
+    with pytest.raises(SourceError, match="came out empty"):
+        runner.run(job, Nameless({}, {}, None), FakeLibrary(), lambda key: False, lambda key: None, lambda s: None)
+
+
+def test_a_job_deleted_while_it_runs_ends_quietly(tmp_path):
+    store = Store(str(tmp_path / "db"))
+    job = store.save(Job(user="u", name="Gone", source="asking", target="/x", schedule="* * * * *"))
+
+    class DeletedMeanwhile(FakeSource):
+        """Its job is deleted while it lists."""
+
+        name = "deleted"
+
+        def items(self, seen):
+            store.delete(job.id or 0)
+            yield Item(key="a", path="a.txt", url="a")
+
+        def session(self):
+            return {"cookies": [{"name": "sid", "value": "1"}], "origins": []}
+
+    job.source = "deleted"
+    executor_module.SOURCES["deleted"] = DeletedMeanwhile
+    try:
+        nc = FakeNextcloud()
+        nc.files = FakeFiles()
+        executor_module.Executor(store, lambda: nc).run(job)
+    finally:
+        del executor_module.SOURCES["deleted"]
+    assert not nc.sent, "no notification about a job that is gone"
+    assert f"session.job{job.id}" not in nc.preferences_ex.values, "no session left behind"
+    store.mark_seen(job.id or 0, "late")  # a late record of a deleted job is no error
+
+
+def test_notifications_and_tags_come_out_as_they_are():
+    assert executor_module.plain("{year}/x names issue, see /login?forward=%2Fselect") == (
+        "(year)/x names issue, see /login?forward=％2Fselect"
+    )
+    assert len(render_tags(["{subject}"], {"subject": "Re: " * 30})[0]) <= 64

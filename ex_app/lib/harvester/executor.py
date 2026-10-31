@@ -53,6 +53,12 @@ def save_session(nc: NextcloudApp, job: Job, session: dict | None) -> None:
         nc.preferences_ex.set_value(session_key(job), json.dumps(session), sensitive=True)
 
 
+def plain(text: str) -> str:
+    """Text a notification shows as it is: Nextcloud reads {name} as a placeholder and % as a
+    printf code (an address with %2F, say), either of which can break the notification."""
+    return text.replace("{", "(").replace("}", ")").replace("%", "\uff05")[:400]
+
+
 def page_link(nc: NextcloudApp) -> str:
     """The app's page in Nextcloud, for notifications."""
     return f"{nc.app_cfg.endpoint.rstrip('/')}/index.php/apps/app_api/embedded/harvester/harvester"
@@ -84,8 +90,11 @@ class Executor:
                     self.run(job)
             except queue.Empty:
                 pass
-            for job in self.store.jobs():
-                if is_due(job, time.time()):
+            for listed in self.store.jobs():
+                # Read again just before its run: the runs before it may have taken long, and the
+                # job may have been changed, disabled or deleted meanwhile.
+                job = self.store.job(listed.id or 0)
+                if job and is_due(job, time.time()):
                     self.run(job)
 
     def run(self, job: Job) -> None:
@@ -114,18 +123,25 @@ class Executor:
                         lambda key: self.store.mark_seen(job_id, key),
                     )
                 finally:
-                    # Kept also after a failure: cookies set before it (a sign-in) still count.
+                    # Kept also after a failure: cookies set before it (a sign-in) still count;
+                    # not for a job deleted while it ran (its session went with it).
                     try:
-                        save_session(nc, job, source.session())
+                        if self.store.job(job_id):
+                            save_session(nc, job, source.session())
                     finally:
                         source.close()
             self.store.finish(job_id, "ok", message)
         except ChallengeError as error:
             # Not a failure of the job: it waits for its user to answer the page in the browser.
+            if not self.store.job(job_id):
+                return
             self.store.finish(job_id, "challenge", str(error), challenge_url=error.url)
             self.notify(nc, f"Harvester: {job.name} needs you", f"{error.url} asks for a person ({error.kind}).")
         except Exception as error:  # pylint: disable=broad-exception-caught
-            # Whatever broke, the job is marked and the thread goes on with the others.
+            # Whatever broke, the job is marked and the thread goes on with the others; a job
+            # deleted while it ran ends quietly.
+            if not self.store.job(job_id):
+                return
             message = str(error) or type(error).__name__
             self.store.finish(job_id, "auth" if isinstance(error, AuthError) else "failed", message)
             self.notify(nc, f"Harvester: {job.name} failed", message)
@@ -136,6 +152,6 @@ class Executor:
     def notify(nc: NextcloudApp, subject: str, message: str) -> None:
         """Tells the job's user, with a link to the app's page; a notification that fails is lost."""
         try:
-            nc.notifications.create(subject, message, link=page_link(nc))
+            nc.notifications.create(plain(subject), plain(message), link=page_link(nc))
         except Exception:  # pylint: disable=broad-exception-caught
             pass

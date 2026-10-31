@@ -5,6 +5,7 @@ BODY.PEEK, so nothing is marked as read. A message's attachments are told apart 
 (or, without one, the folder's UIDVALIDITY and the message's UID), their position and file name.
 """
 
+import base64
 import datetime
 import email
 import email.policy
@@ -24,6 +25,31 @@ from .base import AuthError, Item, Option, Source, SourceError
 # Month names IMAP's SINCE expects, whatever the locale.
 MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 UNSAFE = re.compile(r"[\\/:*?\"<>|\s]+")
+
+
+def plain_login(text: str) -> bool:
+    """Whether imaplib's LOGIN can send it: ASCII without spaces or quotes."""
+    return text.isascii() and not any(char in text for char in ' "\\\t')
+
+
+def utf7_imap(name: str) -> str:
+    """A folder name in IMAP's modified UTF-7 (RFC 3501 5.1.3), e.g. Entwürfe as Entw&APw-rfe."""
+    out, pending = [], []
+
+    def flush() -> None:
+        if pending:
+            encoded = base64.b64encode("".join(pending).encode("utf-16-be")).decode().rstrip("=")
+            out.append("&" + encoded.replace("/", ",") + "-")
+            pending.clear()
+
+    for char in name:
+        if 0x20 <= ord(char) <= 0x7E:
+            flush()
+            out.append("&-" if char == "&" else char)
+        else:
+            pending.append(char)
+    flush()
+    return "".join(out)
 
 
 def connect_tls(host: str, port: int) -> Any:
@@ -107,11 +133,17 @@ class Mail(Source):
             self.imap = self.connect(str(self.settings["host"]).strip(), int(self.settings["port"]))
         except OSError as error:
             raise SourceError(f"cannot reach {self.settings['host']}: {error}") from error
+        user, password = self.secrets.get("username", ""), self.secrets.get("password", "")
         try:
-            self.imap.login(self.secrets.get("username", ""), self.secrets.get("password", ""))
+            if plain_login(user) and plain_login(password):
+                self.imap.login(user, password)
+            else:
+                # imaplib's LOGIN sends ASCII only and does not quote the user: SASL PLAIN (UTF-8).
+                credentials = f"\0{user}\0{password}".encode()
+                self.imap.authenticate("PLAIN", lambda _: credentials)
         except imaplib.IMAP4.error as error:
             raise AuthError(f"the IMAP server refused the sign-in: {error}") from error
-        folder = str(self.settings["folder"]).replace("\\", "\\\\").replace('"', '\\"')
+        folder = utf7_imap(str(self.settings["folder"])).replace("\\", "\\\\").replace('"', '\\"')
         status, _ = self.imap.select(f'"{folder}"', readonly=True)
         if status != "OK":
             raise SourceError(f"no folder {self.settings['folder']}")

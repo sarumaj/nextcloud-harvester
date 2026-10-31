@@ -11,7 +11,6 @@ what it gets: never a web page instead of a file, of the expected type and size.
 import abc
 import contextlib
 import json
-import posixpath
 import re
 import time
 from collections.abc import Callable, Generator, Iterator
@@ -311,18 +310,21 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
                     found.append((url, text, patterns.group_values(match)))
             return found
 
-        # A page without the links it should have may be asking for a person instead.
-        def blocked(page) -> None:
+        # A page without the links it should have may be asking for a person instead; the start
+        # page without any is a signed-out session or a changed site, not an empty listing.
+        def blocked(page, level: int = 1, number: int = 2) -> None:
             found = driver.challenge(page)
             if found:
                 raise ChallengeError(*found)
+            if level == 0 and number == 1:
+                raise SourceError("the start page has none of the recipe's links: signed out, or the site changed?")
 
         # The file links of a listing's page; True when the listing ends there (no file links, or
         # only known ones while known files end the run).
-        def files(page, number: int, values: dict, outcome: dict) -> Generator[Item, None, bool]:
+        def files(page, number: int, values: dict, outcome: dict, level: int) -> Generator[Item, None, bool]:
             found = matching(page, self.recipe["links"])
             if not found:
-                blocked(page)
+                blocked(page, level, number)
             new = [entry for entry in found if not seen(entry[0])]
             outcome["found"] |= bool(found)
             outcome["new"] |= bool(new)
@@ -338,7 +340,7 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
                     if level < len(follow):
                         links = matching(page, follow[level])
                         if not links:
-                            blocked(page)
+                            blocked(page, level, number)
                         for link, _, groups in links:
                             child = {"found": False, "new": False}
                             yield from walk(link, level + 1, values | groups, child)
@@ -346,7 +348,7 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
                             outcome["new"] |= child["new"]
                             if stop_at_seen and child["found"] and not child["new"]:
                                 return
-                    elif (yield from files(page, number, values, outcome)):
+                    elif (yield from files(page, number, values, outcome, level)):
                         return
                     after = self.recipe.get("next") or {}
                     if not after.get("selector") or int(after.get("level", 0)) != level:
@@ -368,9 +370,7 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
             path = patterns.render_path(str(self.settings["path"]), values)
         except (KeyError, ValueError) as error:
             raise SourceError(str(error).strip("'\"")) from error
-        extension = download.extension(self.settings)
-        if extension and not posixpath.splitext(path)[1]:
-            path += extension
+        path = download.with_extension(path, self.settings)
         return Item(key=link, path=path, url=url, values=values)
 
     def fetch(self, item: Item, dest: BinaryIO) -> None:

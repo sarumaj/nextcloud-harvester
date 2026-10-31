@@ -142,4 +142,11 @@ class Store:
     def mark_seen(self, job_id: int, key: str) -> None:
         """Records a downloaded item, so that it is not downloaded again."""
         with self._lock, self._db:
-            self._db.execute("INSERT OR IGNORE INTO seen VALUES (?, ?, ?)", (job_id, key, time.time()))
+            # The job may have been deleted while it ran: nothing to record then.
+            if self._db.execute("SELECT 1 FROM jobs WHERE id = ?", (job_id,)).fetchone():
+                self._db.execute("INSERT OR IGNORE INTO seen VALUES (?, ?, ?)", (job_id, key, time.time()))
+
+    def forget(self, job_id: int, key: str) -> None:
+        """Forgets one recorded key (the mark of a complete pass, when the job's source changes)."""
+        with self._lock, self._db:
+            self._db.execute("DELETE FROM seen WHERE job = ? AND key = ?", (job_id, key))

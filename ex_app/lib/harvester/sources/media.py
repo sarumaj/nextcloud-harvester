@@ -101,7 +101,14 @@ class Media(Source):
             if not page or not allowed_url(page):
                 continue
             # A flat entry lacks title, extension and date: the full information without the file.
-            info = entry if entries is None else self._info(page, format=str(self.settings["format"]))
+            # An entry that cannot be had (private, removed, region-locked, no single-file format)
+            # is skipped, not the run's end: else each run would stop at it again.
+            try:
+                info = entry if entries is None else self._info(page, format=str(self.settings["format"]))
+            except SourceError:
+                if entries is None:
+                    raise
+                continue
             if info.get("live_status") in SKIPPED:
                 continue
             yield self.item(key, info)

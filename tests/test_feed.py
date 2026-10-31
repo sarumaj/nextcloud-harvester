@@ -109,3 +109,13 @@ def test_not_a_feed():
     made = Feed({"url": "https://example.org/x"}, {}, httpx.Client(transport=httpx.MockTransport(handler)))
     with pytest.raises(SourceError, match="not a feed"):
         list(made.items(lambda key: False))
+
+
+def test_relative_links_are_taken_against_the_feeds_address():
+    atom = b"""<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom"><title>Docs</title><id>urn:docs</id><updated>2025-05-01T00:00:00Z</updated>
+<entry><title>Report</title><id>urn:r1</id><updated>2025-05-01T00:00:00Z</updated>
+<link rel="enclosure" href="/files/report.pdf" type="application/pdf"/></entry></feed>"""
+    serving = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, content=atom)))
+    source = Feed({"url": "https://docs.example/feed.atom"}, {}, serving)
+    assert [item.url for item in source.items(lambda key: False)] == ["https://docs.example/files/report.pdf"]

@@ -132,3 +132,9 @@ def test_a_kept_sessions_cookies_go_with_http_requests():
     made.restore({"cookies": [{"name": "sid", "value": "ok", "domain": "site.example", "path": "/"}], "origins": []})
     assert len(list(made.items(lambda key: False))) == 8
     assert all("sid=ok" in cookie for cookie in seen_cookies)
+
+
+def test_a_start_page_without_the_recipes_links_fails():
+    recipe = {"start": f"{SITE}/list", "links": {"selector": "a.no-such-class", "pattern": r"\.pdf$"}}
+    with pytest.raises(SourceError, match="signed out, or the site changed"):
+        list(source(Site(), recipe).items(lambda key: False))

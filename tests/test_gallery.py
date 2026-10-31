@@ -16,18 +16,19 @@ PAGE = "https://pics.example/album/42"
 JPEG = b"\xff\xd8\xff\xe0" + b"x" * 100
 
 
-def message(number: int) -> list:
-    """A Url message of gallery-dl's JSON output."""
+def message(number: int, num: int = 0) -> list:
+    """A Url message of gallery-dl's JSON output (num: the file's place in a post of several)."""
     data = {
         "category": "pics",
         "subcategory": "album",
         "id": number,
+        "num": num,
         "filename": f"photo{number}",
         "extension": "jpg",
         "date": "2025-07-14 10:20:30",
         "tags": ["beach", "sea"],
     }
-    return [3, f"https://cdn.pics.example/{number}.jpg", data]
+    return [3, f"https://cdn.pics.example/{number}-{num}.jpg", data]
 
 
 def gallery(stdout: str = "", returncode: int = 0, stderr: str = "", handler=None, **options) -> Gallery:
@@ -47,8 +48,8 @@ def gallery(stdout: str = "", returncode: int = 0, stderr: str = "", handler=Non
 def test_the_galleries_new_files_with_their_names_and_values():
     stdout = json.dumps([[2, {"category": "pics"}], message(1), message(2), [6, "https://pics.example/x", {}]])
     source = gallery(stdout, path="{year}/{filename}.{extension}")
-    items = list(source.items(lambda key: key == "pics:1"))
-    assert [item.key for item in items] == ["pics:2"]
+    items = list(source.items(lambda key: key == "pics:1:0"))
+    assert [item.key for item in items] == ["pics:2:0"]
     assert items[0].path == "2025/photo2.jpg"
     assert items[0].values["month"] == 7 and "tags" not in items[0].values
     command = source.calls[0][0]
@@ -60,7 +61,7 @@ def test_the_download_has_the_gallery_as_referer_and_is_checked():
 
     def handler(request: httpx.Request) -> httpx.Response:
         referers.append(request.headers.get("referer"))
-        if request.url.path == "/1.jpg":
+        if request.url.path == "/1-0.jpg":
             return httpx.Response(200, content=JPEG, headers={"content-type": "image/jpeg"})
         return httpx.Response(200, text="<html>sign in</html>", headers={"content-type": "text/html"})
 
@@ -84,3 +85,19 @@ def test_gallery_dls_errors_and_refused_pages():
             Gallery({"url": url}, {}, None)
     unsafe = gallery(json.dumps([[3, "http://169.254.169.254/latest", {"category": "pics", "id": 9}]]))
     assert not list(unsafe.items(lambda key: False))
+
+
+def test_every_file_of_a_post_of_several():
+    stdout = json.dumps([message(7, 1), message(7, 2), message(7, 3)])
+    seen: set[str] = set()
+    keys = []
+    for item in gallery(stdout).items(seen.__contains__):
+        keys.append(item.key)
+        seen.add(item.key)  # as the runner records each file before the next is listed
+    assert keys == ["pics:7:1", "pics:7:2", "pics:7:3"]
+
+
+def test_a_partial_failure_keeps_what_was_listed():
+    stdout = json.dumps([message(1), message(2)])
+    partial = gallery(stdout, returncode=1, stderr="[gallery-dl][error] HttpError: 500 for page 3\n")
+    assert len(list(partial.items(lambda key: False))) == 2

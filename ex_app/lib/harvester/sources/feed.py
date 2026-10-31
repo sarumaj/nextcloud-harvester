@@ -9,6 +9,7 @@ import re
 import time
 from collections.abc import Callable, Iterator
 from typing import BinaryIO
+from urllib.parse import urljoin
 
 import feedparser
 
@@ -92,7 +93,9 @@ class Feed(Source):
         else:
             urls = [enclosure.get("href", "") for enclosure in entry.get("enclosures", [])]
         pattern = re.compile(str(self.settings["link_pattern"]))
-        return [url for url in urls if url and browser.allowed_url(url) and pattern.search(url)]
+        # Feeds often link relatively (Atom's href="/f.pdf"): against the feed's own address.
+        urls = [urljoin(str(self.settings["url"]), url) for url in urls if url]
+        return [url for url in urls if browser.allowed_url(url) and pattern.search(url)]
 
     def items(self, seen: Callable[[str], bool]) -> Iterator[Item]:
         feed, entries = self.entries()
@@ -122,8 +125,7 @@ class Feed(Source):
         except (KeyError, ValueError) as error:
             raise SourceError(f"the file name: {str(error).strip(chr(39))}") from error
         # A name without an extension gets the job's file type's (a link to a page, say).
-        if not posixpath.splitext(path)[1]:
-            path += download.extension(self.settings)
+        path = download.with_extension(path, self.settings)
         return Item(key=key, path=path, url=url, values=values)
 
     def fetch(self, item: Item, dest: BinaryIO) -> None:
