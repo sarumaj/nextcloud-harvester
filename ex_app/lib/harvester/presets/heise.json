@@ -1,0 +1,37 @@
+{
+  "title": "heise magazines (PDF)",
+  "description": "The issues of iX, c't, Make, Mac & i, Technology Review, ... that your heise+ or magazine subscription may download. After saving, set the job's account: your heise login.",
+  "parameters": {
+    "magazine": {"title": "Magazine in heise's URLs", "default": "ix", "check": "^[a-z0-9-]+$", "description": "ix, ct, make, mac-and-i, tr, ..."},
+    "name": {"title": "Magazine's name", "default": "iX", "check": "^[^/{}$]+$", "description": "For the folder, the files and the tag."},
+    "years": {"title": "Years", "default": "\\d{4}", "check": "^[\\dd\\[\\]\\\\{}|()?-]+$", "description": "A pattern of the years to fetch: \\d{4} all, 202[4-9] from 2024 on."}
+  },
+  "job": {
+    "name": "${name}",
+    "source": "site",
+    "target": "/Magazines/${name}",
+    "schedule": "0 6 * * *",
+    "tags": ["${name}", "{year}"],
+    "options": {
+      "recipe": {
+        "steps": [
+          {"action": "goto", "url": "https://www.heise.de/sso/login?forward=%2Fselect%2F${magazine}%2Farchiv"},
+          {"action": "fill", "selector": "#login-user", "credential": "username"},
+          {"action": "fill", "selector": "#login-password", "credential": "password"},
+          {"action": "click", "selector": "button[name=rm_login]", "text": "Anmelden"}
+        ],
+        "start": "https://www.heise.de/select/${magazine}/archiv",
+        "follow": [
+          {"selector": "a[href^='/select/${magazine}/archiv/']", "pattern": "/select/${magazine}/archiv/(?P<year>${years})$"}
+        ],
+        "links": {"selector": "a[href^='/select/${magazine}/archiv/']", "pattern": "/select/${magazine}/archiv/(?P<year>\\d{4})/(?P<issue>\\d+)$"}
+      },
+      "download_url": "{url}/download",
+      "path": "{year}/${name} {year}-{issue:02d}.pdf",
+      "file_type": "pdf",
+      "min_size": 1000000,
+      "wait_pattern": "wait_sec=(\\d+)",
+      "max_items": 5
+    }
+  }
+}

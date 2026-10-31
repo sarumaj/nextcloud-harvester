@@ -1,0 +1,49 @@
+<?xml version="1.0"?>
+<info xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:noNamespaceSchemaLocation="https://apps.nextcloud.com/schema/apps/info.xsd">
+	<id>harvester</id>
+	<name>Harvester</name>
+	<summary>Fetches files from websites into your folders on a schedule, and tags them</summary>
+	<description><![CDATA[Jobs that fetch files from websites into a folder of your files, on a schedule, and
+tag them. A site is described by a recipe: recorded in the app's browser, which proposes the
+links' patterns and outlines what they match, or taken from a template (heise's magazines).]]></description>
+	<version>0.3.0</version>
+	<licence>agpl</licence>
+	<author>Dawid Ciepiela</author>
+	<namespace>Harvester</namespace>
+	<category>files</category>
+	<category>integration</category>
+	<bugs>https://git.ciepiela.org/dawid/nextcloud-harvester/issues</bugs>
+	<repository type="git">https://git.ciepiela.org/dawid/nextcloud-harvester</repository>
+	<dependencies>
+		<nextcloud min-version="32" max-version="35"/>
+	</dependencies>
+	<external-app>
+		<docker-install>
+			<registry>local.homelab</registry>
+			<image>harvester</image>
+			<image-tag>0.3.0</image-tag>
+		</docker-install>
+		<routes>
+			<route>
+				<url>^/(js|img)/.*</url>
+				<verb>GET</verb>
+				<access_level>USER</access_level>
+				<headers_to_exclude>[]</headers_to_exclude>
+			</route>
+			<route>
+				<url>^/api/.*</url>
+				<verb>GET,POST,PUT,DELETE</verb>
+				<access_level>USER</access_level>
+				<headers_to_exclude>[]</headers_to_exclude>
+			</route>
+			<!-- The recorder's WebSocket goes through HaRP, the rest through AppAPI's proxy. -->
+			<route>
+				<url>^/ws/record$</url>
+				<verb>GET</verb>
+				<access_level>USER</access_level>
+				<headers_to_exclude>[]</headers_to_exclude>
+			</route>
+		</routes>
+	</external-app>
+</info>

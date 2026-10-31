@@ -1,0 +1,18 @@
+[tool.black]
+line-length = 120
+
+[tool.pytest.ini_options]
+pythonpath = ["ex_app/lib"]
+testpaths = ["tests"]
+
+[tool.pylint.main]
+init-hook = "import sys; sys.path.insert(0, 'ex_app/lib')"
+
+[tool.pylint.format]
+max-line-length = 120
+
+[tool.pylint.design]
+max-args = 7
+max-positional-arguments = 7
+# A job's fields are the database's columns.
+max-attributes = 13

@@ -1,0 +1,220 @@
+"""The recorder and the site source in a real Chromium, against the fake archive.
+
+The site is served by Playwright's request interception (no network). The tests are skipped
+where Chromium is not installed (playwright install --only-shell chromium).
+"""
+
+# pylint: disable=missing-function-docstring,protected-access
+
+import asyncio
+import json
+import re
+
+import pytest
+
+from fake_site import SITE, Site
+from harvester.browser import allowed_url
+from harvester.browser.recorder import Recorder
+from harvester.presets import make_job
+from harvester.recipe import check_recipe, steps_from_events
+from harvester.sources import site as site_module
+
+
+def chromium_installed() -> bool:
+    try:
+        from playwright.sync_api import sync_playwright  # pylint: disable=import-outside-toplevel
+
+        with sync_playwright() as playwright:
+            playwright.chromium.launch().close()
+        return True
+    except Exception:  # pylint: disable=broad-exception-caught
+        return False
+
+
+needs_chromium = pytest.mark.skipif(not chromium_installed(), reason="Chromium is not installed")
+
+
+def test_allowed_urls():
+    assert allowed_url("https://www.heise.de/select")
+    assert allowed_url("http://93.184.215.14/x")
+    for url in (
+        "file:///proc/self/environ",
+        "chrome://settings",
+        "http://localhost:23000/",
+        "http://127.0.0.1/",
+        "http://10.0.0.26/",
+        "http://[::1]/",
+        "http://169.254.169.254/latest",
+        "javascript:alert(1)",
+    ):
+        assert not allowed_url(url), url
+
+
+def test_steps_keep_no_password_and_turn_the_login_into_the_account():
+    events = [
+        {"action": "goto", "url": f"{SITE}/login"},
+        {"action": "fill", "selector": "input[name=user]", "value": "m", "field": "text", "form": "form"},
+        {"action": "fill", "selector": "input[name=user]", "value": "me", "field": "text", "form": "form"},
+        {"action": "fill", "selector": "input[name=pass]", "value": "", "field": "password", "form": "form"},
+        {"action": "click", "selector": "#go", "text": "Sign in"},
+        {"action": "fill", "selector": "input[name=q]", "value": "pdf", "field": "search", "form": "search"},
+        {"action": "press", "selector": "input[name=q]", "key": "Enter"},
+    ]
+    assert steps_from_events(events) == [
+        {"action": "goto", "url": f"{SITE}/login"},
+        {"action": "fill", "selector": "input[name=user]", "credential": "username"},
+        {"action": "fill", "selector": "input[name=pass]", "credential": "password"},
+        {"action": "click", "selector": "#go", "text": "Sign in"},
+        {"action": "fill", "selector": "input[name=q]", "value": "pdf"},
+        {"action": "press", "selector": "input[name=q]", "key": "Enter"},
+    ]
+
+
+def test_check_recipe():
+    assert check_recipe({}) == ["no listing to start at", "no file links picked"]
+    problems = check_recipe({"steps": [{"action": "goto", "url": "file:///etc/passwd"}, {"action": "eval"}]})
+    assert problems == [
+        "step 1: the browser may not open file:///etc/passwd",
+        "step 2: unknown action eval",
+        "no file links picked",
+    ]
+
+
+class Driver:
+    """Drives the recorder as the page does: mouse and keys at the screen's coordinates."""
+
+    def __init__(self, recorder: Recorder | None = None):
+        self.sent: list[dict] = []
+        self.recorder = recorder
+
+    async def send(self, message: dict) -> None:
+        # As over the WebSocket: a copy, not the recorder's own state.
+        self.sent.append(json.loads(json.dumps(message)))
+
+    async def click(self, selector: str) -> None:
+        recorder = self.recorder
+        assert recorder is not None and recorder._page is not None
+        box = await recorder._page.locator(selector).first.bounding_box()
+        x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+        for event in ("move", "down", "up"):
+            await recorder.handle({"type": "mouse", "event": event, "x": x, "y": y})
+
+    async def type(self, text: str) -> None:
+        assert self.recorder is not None
+        for key in text:
+            await self.recorder.handle({"type": "key", "key": key})
+
+    async def mode(self, mode: str) -> None:
+        assert self.recorder is not None
+        await self.recorder.handle({"type": "mode", "mode": mode})
+
+    def last(self) -> dict:
+        return [m for m in self.sent if m["type"] == "recipe"][-1]
+
+    async def until(self, condition) -> dict:
+        """The first recipe message after now that meets the condition (a pick is handled
+        after the click returns)."""
+        start = len(self.sent)
+        for _ in range(100):
+            for message in self.sent[start:]:
+                if message["type"] == "recipe" and condition(message):
+                    return message
+            await asyncio.sleep(0.05)
+        raise AssertionError("the recorder did not answer")
+
+
+def async_site(site: Site):
+    async def fulfill(route) -> None:
+        status, headers, body = site.answer(route.request.url, route.request.method)
+        await route.fulfill(status=status, headers=headers, body=body)
+
+    return fulfill
+
+
+async def outlined(recorder: Recorder) -> list[str]:
+    """The outlines of the links on the page: solid (matched) or dashed (left out)."""
+    assert recorder._page is not None
+    return await recorder._page.eval_on_selector_all(
+        "a", "els => els.filter(e => e.style.outline).map(e => e.style.outline.includes('solid') ? 'solid' : 'dashed')"
+    )
+
+
+@needs_chromium
+def test_recorder_records_the_login_and_proposes_the_levels_patterns():
+    async def scenario():
+        driver = Driver()
+        recorder = Recorder(driver.send)
+        driver.recorder = recorder
+        await recorder.start()
+        try:
+            await recorder._context.route(f"{SITE}/**", async_site(Site()))
+            page = recorder._page
+            await recorder.handle({"type": "goto", "url": f"{SITE}/login"})
+            await driver.click("#login-user")
+            await driver.type("me")
+            await driver.click("#login-password")
+            await driver.type("secret")
+            await driver.click("button[name=rm_login]")
+            await page.wait_for_url(re.compile(r"/select/mag/archiv$"))
+            await page.wait_for_load_state()
+
+            await driver.mode("follow")
+            await driver.click("a.years__link")
+            follow = await driver.until(lambda m: "follow0" in m["proposals"])
+            assert await outlined(recorder) == ["solid"] * 3
+
+            await driver.mode("browse")
+            await driver.click("a.years__link >> nth=1")
+            await page.wait_for_url(re.compile(r"/archiv/2025$"))
+            await page.wait_for_load_state()
+            await driver.mode("links")
+            await driver.click("a.year__link")
+            links = await driver.until(lambda m: "links" in m["proposals"])
+
+            await recorder.handle(
+                {"type": "pattern", "target": "links", "pattern": r"/archiv/(?P<year>\d{4})/(?P<issue>[12])$"}
+            )
+            edited = driver.last()
+            return driver, follow, links, edited, await outlined(recorder)
+        finally:
+            await recorder.close()
+
+    driver, follow, links, edited, outlines = asyncio.run(scenario())
+    recipe = edited["recipe"]
+    assert [step["action"] for step in recipe["steps"]] == ["goto", "fill", "fill", "click"]
+    assert [step.get("credential") for step in recipe["steps"][1:3]] == ["username", "password"]
+    assert "secret" not in json.dumps(driver.sent)
+    assert recipe["start"] == f"{SITE}/select/mag/archiv"
+    assert follow["recipe"]["follow"][0]["pattern"] == r"/select/mag/archiv/(?P<year>\d{4})$"
+    proposal = links["proposals"]["links"]
+    assert proposal["pattern"] == r"/select/mag/archiv/(?P<year>\d{4})/(?P<issue>\d+)$"
+    assert proposal["level"] == 1 and proposal["matching"] == 3
+    assert proposal["examples"][0]["values"] == {"year": 2025, "issue": 3}
+    assert proposal["path"] == "{year}/{text}" and proposal["tags"] == ["{year}"]
+    assert edited["proposals"]["links"]["matching"] == 2
+    assert sorted(outlines) == ["dashed", "solid", "solid"]
+
+
+def sync_site(site: Site):
+    def fulfill(route) -> None:
+        status, headers, body = site.answer(route.request.url, route.request.method)
+        route.fulfill(status=status, headers=headers, body=body)
+
+    return fulfill
+
+
+@needs_chromium
+def test_heise_template_runs_in_the_browser_against_the_fake_archive(monkeypatch):
+    site = Site()
+    monkeypatch.setattr(site_module, "guard", sync_site(site))
+    job = make_job("heise", {"magazine": "mag", "name": "Mag"})
+    options = dict(job["options"], recipe=job["options"]["recipe"].replace("https://www.heise.de", SITE))
+    source = site_module.Site(options, {"username": "me", "password": "pw"}, None)
+    try:
+        items = list(source.items(lambda key: False))
+    finally:
+        source.close()
+    assert [item.path for item in items][:3] == ["2026/Mag 2026-02.pdf", "2026/Mag 2026-01.pdf", "2025/Mag 2025-03.pdf"]
+    assert len(items) == 8 and items[0].url.endswith("/select/mag/archiv/2026/2/download")
+    assert any(url.endswith("/session") for url in site.requests), "signed in"
+    assert not site_module.browser.LOCK.locked()

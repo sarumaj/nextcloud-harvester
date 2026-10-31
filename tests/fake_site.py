@@ -1,0 +1,85 @@
+"""A fake magazine archive like heise's, for the site source and the recorder (no network).
+
+/login (and /sso/login, heise's): a login form with heise's field names.
+/select/mag/archiv: the years (newest first) and a recent issue.
+/select/mag/archiv/<year>: its issues, newest first. .../<year>/<issue>/download: the PDF;
+the first request for an issue redirects to a URL with wait_sec=3 (the site asking for a
+pause). /list?p=<n>: three pages of a plain listing of PDFs with a next link.
+"""
+
+# pylint: disable=too-many-return-statements
+
+import re
+from urllib.parse import parse_qs, urlparse
+
+SITE = "https://site.example"
+YEARS = {2026: 2, 2025: 3, 2024: 3}
+PDF = b"%PDF-1.7\n" + b"x" * 2000
+LOGIN = """<html><body><form method="post" action="/session">
+<input name="user" id="login-user" type="text"><input name="pass" id="login-password" type="password">
+<button type="submit" name="rm_login">Sign in</button></form></body></html>"""
+
+
+def archive() -> str:
+    """The archive: the years, and the newest issues (which the levels must not mistake)."""
+    years = "".join(
+        f'<li><a class="years__link" href="/select/mag/archiv/{year}">All of {year}</a></li>' for year in YEARS
+    )
+    recent = '<a class="year__link" href="/select/mag/archiv/2026/2">Mag 2/2026</a>'
+    return f"<html><body><nav><a href='/'>Home</a></nav>{recent}<ul>{years}</ul></body></html>"
+
+
+def year_page(year: int) -> str:
+    """A year's issues, newest first."""
+    issues = "".join(
+        f'<li><a class="year__link" href="/select/mag/archiv/{year}/{n}">Mag {n}/{year}</a></li>'
+        for n in range(YEARS[year], 0, -1)
+    )
+    return f"<html><body><a href='/select/mag/archiv'>Archive</a><ul class='issues'>{issues}</ul></body></html>"
+
+
+def listing(page: int) -> str:
+    """A page of a plain listing, with a link to the next."""
+    files = "".join(
+        f'<li class="item"><a class="file" href="/files/{page}-{n}.pdf">File {page}.{n}</a></li>' for n in (1, 2)
+    )
+    more = f'<a class="pager next" href="/list?p={page + 1}">Next</a>' if page < 3 else ""
+    return f"<html><body><ul>{files}</ul><a href='/about'>About</a>{more}</body></html>"
+
+
+class Site:  # pylint: disable=too-few-public-methods
+    """The site's state: who signed in and which downloads were asked to wait."""
+
+    def __init__(self):
+        self.waited: set[str] = set()
+        self.requests: list[str] = []
+
+    def answer(self, url: str, method: str = "GET") -> tuple[int, dict, bytes]:
+        """Status, headers and body for a request."""
+        self.requests.append(url)
+        parsed = urlparse(url)
+        path, html = parsed.path, {"content-type": "text/html"}
+        if path in ("/login", "/sso/login"):
+            return 200, html, LOGIN.encode()
+        if path == "/session" and method == "POST":
+            # Not a 302: Playwright does not intercept the redirect of an answer it made up.
+            return 200, html, b"<script>location.href = '/select/mag/archiv'</script>"
+        if path == "/select/mag/archiv":
+            return 200, html, archive().encode()
+        if path == "/list":
+            return 200, html, listing(int(parse_qs(parsed.query).get("p", ["1"])[0])).encode()
+        if path.startswith("/wait"):
+            return 200, html, b"<html>please wait</html>"
+        match = re.fullmatch(r"/select/mag/archiv/(\d{4})(?:/(\d+)(/download)?)?", path)
+        if match and int(match[1]) in YEARS:
+            if not match[2]:
+                return 200, html, year_page(int(match[1])).encode()
+            if not match[3]:
+                return 200, html, b"<html>an issue</html>"
+            if path not in self.waited:
+                self.waited.add(path)
+                return 302, {"location": f"{SITE}/wait?wait_sec=3"}, b""
+            return 200, {"content-type": "binary/octet-stream"}, PDF
+        if path.startswith("/files/"):
+            return 200, {"content-type": "application/pdf"}, PDF
+        return 404, {"content-type": "text/plain"}, b"not found"
