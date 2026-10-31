@@ -5,6 +5,9 @@
 /select/mag/archiv/<year>: its issues, newest first. .../<year>/<issue>/download: the PDF;
 the first request for an issue redirects to a URL with wait_sec=3 (the site asking for a
 pause). /list?p=<n>: three pages of a plain listing of PDFs with a next link.
+
+With require_login, the archive answers the login form until the sign-in's cookie (sid=ok,
+set by /session) comes with the request. Paths in challenge show a reCAPTCHA instead.
 """
 
 # pylint: disable=too-many-return-statements
@@ -15,6 +18,9 @@ from urllib.parse import parse_qs, urlparse
 SITE = "https://site.example"
 YEARS = {2026: 2, 2025: 3, 2024: 3}
 PDF = b"%PDF-1.7\n" + b"x" * 2000
+CHALLENGE = b"""<html><head><title>One moment</title></head><body>
+<div class="g-recaptcha" data-sitekey="x"></div><script src="https://www.google.com/recaptcha/api.js"></script>
+</body></html>"""
 LOGIN = """<html><body><form method="post" action="/session">
 <input name="user" id="login-user" type="text"><input name="pass" id="login-password" type="password">
 <button type="submit" name="rm_login">Sign in</button></form></body></html>"""
@@ -50,20 +56,27 @@ def listing(page: int) -> str:
 class Site:  # pylint: disable=too-few-public-methods
     """The site's state: who signed in and which downloads were asked to wait."""
 
-    def __init__(self):
+    def __init__(self, require_login: bool = False):
         self.waited: set[str] = set()
         self.requests: list[str] = []
+        self.require_login = require_login
+        self.challenge: set[str] = set()
 
-    def answer(self, url: str, method: str = "GET") -> tuple[int, dict, bytes]:
+    def answer(self, url: str, method: str = "GET", cookie: str = "") -> tuple[int, dict, bytes]:
         """Status, headers and body for a request."""
         self.requests.append(url)
         parsed = urlparse(url)
         path, html = parsed.path, {"content-type": "text/html"}
+        if path in self.challenge:
+            return 403, html, CHALLENGE
         if path in ("/login", "/sso/login"):
             return 200, html, LOGIN.encode()
         if path == "/session" and method == "POST":
             # Not a 302: Playwright does not intercept the redirect of an answer it made up.
-            return 200, html, b"<script>location.href = '/select/mag/archiv'</script>"
+            headers = html | {"set-cookie": "sid=ok; Path=/"}
+            return 200, headers, b"<script>location.href = '/select/mag/archiv'</script>"
+        if self.require_login and path.startswith("/select/") and "sid=ok" not in cookie:
+            return 200, html, LOGIN.encode()
         if path == "/select/mag/archiv":
             return 200, html, archive().encode()
         if path == "/list":

@@ -62,7 +62,7 @@
 		const body = el('tbody', {})
 		for (const job of jobs) {
 			const state = job.running ? 'running' : job.last_status || 'never'
-			const label = { running: 'Running', ok: 'OK', failed: 'Failed', auth: 'Sign-in refused', never: 'Not run yet' }[state] || state
+			const label = { running: 'Running', ok: 'OK', failed: 'Failed', auth: 'Sign-in refused', challenge: 'Needs you', never: 'Not run yet' }[state] || state
 			body.append(el('tr', {},
 				el('td', {}, el('strong', { text: job.name }), job.enabled ? '' : el('span', { class: 'harvester-chip', text: 'paused' })),
 				el('td', { class: 'harvester-muted', text: job.target }),
@@ -70,8 +70,9 @@
 				el('td', {}, ...job.tags.map((tag) => el('span', { class: 'harvester-chip', text: tag }))),
 				el('td', {},
 					el('span', { class: `harvester-status harvester-status-${state}`, text: label }),
-					el('div', { class: 'harvester-muted', text: job.last_run ? `${when(job.last_run)} · ${job.last_message || ''}` : '' })),
+					el('div', { class: 'harvester-muted harvester-message', text: job.last_run ? `${when(job.last_run)} · ${job.last_message || ''}` : '' })),
 				el('td', { class: 'harvester-actions' },
+					state === 'challenge' ? el('button', { class: 'primary', text: 'Continue in the browser', onclick: () => openSession(root, job) }) : '',
 					el('button', { text: 'Run now', onclick: async () => { await api('POST', `/jobs/${job.id}/run`); show(root) } }),
 					el('button', { text: 'Edit', onclick: () => renderForm(root, job) }),
 					el('button', {
@@ -184,6 +185,78 @@
 		return box
 	}
 
+	// The remote browser's screen: the person's mouse, wheel, keys and pastes go to it, at the
+	// browser's coordinates.
+	function wireScreen(screen, send) {
+		function point(event) {
+			const box = screen.getBoundingClientRect()
+			return { x: (event.clientX - box.left) * VIEWPORT.width / box.width, y: (event.clientY - box.top) * VIEWPORT.height / box.height }
+		}
+		let lastMove = 0
+		screen.addEventListener('mousemove', (event) => {
+			if (Date.now() - lastMove < 50) return
+			lastMove = Date.now()
+			send({ type: 'mouse', event: 'move', ...point(event) })
+		})
+		for (const kind of ['down', 'up']) {
+			screen.addEventListener(`mouse${kind}`, (event) => {
+				event.preventDefault()
+				screen.focus({ preventScroll: true })
+				send({ type: 'mouse', event: kind, button: event.button === 2 ? 'right' : 'left', ...point(event) })
+			})
+		}
+		screen.addEventListener('contextmenu', (event) => event.preventDefault())
+		screen.addEventListener('wheel', (event) => { event.preventDefault(); send({ type: 'wheel', dx: event.deltaX, dy: event.deltaY }) }, { passive: false })
+		screen.addEventListener('keydown', (event) => {
+			if ((event.ctrlKey || event.metaKey) && event.key === 'v') return // the paste event sends the text
+			event.preventDefault()
+			const modifiers = ['Control', 'Alt', 'Meta', 'Shift'].filter((m) => event.getModifierState(m) && m !== event.key)
+			const key = event.key.length === 1 && modifiers.every((m) => m === 'Shift') ? event.key : [...modifiers, event.key === ' ' ? 'Space' : event.key].join('+')
+			send({ type: 'key', key })
+		})
+		screen.addEventListener('paste', (event) => {
+			event.preventDefault()
+			send({ type: 'text', text: event.clipboardData.getData('text') })
+		})
+	}
+
+	// A job that met a page asking for a person: the browser opens there with the job's session;
+	// the person answers it, and "Done" keeps the session and runs the job again.
+	function openSession(root, job) {
+		const socket = new WebSocket(`${RECORDER}?job=${job.id}`)
+		const send = (message) => socket.readyState === WebSocket.OPEN && socket.send(JSON.stringify(message))
+		const screen = el('img', { class: 'harvester-screen', tabindex: '0', alt: 'The job’s browser' })
+		const url = el('input', { class: 'harvester-url', readonly: '', value: job.challenge_url || '' })
+		const message = el('p', { class: 'harvester-muted', text: 'Starting the browser…' })
+		const done = el('button', {
+			class: 'primary',
+			text: 'Done',
+			title: 'Keep this session for the job and run it again',
+			onclick: () => { done.disabled = true; send({ type: 'save-session' }) },
+		})
+		socket.addEventListener('message', (event) => {
+			const data = JSON.parse(event.data)
+			if (data.type === 'frame') {
+				screen.src = `data:image/jpeg;base64,${data.data}`
+				if (message.textContent === 'Starting the browser…') message.textContent = ''
+			} else if (data.type === 'url') url.value = data.url
+			else if (data.type === 'error') { message.textContent = data.message; done.disabled = false }
+			else if (data.type === 'session-saved') { socket.close(); show(root) }
+		})
+		socket.addEventListener('close', () => { if (root.contains(screen)) message.textContent ||= 'The browser closed.' })
+		wireScreen(screen, send)
+		root.replaceChildren(el('div', { class: 'harvester-recorder' },
+			el('div', { class: 'harvester-header' },
+				el('div', {},
+					el('h2', { text: `${job.name}: continue in the browser` }),
+					el('p', { class: 'harvester-muted', text: 'The site asks for a person. Answer it here as you would in your own browser (and sign in, if it asks); then press Done. The job keeps this session and runs again.' })),
+				el('div', {}, done, el('button', { text: 'Cancel', onclick: () => { socket.close(); show(root) } }))),
+			el('div', { class: 'harvester-toolbar' }, url),
+			message,
+			el('div', { class: 'harvester-stage' }, screen)))
+		screen.focus({ preventScroll: true })
+	}
+
 	// The recorder: the browser's screen, the person's mouse and keys to it, and the recipe so far.
 	function openRecorder(root, page, textarea, apply) {
 		let recipe = {}
@@ -211,7 +284,7 @@
 		for (const [mode, label] of labels) {
 			const radio = el('input', { type: 'radio', name: 'harvester-mode', value: mode })
 			radio.checked = mode === 'record'
-			radio.addEventListener('change', () => { send({ type: 'mode', mode }); modeHelp.textContent = help[mode]; screen.focus() })
+			radio.addEventListener('change', () => { send({ type: 'mode', mode }); modeHelp.textContent = help[mode]; screen.focus({ preventScroll: true }) })
 			modes.append(el('label', {}, radio, ` ${label} `))
 		}
 
@@ -260,36 +333,7 @@
 		})
 		socket.addEventListener('close', () => { message.textContent ||= 'The recorder’s browser closed.' })
 
-		function point(event) {
-			const box = screen.getBoundingClientRect()
-			return { x: (event.clientX - box.left) * VIEWPORT.width / box.width, y: (event.clientY - box.top) * VIEWPORT.height / box.height }
-		}
-		let lastMove = 0
-		screen.addEventListener('mousemove', (event) => {
-			if (Date.now() - lastMove < 50) return
-			lastMove = Date.now()
-			send({ type: 'mouse', event: 'move', ...point(event) })
-		})
-		for (const kind of ['down', 'up']) {
-			screen.addEventListener(`mouse${kind}`, (event) => {
-				event.preventDefault()
-				screen.focus()
-				send({ type: 'mouse', event: kind, button: event.button === 2 ? 'right' : 'left', ...point(event) })
-			})
-		}
-		screen.addEventListener('contextmenu', (event) => event.preventDefault())
-		screen.addEventListener('wheel', (event) => { event.preventDefault(); send({ type: 'wheel', dx: event.deltaX, dy: event.deltaY }) }, { passive: false })
-		screen.addEventListener('keydown', (event) => {
-			if ((event.ctrlKey || event.metaKey) && event.key === 'v') return // the paste event sends the text
-			event.preventDefault()
-			const modifiers = ['Control', 'Alt', 'Meta', 'Shift'].filter((m) => event.getModifierState(m) && m !== event.key)
-			const key = event.key.length === 1 && modifiers.every((m) => m === 'Shift') ? event.key : [...modifiers, event.key === ' ' ? 'Space' : event.key].join('+')
-			send({ type: 'key', key })
-		})
-		screen.addEventListener('paste', (event) => {
-			event.preventDefault()
-			send({ type: 'text', text: event.clipboardData.getData('text') })
-		})
+		wireScreen(screen, send)
 
 		root.replaceChildren(el('div', { class: 'harvester-recorder' },
 			el('h2', { text: 'Recorder' }),
@@ -408,15 +452,19 @@
 		#harvester .harvester-empty { padding: 48px 0; text-align: center; }
 		#harvester table { width: 100%; border-collapse: collapse; }
 		#harvester th { text-align: start; font-weight: normal; color: var(--color-text-maxcontrast); padding: 8px; border-bottom: 1px solid var(--color-border); }
-		#harvester td { padding: 10px 8px; border-bottom: 1px solid var(--color-border); vertical-align: top; }
+		#harvester td { padding: 10px 8px; border-bottom: 1px solid var(--color-border); vertical-align: top; white-space: normal; }
 		#harvester tbody tr:hover { background: var(--color-background-hover); }
-		#harvester .harvester-actions { white-space: nowrap; text-align: end; }
+		#harvester .harvester-actions { text-align: end; }
+		#harvester .harvester-actions button { margin-block-end: 4px; }
+		#harvester td code { white-space: nowrap; }
+		#harvester .harvester-message { max-width: 420px; overflow-wrap: anywhere; white-space: normal; }
 		#harvester .harvester-actions button { margin-inline-start: 4px; }
 		#harvester .harvester-chip { display: inline-block; margin: 0 4px 2px 0; padding: 0 8px; border-radius: var(--border-radius-pill, 999px); background: var(--color-background-dark); font-size: 0.9em; }
 		#harvester .harvester-status { display: inline-block; padding: 0 8px; border-radius: var(--border-radius-pill, 999px); font-size: 0.9em; background: var(--color-background-dark); }
 		#harvester .harvester-status-ok { background: var(--color-success); color: var(--color-success-text, #fff); }
 		#harvester .harvester-status-failed, #harvester .harvester-status-auth { background: var(--color-error); color: var(--color-error-text, #fff); }
 		#harvester .harvester-status-running { background: var(--color-primary-element); color: var(--color-primary-element-text); }
+		#harvester .harvester-status-challenge { background: var(--color-warning); color: var(--color-warning-text, #000); }
 		#harvester .harvester-field { display: flex; flex-direction: column; gap: 2px; margin: 12px 0; max-width: 700px; }
 		#harvester .harvester-field > span { font-weight: bold; }
 		#harvester .harvester-check { display: flex; align-items: center; gap: 8px; margin: 12px 0; }
@@ -433,7 +481,10 @@
 		#harvester .harvester-url { flex: 1; margin: 0; }
 		#harvester .harvester-modes label { margin-inline-end: 12px; }
 		#harvester .harvester-stage { display: flex; gap: 12px; align-items: flex-start; margin-top: 8px; }
-		#harvester .harvester-screen { flex: 3; min-width: 0; aspect-ratio: 1280 / 800; border: 1px solid var(--color-border); border-radius: var(--border-radius); background: var(--color-background-dark); cursor: crosshair; }
+		#harvester .harvester-screen {
+			flex: 3; min-width: 0; aspect-ratio: 1280 / 800; max-width: calc((100vh - 260px) * 1.6);
+			border: 1px solid var(--color-border); border-radius: var(--border-radius); background: var(--color-background-dark); cursor: crosshair;
+		}
 		#harvester .harvester-screen:focus { outline: 2px solid var(--color-primary-element); }
 		#harvester .harvester-steps { flex: 1; min-width: 300px; max-height: 80vh; overflow: auto; overflow-wrap: anywhere; font-size: 90%; }
 		#harvester .harvester-level { border-inline-start: 3px solid var(--color-primary-element); padding-inline-start: 8px; margin: 8px 0; }

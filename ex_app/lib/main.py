@@ -1,6 +1,7 @@
 """Harvester: fetches files from websites into Nextcloud on a schedule, and tags them."""
 
 import asyncio
+import json
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -14,7 +15,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from harvester import browser
 from harvester.browser.recorder import Recorder
-from harvester.executor import Executor, credential_key
+from harvester.executor import Executor, credential_key, load_session, save_session, session_key
 from harvester.presets import PRESETS, make_job
 from harvester.runner import COMMON_OPTIONS
 from harvester.sources import SOURCES, SourceError
@@ -160,7 +161,9 @@ def update_job(job_id: int, body: JobIn, nc: NC) -> dict:
 def delete_job(job_id: int, nc: NC) -> dict:
     """Deletes a job and its own account; the files it downloaded stay."""
     job = own_job(job_id, nc)
-    nc.preferences_ex.delete([credential_key(job, name) for name in SOURCES[job.source].credentials])
+    nc.preferences_ex.delete(
+        [credential_key(job, name) for name in SOURCES[job.source].credentials] + [session_key(job)]
+    )
     store().delete(job.id or 0)
     return {}
 
@@ -192,20 +195,42 @@ def set_credentials(job_id: int, body: dict[str, str], nc: NC) -> dict:
 
 
 @APP.websocket("/ws/record")
-async def record(websocket: WebSocket, _nc: NC) -> None:
-    """A recording: the browser's screen to the page, the person's input to the browser."""
+async def record(websocket: WebSocket, nc: NC) -> None:
+    """A recording: the browser's screen to the page, the person's input to the browser.
+
+    With ?job=<id> (the user's job) the browser starts with the job's kept session at the page
+    that asked for a person; {type: save-session} keeps the browser's session for the job,
+    clears the challenge and runs the job again."""
     await websocket.accept()
+    job = None
+    if websocket.query_params.get("job"):
+        try:
+            job = own_job(int(websocket.query_params["job"]), nc)
+        except (ValueError, HTTPException):
+            await websocket.send_json({"type": "error", "message": "No such job."})
+            await websocket.close()
+            return
     if not browser.LOCK.acquire(blocking=False):  # pylint: disable=consider-using-with
         await websocket.send_json({"type": "error", "message": "The browser is busy (a job or another recording)."})
         await websocket.close()
         return
     recorder = Recorder(websocket.send_json)
     try:
-        await recorder.start()
+        if job:
+            kept = await asyncio.to_thread(load_session, nc, job)
+            start = json.loads(str(job.options.get("recipe") or "{}") or "{}").get("start", "")
+            await recorder.start(kept, job.challenge_url or start)
+            await recorder.handle({"type": "mode", "mode": "browse"})
+        else:
+            await recorder.start()
         while True:
             message = await asyncio.wait_for(websocket.receive_json(), RECORDER_IDLE)
             try:
-                await recorder.handle(message)
+                if message.get("type") == "save-session" and job:
+                    await save_answer(job, await recorder.session(), nc)
+                    await websocket.send_json({"type": "session-saved"})
+                else:
+                    await recorder.handle(message)
             except Exception as error:  # pylint: disable=broad-exception-caught
                 # A step the page could not do (an element gone, a timeout): the recording goes on.
                 await websocket.send_json({"type": "error", "message": str(error).splitlines()[0]})
@@ -216,6 +241,13 @@ async def record(websocket: WebSocket, _nc: NC) -> None:
         closing = asyncio.ensure_future(recorder.close())
         closing.add_done_callback(lambda _: browser.LOCK.release())
         await asyncio.shield(closing)
+
+
+async def save_answer(job: Job, session: dict, nc: NextcloudApp) -> None:
+    """Keeps the session the user left the browser with, and runs the job again with it."""
+    await asyncio.to_thread(save_session, nc, job, session)
+    store().finish(job.id or 0, "ok", "continued in the browser")
+    STATE["executor"].request(job.id)
 
 
 def enabled_handler(enabled: bool, nc: NextcloudApp) -> str:

@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 from fake_site import PDF, SITE, Site
-from harvester.sources import FULL_PASS, Item, SourceError
+from harvester.sources import FULL_PASS, ChallengeError, Item, SourceError
 from harvester.sources.site import Site as SiteSource
 
 ARCHIVE = {
@@ -109,3 +109,26 @@ def test_bad_recipes_are_refused():
             SiteSource({"recipe": recipe}, {}, None)
     with pytest.raises(SourceError, match="names issue"):
         source(Site(), ARCHIVE, path="{issue}").item(f"{SITE}/a.pdf", "a", 1, {})
+
+
+def test_a_challenge_over_http_stops_the_run():
+    site = Site()
+    site.challenge.add("/select/mag/archiv/2025")
+    with pytest.raises(ChallengeError) as caught:
+        list(source(site, ARCHIVE).items(lambda key: False))
+    assert caught.value.url.endswith("/select/mag/archiv/2025") and caught.value.kind == "reCAPTCHA"
+
+
+def test_a_kept_sessions_cookies_go_with_http_requests():
+    site = Site(require_login=True)
+    seen_cookies: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_cookies.append(request.headers.get("cookie", ""))
+        status, headers, body = site.answer(str(request.url), request.method, request.headers.get("cookie", ""))
+        return httpx.Response(status, headers=headers, content=body)
+
+    made = SiteSource({"recipe": json.dumps(ARCHIVE)}, {}, httpx.Client(transport=httpx.MockTransport(handler)))
+    made.restore({"cookies": [{"name": "sid", "value": "ok", "domain": "site.example", "path": "/"}], "origins": []})
+    assert len(list(made.items(lambda key: False))) == 8
+    assert all("sid=ok" in cookie for cookie in seen_cookies)

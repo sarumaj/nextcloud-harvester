@@ -17,6 +17,7 @@ from harvester.browser import allowed_url
 from harvester.browser.recorder import Recorder
 from harvester.presets import make_job
 from harvester.recipe import check_recipe, steps_from_events
+from harvester.sources import ChallengeError, SourceError
 from harvester.sources import site as site_module
 
 
@@ -218,3 +219,108 @@ def test_heise_template_runs_in_the_browser_against_the_fake_archive(monkeypatch
     assert len(items) == 8 and items[0].url.endswith("/select/mag/archiv/2026/2/download")
     assert any(url.endswith("/session") for url in site.requests), "signed in"
     assert not site_module.browser.LOCK.locked()
+
+
+def site_with_cookies(site: Site):
+    """The fake site through the browser, with the request's cookies."""
+
+    def fulfill(route) -> None:
+        status, headers, body = site.answer(
+            route.request.url, route.request.method, route.request.all_headers().get("cookie", "")
+        )
+        route.fulfill(status=status, headers=headers, body=body)
+
+    return fulfill
+
+
+def heise_like(site: Site, monkeypatch, **credentials) -> site_module.Site:
+    """The heise template against the fake archive, in the browser."""
+    monkeypatch.setattr(site_module, "guard", site_with_cookies(site))
+    job = make_job("heise", {"magazine": "mag", "name": "Mag"})
+    options = dict(job["options"], recipe=job["options"]["recipe"].replace("https://www.heise.de", SITE))
+    return site_module.Site(options, credentials or {"username": "me", "password": "pw"}, None)
+
+
+def signed_in(site: Site) -> bool:
+    return any(url.endswith("/session") for url in site.requests)
+
+
+@needs_chromium
+def test_a_kept_session_skips_the_sign_in_until_it_expires(monkeypatch):
+    site = Site(require_login=True)
+    first = heise_like(site, monkeypatch)
+    try:
+        assert len(list(first.items(lambda key: False))) == 8
+        kept = first.session()
+    finally:
+        first.close()
+    assert signed_in(site) and kept and any(cookie["name"] == "sid" for cookie in kept["cookies"])
+
+    site.requests.clear()
+    second = heise_like(site, monkeypatch)
+    second.restore(kept)
+    try:
+        assert len(list(second.items(lambda key: False))) == 8
+    finally:
+        second.close()
+    assert not signed_in(site), "the kept session reached the listing: no sign-in"
+
+    site.requests.clear()
+    expired = heise_like(site, monkeypatch)
+    expired.restore({"cookies": [], "origins": []})
+    try:
+        assert len(list(expired.items(lambda key: False))) == 8
+    finally:
+        expired.close()
+    assert signed_in(site), "the listing showed the login form: signed in again"
+
+
+@needs_chromium
+def test_a_page_asking_for_a_person_stops_the_run(monkeypatch):
+    site = Site()
+    site.challenge.add("/select/mag/archiv/2025")
+    source = heise_like(site, monkeypatch)
+    try:
+        with pytest.raises(ChallengeError) as caught:
+            list(source.items(lambda key: False))
+    finally:
+        source.close()
+    assert caught.value.url.endswith("/select/mag/archiv/2025") and caught.value.kind == "reCAPTCHA"
+    assert not site_module.browser.LOCK.locked()
+
+
+@needs_chromium
+def test_a_failed_sign_in_releases_the_browser(monkeypatch):
+    site = Site()
+    monkeypatch.setattr(site_module, "guard", site_with_cookies(site))
+    recipe = {
+        "steps": [{"action": "goto", "url": f"{SITE}/login"}, {"action": "click", "selector": "#no-such-button"}],
+        "links": {"selector": "a", "pattern": "x"},
+    }
+    monkeypatch.setattr(site_module, "STEP_TIMEOUT", 1000)
+    source = site_module.Site({"recipe": json.dumps(recipe)}, {}, None)
+    with pytest.raises(SourceError, match="step 2"):
+        list(source.items(lambda key: False))
+    source.close()
+    assert not site_module.browser.LOCK.locked(), "the browser's lock is free for the next job"
+
+
+@needs_chromium
+def test_challenges_are_recognised():
+    from playwright.sync_api import sync_playwright  # pylint: disable=import-outside-toplevel
+
+    pages = {
+        '<div class="g-recaptcha"></div>': "reCAPTCHA",
+        '<iframe src="https://newassets.hcaptcha.com/captcha/v1/x"></iframe>': "hCaptcha",
+        '<div class="cf-turnstile"></div>': "Cloudflare",
+        "<title>Just a moment...</title><p>Checking your browser. Cloudflare Ray ID: 1</p>": "Cloudflare",
+        "<p>Please verify you are human to continue.</p>": "a human check",
+        '<a href="/a.pdf">A file</a>': None,
+    }
+    with sync_playwright() as playwright:
+        chromium = playwright.chromium.launch()
+        page = chromium.new_page()
+        for html, kind in pages.items():
+            page.set_content(html)
+            assert page.evaluate(site_module.browser.CHALLENGE_SCRIPT) == kind, html
+        chromium.close()

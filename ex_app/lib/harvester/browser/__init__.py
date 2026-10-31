@@ -31,3 +31,34 @@ def allowed_url(url: str) -> bool:
     except ValueError:
         return True
     return address.is_global
+
+
+# What a page asking for a person looks like: the widgets of the common CAPTCHA services (their
+# frames or containers) and the interstitial pages of bot protections. Detected, never answered.
+CHALLENGE_SCRIPT = """() => {
+  const found = (selector) => document.querySelector(selector)
+  const frames = [...document.querySelectorAll('iframe')].map((frame) => frame.src || '')
+  if (frames.some((src) => /recaptcha\\/(api2|enterprise)\\/(anchor|bframe)/.test(src)) || found('.g-recaptcha')) return 'reCAPTCHA'
+  if (frames.some((src) => /hcaptcha\\.com/.test(src)) || found('.h-captcha')) return 'hCaptcha'
+  if (frames.some((src) => /challenges\\.cloudflare\\.com/.test(src)) || found('.cf-turnstile, #challenge-form, #challenge-running')) return 'Cloudflare'
+  if (frames.some((src) => /captcha-delivery\\.com|geo\\.captcha/.test(src))) return 'DataDome'
+  const title = (document.title || '').toLowerCase()
+  const text = (document.body ? document.body.innerText : '').slice(0, 2000).toLowerCase()
+  if (/just a moment|attention required|access denied/.test(title) && /cloudflare|ray id/.test(text)) return 'Cloudflare'
+  if (/verify (that )?you are (a )?human|are you a robot|ich bin kein roboter|confirm you are human/.test(text)) return 'a human check'
+  return null
+}"""
+# The same signs in a page's HTML, for pages fetched without the browser.
+CHALLENGE_MARKERS = {
+    "reCAPTCHA": ("google.com/recaptcha/", 'class="g-recaptcha'),
+    "hCaptcha": ("hcaptcha.com/1/api.js", 'class="h-captcha'),
+    "Cloudflare": ("challenges.cloudflare.com", "cf-chl-", 'id="challenge-form"', 'class="cf-turnstile'),
+}
+
+
+def challenge_in_html(html: str) -> str | None:
+    """The kind of challenge a page's HTML holds, or None."""
+    for kind, markers in CHALLENGE_MARKERS.items():
+        if any(marker in html for marker in markers):
+            return kind
+    return None

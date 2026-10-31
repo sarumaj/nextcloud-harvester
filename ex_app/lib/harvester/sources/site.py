@@ -14,7 +14,7 @@ import json
 import posixpath
 import re
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator, Iterator
 from dataclasses import dataclass
 from typing import Any, BinaryIO
 from urllib.parse import urljoin
@@ -23,7 +23,7 @@ from bs4 import BeautifulSoup
 from playwright.sync_api import Route, sync_playwright
 
 from .. import browser, patterns, recipe as recipes
-from .base import AuthError, Item, Option, Source, SourceError
+from .base import AuthError, ChallengeError, Item, Option, Source, SourceError
 
 # The seen key a run records once it has gone through the whole site (not stopped by
 # max_items): from then on, a listing of known files ends the run (stop_at_seen).
@@ -73,8 +73,15 @@ class Driver(abc.ABC):
     def download(self, url: str) -> contextlib.AbstractContextManager[Response]:
         """Asks for the file."""
 
+    @abc.abstractmethod
+    def challenge(self, page: Any) -> tuple[str, str] | None:
+        """The page's address and the kind of challenge it holds (a CAPTCHA), or None."""
+
     def done(self, page: Any) -> None:
         """Closes a page no longer needed."""
+
+    def session(self) -> dict | None:
+        """The session to keep (cookies, local storage), or None."""
 
     def close(self) -> None:
         """Releases the driver."""
@@ -83,13 +90,25 @@ class Driver(abc.ABC):
 class HttpDriver(Driver):
     """Pages over HTTP, read with BeautifulSoup."""
 
-    def __init__(self, client):
+    def __init__(self, client, session: dict | None = None):
         self.client = client
+        # A kept browser session's cookies (the user's answer to a challenge, say).
+        for cookie in (session or {}).get("cookies", []):
+            self.client.cookies.set(
+                cookie["name"], cookie["value"], domain=cookie.get("domain", ""), path=cookie.get("path", "/")
+            )
 
     def open(self, url: str | None) -> Any:
         response = self.client.get(url)
+        kind = browser.challenge_in_html(response.text) if "html" in response.headers.get("content-type", "") else None
+        if kind:
+            raise ChallengeError(str(response.url), kind)
         response.raise_for_status()
         return str(response.url), BeautifulSoup(response.text, "html.parser")
+
+    def challenge(self, page: Any) -> tuple[str, str] | None:
+        kind = browser.challenge_in_html(str(page[1]))
+        return (page[0], kind) if kind else None
 
     def links(self, page: Any, selector: str) -> list[tuple[str, str]]:
         page_url, soup = page
@@ -115,28 +134,59 @@ class HttpDriver(Driver):
 
 
 class BrowserDriver(Driver):
-    """Pages in Chromium: the steps replayed in the first tab, followed links in tabs of their own."""
+    """Pages in Chromium: the steps replayed in the first tab, followed links in tabs of their own.
 
-    def __init__(self, steps: list[dict], secrets: dict[str, str]):
+    With a kept session the sign-in steps are skipped while the listing shows no login form. A
+    step that fails on a page asking for a person raises ChallengeError (only then: a login page
+    may well carry an invisible CAPTCHA that lets people through)."""
+
+    def __init__(self, steps: list[dict], secrets: dict[str, str], session: dict | None = None, start: str = ""):
         if not browser.LOCK.acquire(timeout=LOCK_TIMEOUT):  # pylint: disable=consider-using-with
             raise SourceError("the browser stayed busy (a recording or another job)")
+        self._playwright = None
+        self._browser = None
         try:
             self._playwright = sync_playwright().start()
             self._browser = self._playwright.chromium.launch(args=browser.LAUNCH_ARGS)
-        except Exception:
-            browser.LOCK.release()
+            self.context = self._browser.new_context(
+                viewport=browser.VIEWPORT, accept_downloads=False, storage_state=session or None  # type: ignore[arg-type]
+            )
+            self.context.route("**/*", guard)
+            self.context.set_default_timeout(STEP_TIMEOUT)
+            self.main = self.context.new_page()
+            self.sign_in(steps, secrets, session, start)
+        except BaseException:
+            # Whatever failed, the browser closes and its lock is free for the next job.
+            self.close()
             raise
-        self.context = self._browser.new_context(viewport=browser.VIEWPORT, accept_downloads=False)
-        self.context.route("**/*", guard)
-        self.context.set_default_timeout(STEP_TIMEOUT)
-        self.main = self.context.new_page()
+
+    def sign_in(self, steps: list[dict], secrets: dict[str, str], session: dict | None, start: str) -> None:
+        """Replays the steps, unless the kept session still reaches the listing."""
+        if session and start:
+            self.main.goto(start, wait_until="domcontentloaded")
+            settle(self.main)
+            if not self.main.query_selector("input[type=password]:visible"):
+                return
         for number, step in enumerate(steps, 1):
             try:
                 replay(self.main, step, secrets)
             except Exception as error:
+                found = self.challenge(self.main)
+                if found:
+                    raise ChallengeError(*found) from error
                 raise SourceError(
                     f"step {number} ({step['action']} {step.get('text') or ''}) failed: {error}"
                 ) from error
+
+    def challenge(self, page: Any) -> tuple[str, str] | None:
+        try:
+            kind = page.evaluate(browser.CHALLENGE_SCRIPT)
+        except Exception:  # pylint: disable=broad-exception-caught
+            return None  # the page is gone or navigating
+        return (page.url, kind) if kind else None
+
+    def session(self) -> dict | None:
+        return self.context.storage_state()  # type: ignore[return-value]
 
     def open(self, url: str | None) -> Any:
         if url is None:
@@ -171,8 +221,10 @@ class BrowserDriver(Driver):
 
     def close(self) -> None:
         try:
-            self._browser.close()
-            self._playwright.stop()
+            if self._browser:
+                self._browser.close()
+            if self._playwright:
+                self._playwright.stop()
         finally:
             browser.LOCK.release()
 
@@ -260,14 +312,22 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
         if problems:
             raise SourceError("; ".join(problems))
         self.driver: Driver | None = None
+        self.kept: dict | None = None
         self.sleep: Callable[[float], None] = time.sleep
+
+    def restore(self, session: dict) -> None:
+        self.kept = session
+
+    def session(self) -> dict | None:
+        return self.driver.session() if self.driver else None
 
     def _driver(self) -> Driver:
         if self.driver is None:
             if recipes.uses_browser(self.recipe) or int(self.settings["browser"]):
-                self.driver = BrowserDriver(self.recipe.get("steps") or [], self.secrets)
+                steps = self.recipe.get("steps") or []
+                self.driver = BrowserDriver(steps, self.secrets, self.kept, self.recipe.get("start") or "")
             else:
-                self.driver = HttpDriver(self.client)
+                self.driver = HttpDriver(self.client, self.kept)
         return self.driver
 
     def items(self, seen: Callable[[str], bool]) -> Iterator[Item]:
@@ -286,28 +346,43 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
                     found.append((url, text, patterns.group_values(match)))
             return found
 
+        # A page without the links it should have may be asking for a person instead.
+        def blocked(page) -> None:
+            found = driver.challenge(page)
+            if found:
+                raise ChallengeError(*found)
+
+        # The file links of a listing's page; True when the listing ends there (no file links, or
+        # only known ones while known files end the run).
+        def files(page, number: int, values: dict, outcome: dict) -> Generator[Item, None, bool]:
+            found = matching(page, self.recipe["links"])
+            if not found:
+                blocked(page)
+            new = [entry for entry in found if not seen(entry[0])]
+            outcome["found"] |= bool(found)
+            outcome["new"] |= bool(new)
+            for link, text, groups in new:
+                yield self.item(link, text, number, values | groups)
+            return not found or bool(stop_at_seen and not new)
+
         # Each listing reports whether it found files and whether any was new.
         def walk(url: str | None, level: int, values: dict, outcome: dict) -> Iterator[Item]:
             page = driver.open(url)
             try:
                 for number in range(1, int(self.settings["max_pages"]) + 1):
                     if level < len(follow):
-                        for link, _, groups in matching(page, follow[level]):
+                        links = matching(page, follow[level])
+                        if not links:
+                            blocked(page)
+                        for link, _, groups in links:
                             child = {"found": False, "new": False}
                             yield from walk(link, level + 1, values | groups, child)
                             outcome["found"] |= child["found"]
                             outcome["new"] |= child["new"]
                             if stop_at_seen and child["found"] and not child["new"]:
                                 return
-                    else:
-                        found = matching(page, self.recipe["links"])
-                        new = [entry for entry in found if not seen(entry[0])]
-                        outcome["found"] |= bool(found)
-                        outcome["new"] |= bool(new)
-                        for link, text, groups in new:
-                            yield self.item(link, text, number, values | groups)
-                        if not found or (stop_at_seen and not new):
-                            return
+                    elif (yield from files(page, number, values, outcome)):
+                        return
                     after = self.recipe.get("next") or {}
                     if not after.get("selector") or int(after.get("level", 0)) != level:
                         return
@@ -360,6 +435,9 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
                     raise SourceError(f"{item.url} answered {response.status}")
                 web_page = response.headers.get("content-type", "").startswith("text/html")
                 if web_page and self.settings["file_type"] != "html":
+                    kind = browser.challenge_in_html(b"".join(response.chunks).decode("utf-8", "replace"))
+                    if kind:
+                        raise ChallengeError(response.url, kind)
                     raise SourceError(f"got a web page instead of a file for {item.url} (signed out?)")
                 size = 0
                 for chunk in response.chunks:

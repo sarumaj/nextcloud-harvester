@@ -63,16 +63,26 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
             recipe["next"] = self.next
         return recipe
 
-    async def start(self) -> None:
-        """Starts the browser with an empty page."""
+    async def start(self, session: dict | None = None, url: str = "") -> None:
+        """Starts the browser with an empty page, or with a job's session at a page of it (the one
+        that asked for a person)."""
         self._playwright = await async_playwright().start()
         self._browser = await self._playwright.chromium.launch(args=LAUNCH_ARGS)
-        self._context = await self._browser.new_context(viewport=VIEWPORT, accept_downloads=False)
+        self._context = await self._browser.new_context(
+            viewport=VIEWPORT, accept_downloads=False, storage_state=session or None  # type: ignore[arg-type]
+        )
         await self._context.route("**/*", self._guard)
         await self._context.expose_binding("__harvesterReport", self._report)
         await self._context.add_init_script(SCRIPT)
         self._context.on("page", lambda page: asyncio.ensure_future(self._show(page)))
         await self._show(await self._context.new_page())
+        if url and allowed_url(url) and self._page:
+            await self._page.goto(url, wait_until="domcontentloaded")
+
+    async def session(self) -> dict:
+        """The browser's session now: cookies and local storage, for the job to continue with."""
+        assert self._context is not None
+        return await self._context.storage_state()  # type: ignore[return-value]
 
     async def close(self) -> None:
         """Closes the browser, within seconds even when a page or a send is stuck."""

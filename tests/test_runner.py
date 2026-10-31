@@ -3,10 +3,14 @@
 # pylint: disable=missing-function-docstring
 
 import datetime
+import json
+import sqlite3
+import time
 
+from harvester import executor as executor_module
 from harvester import runner
 from harvester.executor import is_due
-from harvester.sources import Item, Source
+from harvester.sources import ChallengeError, Item, Source
 from harvester.store import Job, Store
 
 
@@ -96,3 +100,82 @@ def test_store(tmp_path):
     assert (store.job(job.id or 0) or job).last_message == "1 downloaded"
     store.delete(job.id or 0)
     assert store.jobs() == [] and not store.seen(job.id or 0, "k")
+
+
+class FakePreferences:
+    """A user's preferences in Nextcloud: a dictionary."""
+
+    def __init__(self):
+        self.values: dict[str, str] = {}
+
+    def get_value(self, key, default=None):
+        return self.values.get(key, default)
+
+    def set_value(self, key, value, sensitive=None):  # pylint: disable=unused-argument
+        self.values[key] = value
+
+
+class FakeNextcloud:  # pylint: disable=too-few-public-methods
+    """What the executor uses of NextcloudApp."""
+
+    def __init__(self):
+        self.preferences_ex = FakePreferences()
+        self.sent: list[tuple[str, str, str]] = []
+        self.notifications = self
+        self.app_cfg = type("Config", (), {"endpoint": "https://cloud.example/"})()
+        self.user = ""
+
+    def set_user(self, user):
+        self.user = user
+
+    def create(self, subject, message="", link=""):
+        self.sent.append((subject, message, link))
+
+
+class AskingSource(FakeSource):
+    """A source whose site asks for a person, after setting a cookie."""
+
+    name = "asking"
+
+    def items(self, seen):
+        raise ChallengeError("https://site.example/list", "reCAPTCHA")
+        yield  # pylint: disable=unreachable
+
+    def session(self):
+        return {"cookies": [{"name": "sid", "value": "1"}], "origins": []}
+
+
+def test_a_challenge_waits_for_the_user(tmp_path, monkeypatch):
+    monkeypatch.setitem(executor_module.SOURCES, "asking", AskingSource)
+    store = Store(str(tmp_path / "db"))
+    job = store.save(Job(user="u", name="Site", source="asking", target="/x", schedule="* * * * *"))
+    nc = FakeNextcloud()
+    executor_module.Executor(store, lambda: nc).run(job)
+
+    stored = store.job(job.id or 0)
+    assert stored is not None and stored.last_status == "challenge"
+    assert stored.challenge_url == "https://site.example/list"
+    assert nc.sent == [
+        (
+            "Harvester: Site needs you",
+            "https://site.example/list asks for a person (reCAPTCHA).",
+            "https://cloud.example/index.php/apps/app_api/embedded/harvester/harvester",
+        )
+    ]
+    assert json.loads(nc.preferences_ex.values[f"session.job{job.id}"])["cookies"][0]["name"] == "sid"
+    assert not is_due(stored, time.time() + 3600), "a job waiting for its user is not run by its schedule"
+
+
+def test_an_older_database_gets_the_new_column(tmp_path):
+    path = str(tmp_path / "db")
+    old = sqlite3.connect(path)
+    old.executescript(
+        "CREATE TABLE jobs (id INTEGER PRIMARY KEY, user TEXT NOT NULL, name TEXT NOT NULL, source TEXT NOT NULL,"
+        " options TEXT NOT NULL, target TEXT NOT NULL, tags TEXT NOT NULL, schedule TEXT NOT NULL,"
+        " enabled INTEGER NOT NULL, created REAL NOT NULL, last_run REAL, last_status TEXT, last_message TEXT);"
+        "INSERT INTO jobs VALUES (1, 'u', 'n', 'site', '{}', '/x', '[]', '* * * * *', 1, 0, NULL, NULL, NULL);"
+    )
+    old.commit()
+    old.close()
+    job = Store(path).job(1)
+    assert job is not None and job.challenge_url is None

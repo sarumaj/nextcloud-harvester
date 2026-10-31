@@ -16,6 +16,16 @@ class AuthError(SourceError):
     """The credentials were refused: running again will not help until they change."""
 
 
+class ChallengeError(SourceError):
+    """The site asks for a person (a CAPTCHA, a "verify you are human" page): the job waits for its
+    user to answer it in the recorder's browser, whose session the next run then uses."""
+
+    def __init__(self, url: str, kind: str):
+        super().__init__(f"{url} asks for a person ({kind}): continue in the browser")
+        self.url = url
+        self.kind = kind
+
+
 @dataclass(frozen=True)
 class Item:
     """One file on the site."""
@@ -63,6 +73,12 @@ class Source(abc.ABC):
     @abc.abstractmethod
     def fetch(self, item: Item, dest: BinaryIO) -> None:
         """Writes the item's content to dest."""
+
+    def restore(self, session: dict) -> None:
+        """Starts from the session kept after the last run (or the user's answer to a challenge)."""
+
+    def session(self) -> dict | None:
+        """The browser session to keep for the next run (cookies, local storage), or None."""
 
     def close(self) -> None:
         """Releases what the source holds (a browser); called after every run."""

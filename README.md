@@ -21,6 +21,13 @@ the app's browser or taken from a template, not by code.
   page (solid) and what it leaves out (dashed), lists examples with their values, and proposes
   a file name and tags. Edit a pattern and the outlines follow. Passwords are never recorded:
   the job fills in its account.
+- **Sessions and challenges:** a job keeps its browser session (cookies, local storage;
+  encrypted in Nextcloud, like its account) and replays the sign-in only when the listing shows
+  a login form. When a site asks for a person instead (reCAPTCHA, hCaptcha, Cloudflare, "verify
+  you are human") the run stops, the job shows **Needs you** and its user gets a notification;
+  scheduled runs wait. **Continue in the browser** opens the recorder's browser with the job's
+  session at that page: the person answers it, **Done** keeps the session and runs the job.
+  Harvester never answers a challenge itself.
 - **Downloads:** a pause between files; waits when the site asks (429 or 503 with
   `Retry-After`, or a wait pattern on the URL it redirects to, like heise's `wait_sec=`); never a
   web page instead of a file; an expected file type (`pdf`, `zip`, `image`, ...) and size.

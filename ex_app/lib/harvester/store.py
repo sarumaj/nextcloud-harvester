@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     created REAL NOT NULL,
     last_run REAL,
     last_status TEXT,
-    last_message TEXT
+    last_message TEXT,
+    challenge_url TEXT
 );
 CREATE TABLE IF NOT EXISTS seen (
     job INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
@@ -49,6 +50,8 @@ class Job:
     last_run: float | None = None
     last_status: str | None = None
     last_message: str | None = None
+    # The page that asked for a person (status "challenge"), where the user continues.
+    challenge_url: str | None = None
 
 
 class Store:
@@ -59,6 +62,10 @@ class Store:
         self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA foreign_keys = ON")
         self._db.executescript(SCHEMA)
+        # Columns added since a database was made.
+        columns = {row["name"] for row in self._db.execute("PRAGMA table_info(jobs)")}
+        if "challenge_url" not in columns:
+            self._db.execute("ALTER TABLE jobs ADD COLUMN challenge_url TEXT")
         self._lock = threading.Lock()
 
     @staticmethod
@@ -118,12 +125,12 @@ class Store:
         with self._lock, self._db:
             self._db.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
 
-    def finish(self, job_id: int, status: str, message: str) -> None:
-        """Records the outcome of a run."""
+    def finish(self, job_id: int, status: str, message: str, challenge_url: str | None = None) -> None:
+        """Records the outcome of a run (and the page that asked for a person, if one did)."""
         with self._lock, self._db:
             self._db.execute(
-                "UPDATE jobs SET last_run = ?, last_status = ?, last_message = ? WHERE id = ?",
-                (time.time(), status, message, job_id),
+                "UPDATE jobs SET last_run = ?, last_status = ?, last_message = ?, challenge_url = ? WHERE id = ?",
+                (time.time(), status, message, challenge_url, job_id),
             )
 
     def seen(self, job_id: int, key: str) -> bool:
