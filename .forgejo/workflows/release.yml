@@ -1,0 +1,89 @@
+---
+# A tag vX.Y.Z (the version and the image tag in appinfo/info.xml) becomes a release: the
+# External App's source as harvester-X.Y.Z.tar.gz on the Forgejo release, signed with the
+# app's key when there is one. The homelab's nextcloud role builds the image from the tag and
+# registers the app with that version, so a tag that differs from info.xml fails here.
+#
+# Not published on the Nextcloud app store: info.xml names the image local.homelab/harvester,
+# which only the homelab's own daemon has (no registry other servers could pull it from), and
+# the store's schema does not know an External App's routes yet.
+#
+# Secrets: APP_SIGNING_KEY, the private key of an app store certificate for harvester (PEM).
+# Without it the archive is attached unsigned.
+#
+# Run by hand ("tag": an existing tag) to make the release of a tag pushed before this
+# workflow existed: fj actions dispatch release.yml main -I tag=v0.3.0.
+name: Release
+# A failed job mails whoever started the run. Renovate's bot has no mailbox: when its
+# branch fails, Renovate opens a pull request, which mails the repository's watchers.
+enable-email-notifications: true
+"on":
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The tag to release (vX.Y.Z)
+        required: true
+
+jobs:
+  release:
+    runs-on: docker
+    container: docker.io/library/debian:bookworm-slim
+    timeout-minutes: 15
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+      API: ${{ github.server_url }}/api/v1/repos/${{ github.repository }}
+      TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Install the tools
+        run: apt-get update -qq && apt-get install -qq -y --no-install-recommends ca-certificates curl git jq openssl >/dev/null
+
+      - name: Check out the tag
+        run: |
+          case "$TAG" in v[0-9]*) ;; *) echo "$TAG is not a release tag"; exit 1;; esac
+          git init -q . && git remote add origin "${{ github.server_url }}/${{ github.repository }}.git"
+          git fetch -q --depth 1 origin "refs/tags/$TAG:refs/tags/$TAG"
+          git checkout -q "$TAG"
+
+      - name: Check the tag is the app's version and image tag
+        run: |
+          version=$(sed -n 's:.*<version>\(.*\)</version>.*:\1:p' appinfo/info.xml)
+          image=$(sed -n 's:.*<image-tag>\(.*\)</image-tag>.*:\1:p' appinfo/info.xml)
+          test "v$version" = "$TAG" || { echo "info.xml says version $version, the tag is $TAG"; exit 1; }
+          test "$image" = "$version" || { echo "info.xml's image tag $image differs from its version $version"; exit 1; }
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      # The source the image is built from (what Git tracks, without CI and tests), in a
+      # folder named as the app, reproducible from the tag.
+      - name: Build the archive
+        run: |
+          git archive --format=tar --prefix=harvester/ "$TAG" -- . ':!.forgejo' ':!tests' ':!renovate.json' \
+            | gzip -n > "harvester-$VERSION.tar.gz"
+          tar -tzf "harvester-$VERSION.tar.gz" | head -20
+          ls -l "harvester-$VERSION.tar.gz"
+
+      - name: Sign the archive
+        env:
+          KEY: ${{ secrets.APP_SIGNING_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then echo "::warning::No APP_SIGNING_KEY: the archive is not signed"; exit 0; fi
+          umask 077 && printf '%s\n' "$KEY" > /tmp/key.pem
+          openssl dgst -sha512 -sign /tmp/key.pem "harvester-$VERSION.tar.gz" | openssl base64 -A > signature.txt
+          rm /tmp/key.pem
+
+      - name: Attach the archive to the release
+        run: |
+          auth="Authorization: token $TOKEN"
+          id=$(curl -fsS -H "$auth" "$API/releases/tags/$TAG" | jq -r .id) || id=""
+          if [ -z "$id" ] || [ "$id" = null ]; then
+            id=$(jq -n --arg t "$TAG" '{tag_name: $t, name: $t}' \
+              | curl -fsS -H "$auth" -H 'Content-Type: application/json' -d @- "$API/releases" | jq -r .id)
+          fi
+          for name in "harvester-$VERSION.tar.gz" signature.txt; do
+            [ -f "$name" ] || continue
+            old=$(curl -fsS -H "$auth" "$API/releases/$id/assets" | jq -r --arg n "$name" '.[] | select(.name == $n) | .id')
+            [ -n "$old" ] && curl -fsS -X DELETE -H "$auth" "$API/releases/$id/assets/$old"
+            url=$(curl -fsS -H "$auth" -F "attachment=@$name" "$API/releases/$id/assets?name=$name" | jq -r .browser_download_url)
+            echo "$name: $url"
+          done
