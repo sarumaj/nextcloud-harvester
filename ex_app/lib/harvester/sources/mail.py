@@ -78,18 +78,45 @@ class Mail(Source):
     description = "Attachments of the messages in a mailbox (IMAP), e.g. invoices from a sender; read-only."
     credentials = ("username", "password")
     options = {
-        "host": Option("IMAP server", "", "e.g. mail.example.org (TLS on the port below)."),
-        "port": Option("Port", 993, "IMAP over TLS: 993."),
-        "folder": Option("Folder", "INBOX", "The mailbox folder, e.g. INBOX or Invoices."),
-        "since_days": Option("Days back", 90, "Only messages of the last this many days (0: all)."),
-        "from_pattern": Option("From", "", "Regular expression on the sender (name and address); empty: any."),
-        "subject_pattern": Option("Subject", "", "Regular expression on the subject; empty: any."),
-        "filename_pattern": Option("Attachment names", ".*", "Regular expression on the attachment's file name."),
+        "host": Option(
+            "IMAP server", "", "e.g. mail.example.org (TLS on the port below).", placeholder="mail.example.org"
+        ),
+        "port": Option("Port", 993, "IMAP over TLS: 993.", minimum=1, maximum=65535),
+        "folder": Option(
+            "Folder",
+            "INBOX",
+            "The mailbox folder, e.g. INBOX or Invoices.",
+            suggestions=("INBOX", "INBOX/Invoices", "Archive", "Sent"),
+        ),
+        "since_days": Option("Days back", 90, "Only messages of the last this many days (0: all).", minimum=0),
+        "from_pattern": Option(
+            "From",
+            "",
+            "Regular expression on the sender (name and address); empty: any.",
+            kind="regex",
+            placeholder="invoice@shop\\.example",
+        ),
+        "subject_pattern": Option(
+            "Subject",
+            "",
+            "Regular expression on the subject; empty: any.",
+            kind="regex",
+            placeholder="Rechnung|Invoice",
+        ),
+        "filename_pattern": Option(
+            "Attachment names",
+            ".*",
+            "Regular expression on the attachment's file name.",
+            kind="regex",
+            placeholder="\\.pdf$",
+        ),
         "path": Option(
             "File name",
             "{year}/{date} {filename}",
             "Relative to the folder: {filename}, {stem}, {ext}, {date}, {year}, {month}, {day}, {from}, {sender}, "
             "{subject}.",
+            kind="template",
+            values=("from", "sender", "subject", "date", "year", "month", "day", "filename", "stem", "ext"),
         ),
         "file_type": download.DOWNLOAD_OPTIONS["file_type"],
         "min_size": download.DOWNLOAD_OPTIONS["min_size"],
@@ -222,13 +249,10 @@ class Mail(Source):
     def wanted(self, payload: bytes, content_type: str) -> bool:
         """Whether an attachment is of the job's type and size: another one (a signature's logo,
         say) is not the job's, and is left out rather than failing the run."""
-        file_type = str(self.settings["file_type"])
-        magic, _ = download.FILE_TYPES[file_type]
-        if magic and not payload.startswith(magic):
+        if not download.accepts(download.file_types(self.settings), content_type, payload):
             return False
-        if file_type in ("audio", "video") and not content_type.startswith(f"{file_type}/"):
-            return False
-        return len(payload) >= int(self.settings["min_size"] or 0)
+        largest = int(self.settings.get("max_size", 4096) or 4096) * 1024 * 1024
+        return int(self.settings["min_size"] or 0) <= len(payload) <= largest
 
     @staticmethod
     def message_values(message: EmailMessage) -> dict:

@@ -1,34 +1,43 @@
-"""The user's files and tags in Nextcloud, through the app's access as that user."""
+"""The user's files and tags in Nextcloud, through the app's access as that user.
+
+nc_py_api's client is asynchronous; the runner and the sources are not (Playwright's sync API,
+httpx). The executor's thread keeps an event loop of its own and passes its run_until_complete
+as call: each Nextcloud request runs to its end there, between the sources' work.
+"""
 
 import posixpath
-from typing import BinaryIO
+from collections.abc import Awaitable, Callable
+from typing import Any, BinaryIO
 
-from nc_py_api import NextcloudApp, NextcloudException, NextcloudExceptionNotFound
+from nc_py_api import AsyncNextcloudApp, NextcloudException, NextcloudExceptionNotFound
 
 from .runner import Library
+
+Call = Callable[[Awaitable[Any]], Any]
 
 
 class NextcloudLibrary(Library):
     """The files of the user nc acts for."""
 
-    def __init__(self, nc: NextcloudApp):
+    def __init__(self, nc: AsyncNextcloudApp, call: Call):
         self.nc = nc
+        self.call = call
         self._tags: dict[str, int] = {}
 
     def find(self, path: str) -> int | None:
         # by_path raises for a path that does not exist (WebDAV's 404), rather than returning None.
         try:
-            node = self.nc.files.by_path(path)
+            node = self.call(self.nc.files.by_path(path))
         except NextcloudExceptionNotFound:
             return None
         return node.info.fileid if node else None
 
     def put(self, path: str, content: BinaryIO) -> int:
-        self.nc.files.makedirs(posixpath.dirname(path), exist_ok=True)
-        return self.nc.files.upload_stream(path, content).info.fileid
+        self.call(self.nc.files.makedirs(posixpath.dirname(path), exist_ok=True))
+        return self.call(self.nc.files.upload_stream(path, content)).info.fileid
 
     def _tag_ids(self) -> dict[str, int]:
-        return {tag.display_name: tag.tag_id for tag in self.nc.files.list_tags()}
+        return {tag.display_name: tag.tag_id for tag in self.call(self.nc.files.list_tags())}
 
     def tag(self, file_id: int, tags: list[str]) -> None:
         # Nextcloud answers 409 Conflict to a tag already on the file (a file tagged before a run
@@ -39,7 +48,7 @@ class NextcloudLibrary(Library):
             missing = [name for name in tags if name not in self._tags]
             for name in missing:
                 try:
-                    self.nc.files.create_tag(name)
+                    self.call(self.nc.files.create_tag(name))
                 except NextcloudException as error:
                     if error.status_code != 409:
                         raise
@@ -50,7 +59,7 @@ class NextcloudLibrary(Library):
             if tag_id is None:
                 continue
             try:
-                self.nc.files.assign_tag(file_id, tag_id)
+                self.call(self.nc.files.assign_tag(file_id, tag_id))
             except NextcloudException as error:
                 if error.status_code != 409:
                     raise

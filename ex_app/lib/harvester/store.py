@@ -58,9 +58,13 @@ class Store:
     """Thread-safe access to the database: the web requests and the scheduler share it."""
 
     def __init__(self, path: str):
-        self._db = sqlite3.connect(path, check_same_thread=False)
+        self._db = sqlite3.connect(path, check_same_thread=False, timeout=30)
         self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA foreign_keys = ON")
+        # A write-ahead log: a crash mid-write leaves the database whole, and readers do not
+        # wait for a writer.
+        self._db.execute("PRAGMA journal_mode = WAL")
+        self._db.execute("PRAGMA synchronous = NORMAL")
         self._db.executescript(SCHEMA)
         # Columns added since a database was made.
         columns = {row["name"] for row in self._db.execute("PRAGMA table_info(jobs)")}

@@ -81,6 +81,9 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN playwright install --with-deps --only-shell chromium && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# The unprivileged user the app runs as (start.sh drops to it).
+RUN useradd --system --uid 10001 --user-group --create-home --home-dir /home/harvester harvester
+
 # The app.
 COPY ex_app/img /ex_app/img
 COPY ex_app/js /ex_app/js

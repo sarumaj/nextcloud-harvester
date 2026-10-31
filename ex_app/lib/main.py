@@ -5,15 +5,16 @@ import json
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlparse
 from typing import Annotated
 
 from croniter import croniter
-from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from nc_py_api import NextcloudApp
-from nc_py_api.ex_app import AppAPIAuthMiddleware, nc_app, persistent_storage, run_app, set_handlers
+from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from nc_py_api import AsyncNextcloudApp
+from nc_py_api.ex_app import AppAPIAuthMiddleware, anc_app, persistent_storage, run_app, set_handlers
 from pydantic import BaseModel, Field, field_validator
 
-from harvester import browser
+from harvester import browser, schedule
 from harvester.browser.recorder import Recorder
 from harvester.executor import Executor, credential_key, load_session, save_session, session_key
 from harvester.presets import PRESETS, make_job
@@ -38,7 +39,18 @@ async def lifespan(app: FastAPI):
 
 APP = FastAPI(lifespan=lifespan)
 APP.add_middleware(AppAPIAuthMiddleware)
-NC = Annotated[NextcloudApp, Depends(nc_app)]
+NC = Annotated[AsyncNextcloudApp, Depends(anc_app)]
+
+
+def allowed_origin(origin: str) -> bool:
+    """Whether a page of this origin may open the recorder: Nextcloud's own (NEXTCLOUD_URL), or one
+    of HARVESTER_ORIGINS (comma-separated, for a Nextcloud reached under more names). No origin:
+    not a browser, which HaRP authenticated all the same."""
+    if not origin:
+        return True
+    allowed = {f"{urlparse(url).scheme}://{urlparse(url).netloc}" for url in [os.environ.get("NEXTCLOUD_URL", "")]}
+    allowed |= {item.strip().rstrip("/") for item in os.environ.get("HARVESTER_ORIGINS", "").split(",") if item.strip()}
+    return origin.rstrip("/") in allowed
 
 
 def store() -> Store:
@@ -50,11 +62,14 @@ class JobIn(BaseModel):
     """A job as the page sends it."""
 
     name: str = Field(min_length=1, max_length=200)
-    source: str
-    target: str = Field(min_length=1)
-    schedule: str = "0 6 * * *"
-    options: dict[str, str | int] = {}
-    tags: list[str] = []
+    source: str = Field(max_length=40)
+    target: str = Field(min_length=1, max_length=1000)
+    schedule: str = Field("0 6 * * *", max_length=100)
+    # Bounded: a recipe is a few kilobytes; nothing a person types needs more.
+    options: dict[Annotated[str, Field(max_length=60)], Annotated[str, Field(max_length=100_000)] | int] = Field(
+        {}, max_length=40
+    )
+    tags: list[Annotated[str, Field(max_length=200)]] = Field([], max_length=50)
     enabled: bool = True
 
     @field_validator("source")
@@ -86,16 +101,18 @@ class JobIn(BaseModel):
         return list(dict.fromkeys(tag.strip() for tag in value if tag.strip()))
 
 
-def own_job(job_id: int, nc: NextcloudApp) -> Job:
+async def own_job(job_id: int, nc: AsyncNextcloudApp) -> Job:
     """The user's job, or 404 (also for another user's)."""
     job = store().job(job_id)
-    if job is None or job.user != nc.user:
+    if job is None or job.user != await nc.user:
         raise HTTPException(404, "no such job")
     return job
 
 
-# Options that count something and must be at least 1 (0 would fetch nothing, ever).
-AT_LEAST_ONE = ("max_items", "max_pages", "max_entries")
+# Options that count something and must be at least 1 (0 would fetch nothing, ever); -1 means
+# no limit where UNLIMITED allows it.
+AT_LEAST_ONE = ("max_items", "max_pages", "max_entries", "max_size")
+UNLIMITED = ("max_items",)
 
 
 def checked(body: JobIn) -> JobIn:
@@ -103,10 +120,12 @@ def checked(body: JobIn) -> JobIn:
     for name in AT_LEAST_ONE:
         if name in body.options:
             try:
-                if int(body.options[name]) < 1:
+                value = int(body.options[name])
+                if value < 1 and not (value == -1 and name in UNLIMITED):
                     raise ValueError
             except (TypeError, ValueError) as error:
-                raise HTTPException(422, f"{name} must be a number of at least 1") from error
+                hint = " (or -1: no limit)" if name in UNLIMITED else ""
+                raise HTTPException(422, f"{name} must be a number of at least 1{hint}") from error
     try:
         SOURCES[body.source](body.options, {}, None).close()
     except SourceError as error:
@@ -149,23 +168,32 @@ def preset_job(preset_id: str, body: dict[str, str]) -> dict:
         raise HTTPException(422, str(error)) from error
 
 
+@APP.get("/api/schedule")
+def explain_schedule(expression: Annotated[str, Query(max_length=100)]) -> dict:
+    """The schedule in words and its next runs (timestamps), for the job's form as it is typed."""
+    try:
+        return {"description": schedule.describe(expression), "next": schedule.next_runs(expression)}
+    except ValueError as error:
+        return {"error": str(error)}
+
+
 @APP.get("/api/jobs")
-def list_jobs(nc: NC) -> list[dict]:
+async def list_jobs(nc: NC) -> list[dict]:
     """The user's jobs, with how their last run went."""
     running = STATE["executor"].running
-    return [vars(job) | {"running": job.id == running} for job in store().jobs(nc.user)]
+    return [vars(job) | {"running": job.id == running} for job in store().jobs(await nc.user)]
 
 
 @APP.post("/api/jobs")
-def create_job(body: JobIn, nc: NC) -> dict:
+async def create_job(body: JobIn, nc: NC) -> dict:
     """Adds a job."""
-    return vars(store().save(Job(user=nc.user, **checked(body).model_dump())))
+    return vars(store().save(Job(user=await nc.user, **checked(body).model_dump())))
 
 
 @APP.put("/api/jobs/{job_id}")
-def update_job(job_id: int, body: JobIn, nc: NC) -> dict:
+async def update_job(job_id: int, body: JobIn, nc: NC) -> dict:
     """Changes a job's settings."""
-    job = own_job(job_id, nc)
+    job = await own_job(job_id, nc)
     saved = store().save(Job(id=job.id, user=job.user, created=job.created, **checked(body).model_dump()))
     # Another source or recipe lists other files: "known files end the run" waits for its first
     # complete pass again.
@@ -175,10 +203,10 @@ def update_job(job_id: int, body: JobIn, nc: NC) -> dict:
 
 
 @APP.delete("/api/jobs/{job_id}")
-def delete_job(job_id: int, nc: NC) -> dict:
+async def delete_job(job_id: int, nc: NC) -> dict:
     """Deletes a job and its own account; the files it downloaded stay."""
-    job = own_job(job_id, nc)
-    nc.preferences_ex.delete(
+    job = await own_job(job_id, nc)
+    await nc.preferences_ex.delete(
         [credential_key(job, name) for name in SOURCES[job.source].credentials] + [session_key(job)]
     )
     store().delete(job.id or 0)
@@ -186,28 +214,31 @@ def delete_job(job_id: int, nc: NC) -> dict:
 
 
 @APP.post("/api/jobs/{job_id}/run")
-def run_job(job_id: int, nc: NC) -> dict:
+async def run_job(job_id: int, nc: NC) -> dict:
     """Runs a job now (after the one running)."""
-    STATE["executor"].request(own_job(job_id, nc).id)
+    STATE["executor"].request((await own_job(job_id, nc)).id)
     return {}
 
 
 @APP.get("/api/jobs/{job_id}/credentials")
-def get_credentials(job_id: int, nc: NC) -> dict[str, bool]:
+async def get_credentials(job_id: int, nc: NC) -> dict[str, bool]:
     """Which of the job's credentials the user has set (never their values)."""
-    job = own_job(job_id, nc)
+    job = await own_job(job_id, nc)
     return {
-        name: bool(nc.preferences_ex.get_value(credential_key(job, name))) for name in SOURCES[job.source].credentials
+        name: bool(await nc.preferences_ex.get_value(credential_key(job, name)))
+        for name in SOURCES[job.source].credentials
     }
 
 
 @APP.put("/api/jobs/{job_id}/credentials")
-def set_credentials(job_id: int, body: dict[str, str], nc: NC) -> dict:
+async def set_credentials(
+    job_id: int, body: dict[Annotated[str, Field(max_length=40)], Annotated[str, Field(max_length=65_536)]], nc: NC
+) -> dict:
     """Stores the credentials given (an empty one is left as it was), encrypted by Nextcloud."""
-    job = own_job(job_id, nc)
+    job = await own_job(job_id, nc)
     for name in SOURCES[job.source].credentials:
         if body.get(name):
-            nc.preferences_ex.set_value(credential_key(job, name), body[name], sensitive=True)
+            await nc.preferences_ex.set_value(credential_key(job, name), body[name], sensitive=True)
     return {}
 
 
@@ -219,27 +250,13 @@ async def record(websocket: WebSocket, nc: NC) -> None:
     that asked for a person; {type: save-session} keeps the browser's session for the job,
     clears the challenge and runs the job again."""
     await websocket.accept()
-    job = None
-    if websocket.query_params.get("job"):
-        try:
-            job = own_job(int(websocket.query_params["job"]), nc)
-        except (ValueError, HTTPException):
-            await websocket.send_json({"type": "error", "message": "No such job."})
-            await websocket.close()
-            return
-    if not browser.LOCK.acquire(blocking=False):  # pylint: disable=consider-using-with
-        await websocket.send_json({"type": "error", "message": "The browser is busy (a job or another recording)."})
-        await websocket.close()
+    allowed, job = await admit(websocket, nc)
+    if not allowed:
         return
     recorder = Recorder(websocket.send_json)
     try:
         if job:
-            kept = await asyncio.to_thread(load_session, nc, job)
-            try:
-                start = json.loads(str(job.options.get("recipe") or "{}") or "{}").get("start", "")
-            except (ValueError, AttributeError):
-                start = ""  # a job of another source, or a recipe being edited: the page alone
-            await recorder.start(kept, job.challenge_url or start)
+            await recorder.start(await load_session(nc, job), job.challenge_url or start_of(job))
             await recorder.handle({"type": "mode", "mode": "browse"})
         else:
             await recorder.start()
@@ -264,20 +281,51 @@ async def record(websocket: WebSocket, nc: NC) -> None:
         await asyncio.shield(closing)
 
 
-async def save_answer(job: Job, session: dict, nc: NextcloudApp) -> None:
+async def admit(websocket: WebSocket, nc: AsyncNextcloudApp) -> tuple[bool, Job | None]:
+    """Whether the recording may start (and the job it continues, if any), with the browser's
+    lock taken; else the page is told why and the socket closed."""
+    refusal = ""
+    job = None
+    # Only Nextcloud's own pages may open it (a browser sends the page's origin): another site
+    # could otherwise drive a person's recorder with their session.
+    if not allowed_origin(websocket.headers.get("origin", "")):
+        refusal = "This page may not open the recorder."
+    elif websocket.query_params.get("job"):
+        try:
+            job = await own_job(int(websocket.query_params["job"]), nc)
+        except (ValueError, HTTPException):
+            refusal = "No such job."
+    if not refusal and not browser.LOCK.acquire(blocking=False):  # pylint: disable=consider-using-with
+        refusal = "The browser is busy (a job or another recording)."
+    if refusal:
+        await websocket.send_json({"type": "error", "message": refusal})
+        await websocket.close(code=1008)
+        return False, None
+    return True, job
+
+
+def start_of(job: Job) -> str:
+    """The listing a job's recipe starts at, or "" (another source, or a recipe being edited)."""
+    try:
+        return str(json.loads(str(job.options.get("recipe") or "{}") or "{}").get("start", ""))
+    except (ValueError, AttributeError):
+        return ""
+
+
+async def save_answer(job: Job, session: dict, nc: AsyncNextcloudApp) -> None:
     """Keeps the session the user left the browser with, and runs the job again with it."""
-    await asyncio.to_thread(save_session, nc, job, session)
+    await save_session(nc, job, session)
     store().finish(job.id or 0, "ok", "continued in the browser")
     STATE["executor"].request(job.id)
 
 
-def enabled_handler(enabled: bool, nc: NextcloudApp) -> str:
+async def enabled_handler(enabled: bool, nc: AsyncNextcloudApp) -> str:
     """Adds the app's entry to the top menu, with its page's script."""
     if enabled:
-        nc.ui.resources.set_script("top_menu", "harvester", "js/harvester-main")
-        nc.ui.top_menu.register("harvester", "Harvester", "img/app.svg")
+        await nc.ui.resources.set_script("top_menu", "harvester", "js/harvester-main")
+        await nc.ui.top_menu.register("harvester", "Harvester", "img/app.svg")
     else:
-        nc.ui.top_menu.unregister("harvester")
+        await nc.ui.top_menu.unregister("harvester")
     return ""
 
 

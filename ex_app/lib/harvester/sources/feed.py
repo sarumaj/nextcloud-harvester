@@ -33,16 +33,43 @@ class Feed(Source):
     title = "Feed or podcast"
     description = "The files of a news feed (RSS or Atom): podcast episodes, attached documents or each entry's link."
     options = {
-        "url": Option("Feed", "", "The feed's address (RSS or Atom)."),
-        "take": Option(
-            "Take", "enclosures", "enclosures: the attached files (podcast episodes); links: each entry's link."
+        "url": Option(
+            "Feed", "", "The feed's address (RSS or Atom).", kind="url", placeholder="https://example.org/feed.xml"
         ),
-        "link_pattern": Option("Link pattern", "", "Regular expression the file's URL must match (empty: all)."),
+        "take": Option(
+            "Take",
+            "enclosures",
+            "enclosures: the attached files (podcast episodes); links: each entry's link.",
+            choices=TAKES,
+        ),
+        "link_pattern": Option(
+            "Link pattern",
+            "",
+            "Regular expression the file's URL must match (empty: all).",
+            kind="regex",
+            placeholder="\\.mp3$",
+        ),
         "path": Option(
             "File name",
             "{feed}/{year}/{title}{ext}",
             "Relative to the folder: {title}, {feed}, {author}, {date}, {year}, {month}, {day}, {filename}, {stem}, "
             "{ext}.",
+            kind="template",
+            values=(
+                "feed",
+                "title",
+                "author",
+                "date",
+                "year",
+                "month",
+                "day",
+                "filename",
+                "stem",
+                "ext",
+                "text",
+                "host",
+                "guid",
+            ),
         ),
         **download.DOWNLOAD_OPTIONS,
     }

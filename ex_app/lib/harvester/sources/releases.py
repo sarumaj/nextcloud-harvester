@@ -33,16 +33,30 @@ class Releases(Source):
     description = "The files attached to a repository's releases on GitHub, or on a Forgejo or Gitea server."
     credentials = ("token",)
     options = {
-        "repository": Option("Repository", "", "Its address, e.g. https://github.com/owner/name."),
-        "asset_pattern": Option("Files", ".*", "Regular expression the file's name must match, e.g. \\.AppImage$."),
-        "prereleases": Option("Prereleases", 0, "1: also the files of prereleases."),
+        "repository": Option(
+            "Repository",
+            "",
+            "Its address, e.g. https://github.com/owner/name.",
+            kind="url",
+            placeholder="https://github.com/owner/name",
+        ),
+        "asset_pattern": Option(
+            "Files",
+            ".*",
+            "Regular expression the file's name must match, e.g. \\.AppImage$.",
+            kind="regex",
+            placeholder="\\.AppImage$",
+        ),
+        "prereleases": Option("Prereleases", 0, "Also the files of prereleases.", kind="flag"),
         "path": Option(
             "File name",
             "{tag}/{filename}",
             "Relative to the folder: {tag}, {version} (the tag without v), {name}, {repo}, {filename}, {stem}, "
             "{ext}, {year}, {month}, {day} (of the release).",
+            kind="template",
+            values=("repo", "tag", "version", "name", "filename", "stem", "ext", "year", "month", "day"),
         ),
-        "max_pages": Option("Pages", 1, "At most this many pages of 30 releases (the newest first)."),
+        "max_pages": Option("Pages", 1, "At most this many pages of 30 releases (the newest first).", minimum=1),
         **download.DOWNLOAD_OPTIONS,
     }
     pause = 1.0

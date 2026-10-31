@@ -119,7 +119,7 @@ class BrowserDriver(Driver):
         self._browser = None
         try:
             self._playwright = sync_playwright().start()
-            self._browser = self._playwright.chromium.launch(args=browser.LAUNCH_ARGS)
+            self._browser = self._playwright.chromium.launch(args=browser.LAUNCH_ARGS, env=browser.child_env())
             self.context = self._browser.new_context(
                 viewport=browser.VIEWPORT, accept_downloads=False, storage_state=session or None  # type: ignore[arg-type]
             )
@@ -186,8 +186,13 @@ class BrowserDriver(Driver):
     @contextlib.contextmanager
     def download(self, url: str) -> Iterator[Response]:
         response = self.context.request.get(url, timeout=300_000)
+
+        # Read only when asked for: after the checks of the status and the announced size.
+        def body() -> Iterator[bytes]:
+            yield response.body()
+
         try:
-            yield Response(response.status, response.url, response.headers, iter([response.body()]))
+            yield Response(response.status, response.url, response.headers, body())
         finally:
             response.dispose()
 
@@ -203,7 +208,7 @@ class BrowserDriver(Driver):
 
 def guard(route: Route) -> None:
     """Lets the browser load only what it may open (harvester.browser.allowed_url)."""
-    if browser.allowed_url(route.request.url):
+    if browser.reachable(route.request.url):
         route.continue_()
     else:
         route.abort("blockedbyclient")
@@ -247,20 +252,34 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
         "recipe": Option(
             "Recipe", "", "Record it in the browser, or start from a template; the JSON can be edited.", kind="recipe"
         ),
-        "browser": Option("Use the browser", 0, "1: fetch the pages in Chromium even without steps (JavaScript)."),
+        "browser": Option(
+            "Use the browser",
+            0,
+            "Fetch the pages in Chromium even without steps (pages built by JavaScript).",
+            kind="flag",
+        ),
         "download_url": Option(
-            "Download URL", "{url}", "The file's address from the link's values, e.g. {url}/download."
+            "Download URL",
+            "{url}",
+            "The file's address from the link's values, e.g. {url}/download.",
+            kind="template",
+            values=("filename", "stem", "ext", "text", "page", "host", "url"),
         ),
         "path": Option(
             "File name",
             "{filename}",
             "Relative to the folder, from the link's values: {filename}, {stem}, {ext}, {text}, {page}, {host} and "
             "the pattern's groups, e.g. {year}/{text}.",
+            kind="template",
+            values=("filename", "stem", "ext", "text", "page", "host", "url"),
         ),
         **download.DOWNLOAD_OPTIONS,
-        "max_pages": Option("Pages", 10, "At most this many pages of a listing."),
+        "max_pages": Option("Pages", 10, "At most this many pages of a listing.", minimum=1),
         "stop_at_seen": Option(
-            "Stop at known files", 1, "1: once the site went through completely, a listing of known files ends the run."
+            "Stop at known files",
+            1,
+            "Once the site went through completely, a listing of known files ends the run.",
+            kind="flag",
         ),
     }
     pause = 2.0

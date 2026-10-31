@@ -7,8 +7,12 @@ app's secret among them), and the network rules of the External Apps keep it off
 network in any case.
 """
 
+import functools
 import ipaddress
+import os
+import socket
 import threading
+import time
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -16,6 +20,25 @@ LOCK = threading.Lock()
 SCRIPT = (Path(__file__).parent / "recorder.js").read_text(encoding="utf-8")
 VIEWPORT = {"width": 1280, "height": 800}
 LAUNCH_ARGS = ["--disable-dev-shm-usage"]
+# What the browser and the helper programs (rclone, gallery-dl) may see of the app's
+# environment: the app's AppAPI secret and HaRP's key stay out (a page that broke out of
+# Chromium, which has no sandbox in a container, would find nothing to take).
+CHILD_ENV_KEYS = (
+    "PATH",
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "TZ",
+    "TMPDIR",
+    "PLAYWRIGHT_BROWSERS_PATH",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+)
+
+
+def child_env() -> dict[str, str]:
+    """The environment of a child process: the few variables it needs, no secret."""
+    return {key: os.environ[key] for key in CHILD_ENV_KEYS if key in os.environ}
 
 
 def allowed_host(host: str) -> bool:
@@ -28,6 +51,31 @@ def allowed_host(host: str) -> bool:
         return ipaddress.ip_address(host).is_global
     except ValueError:
         return True
+
+
+@functools.lru_cache(maxsize=512)
+def _resolves_public(host: str, _period: int) -> bool:
+    """Whether every address the name resolves to is public (cached per five-minute period)."""
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except OSError:
+        return True  # a name that does not resolve fails by itself
+    return all(ipaddress.ip_address(str(info[4][0]).split("%", maxsplit=1)[0]).is_global for info in infos)
+
+
+def reachable(url: str) -> bool:
+    """allowed_url, and the host's name resolves to public addresses only: a public name that
+    points at a private address (or a redirect to one) is refused too, not only by the External
+    Apps' network rules. (Between this lookup and the connection, the name could still change:
+    those rules stay the guard against that.)"""
+    if not allowed_url(url):
+        return False
+    host = (urlparse(url).hostname or "").strip("[]")
+    try:
+        ipaddress.ip_address(host)
+        return True  # an address, already checked by allowed_url
+    except ValueError:
+        return _resolves_public(host.lower(), int(time.time() // 300))
 
 
 def allowed_url(url: str) -> bool:

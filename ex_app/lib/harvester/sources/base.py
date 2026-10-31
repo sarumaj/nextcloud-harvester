@@ -46,8 +46,25 @@ class Option:
     title: str
     default: str | int
     description: str = ""
-    # How the job's form shows it: text, or recipe (the recorder's button and its JSON).
+    # How the job's form shows it: text; url (an address, checked as typed); regex (checked as
+    # typed); template (a file name or address made of values, with the values to insert);
+    # flag (a checkbox, kept as 1 or 0); recipe (the recorder's button and its JSON). A number
+    # default makes a number field.
     kind: str = "text"
+    # The unit of a size (bytes, MB): the form shows the value in readable units beside it.
+    unit: str = ""
+    # The only values it may have: the form offers them in a list (several kept comma-separated
+    # with multiple).
+    choices: tuple[str, ...] = ()
+    multiple: bool = False
+    # Values the form suggests, the field taking others too (yt-dlp's formats, IMAP folders).
+    suggestions: tuple[str, ...] = ()
+    # A template's values, offered for insertion ({year}, {title}, ...).
+    values: tuple[str, ...] = ()
+    # A number's bounds; an example shown in an empty field.
+    minimum: int | None = None
+    maximum: int | None = None
+    placeholder: str = ""
 
 
 class Source(abc.ABC):

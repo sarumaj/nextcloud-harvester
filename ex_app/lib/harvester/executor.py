@@ -1,22 +1,28 @@
 """Runs the jobs when their schedule says, and when a user asks; one at a time."""
 
+import asyncio
 import datetime
 import json
+import logging
 import queue
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
-import httpx
 from croniter import croniter
-from nc_py_api import NextcloudApp
+from nc_py_api import AsyncNextcloudApp
 
 from . import runner
 from .nextcloud import NextcloudLibrary
 from .sources import SOURCES, AuthError, ChallengeError
+from .sources.download import guarded_client
 from .store import Job, Store
 
-USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) Nextcloud-Harvester"
+LOG = logging.getLogger("harvester.executor")
+# The longest a run goes on: then it stops after the file it is at, the rest comes next run
+# (a first run of a big site, a slow server), and the other jobs get their turn.
+RUN_LIMIT = 2 * 3600
 
 
 def is_due(job: Job, now: float) -> bool:
@@ -38,19 +44,19 @@ def session_key(job: Job) -> str:
     return f"session.job{job.id}"
 
 
-def load_session(nc: NextcloudApp, job: Job) -> dict | None:
+async def load_session(nc: AsyncNextcloudApp, job: Job) -> dict | None:
     """The job's kept session, or None."""
-    value = nc.preferences_ex.get_value(session_key(job))
+    value = await nc.preferences_ex.get_value(session_key(job))
     try:
         return json.loads(value) if value else None
     except ValueError:
         return None
 
 
-def save_session(nc: NextcloudApp, job: Job, session: dict | None) -> None:
+async def save_session(nc: AsyncNextcloudApp, job: Job, session: dict | None) -> None:
     """Keeps the job's session for its next run."""
     if session:
-        nc.preferences_ex.set_value(session_key(job), json.dumps(session), sensitive=True)
+        await nc.preferences_ex.set_value(session_key(job), json.dumps(session), sensitive=True)
 
 
 def plain(text: str) -> str:
@@ -59,19 +65,23 @@ def plain(text: str) -> str:
     return text.replace("{", "(").replace("}", ")").replace("%", "\uff05")[:400]
 
 
-def page_link(nc: NextcloudApp) -> str:
+def page_link(nc: AsyncNextcloudApp) -> str:
     """The app's page in Nextcloud, for notifications."""
     return f"{nc.app_cfg.endpoint.rstrip('/')}/index.php/apps/app_api/embedded/harvester/harvester"
 
 
 class Executor:
-    """The background thread: a queue of the runs asked for, and the schedule checked each minute."""
+    """The background thread: a queue of the runs asked for, and the schedule checked each minute.
 
-    def __init__(self, store: Store, connect: Callable[[], NextcloudApp] = NextcloudApp):
+    nc_py_api's client is asynchronous, the sources are not: the thread has an event loop of its
+    own, and each Nextcloud request runs to its end on it (call), between the sources' work."""
+
+    def __init__(self, store: Store, connect: Callable[[], AsyncNextcloudApp] = AsyncNextcloudApp):
         self.store = store
         self.connect = connect
         self.requests: queue.Queue[int] = queue.Queue()
         self.running: int | None = None
+        self._events: asyncio.AbstractEventLoop | None = None
         self._thread = threading.Thread(target=self._loop, name="executor", daemon=True)
 
     def start(self) -> None:
@@ -82,52 +92,70 @@ class Executor:
         """Runs the job as soon as the jobs before it are done."""
         self.requests.put(job_id)
 
+    def call(self, awaitable: Awaitable[Any]) -> Any:
+        """Runs a Nextcloud request to its end on the thread's event loop."""
+        if self._events is None:
+            self._events = asyncio.new_event_loop()
+        return self._events.run_until_complete(awaitable)
+
     def _loop(self) -> None:
         while True:
+            # Whatever goes wrong here (the database, a bug), the thread goes on: else no job
+            # would run again until the app restarts, and nobody would be told.
             try:
-                job = self.store.job(self.requests.get(timeout=60))
-                if job:
-                    self.run(job)
-            except queue.Empty:
-                pass
-            for listed in self.store.jobs():
-                # Read again just before its run: the runs before it may have taken long, and the
-                # job may have been changed, disabled or deleted meanwhile.
-                job = self.store.job(listed.id or 0)
-                if job and is_due(job, time.time()):
-                    self.run(job)
+                self._turn()
+            except Exception:  # pylint: disable=broad-exception-caught
+                LOG.exception("the executor's turn failed")
+                time.sleep(60)
+
+    def _turn(self) -> None:
+        """Runs the run asked for (or waits a minute for one), then the jobs that are due."""
+        try:
+            job = self.store.job(self.requests.get(timeout=60))
+            if job:
+                self.run(job)
+        except queue.Empty:
+            pass
+        for listed in self.store.jobs():
+            # Read again just before its run: the runs before it may have taken long, and the
+            # job may have been changed, disabled or deleted meanwhile.
+            job = self.store.job(listed.id or 0)
+            if job and is_due(job, time.time()):
+                self.run(job)
 
     def run(self, job: Job) -> None:
-        """Runs the job and records how it went; a failure is also a notification to its user."""
+        """Runs the job and records how it went; a new failure is also a notification to its user."""
         assert job.id is not None
         job_id = job.id
         self.running = job_id
         nc = self.connect()
         try:
-            nc.set_user(job.user)
+            self.call(nc.set_user(job.user))
             source_class = SOURCES[job.source]
             credentials = {
-                name: nc.preferences_ex.get_value(credential_key(job, name)) or "" for name in source_class.credentials
+                name: self.call(nc.preferences_ex.get_value(credential_key(job, name))) or ""
+                for name in source_class.credentials
             }
-            with httpx.Client(follow_redirects=True, timeout=120, headers={"User-Agent": USER_AGENT}) as client:
+            with guarded_client() as client:
                 source = source_class(job.options, credentials, client)
-                kept = load_session(nc, job)
+                kept = self.call(load_session(nc, job))
                 if kept:
                     source.restore(kept)
                 try:
                     message = runner.run(
                         job,
                         source,
-                        NextcloudLibrary(nc),
+                        NextcloudLibrary(nc, self.call),
                         lambda key: self.store.seen(job_id, key),
                         lambda key: self.store.mark_seen(job_id, key),
+                        until=time.monotonic() + RUN_LIMIT,
                     )
                 finally:
                     # Kept also after a failure: cookies set before it (a sign-in) still count;
                     # not for a job deleted while it ran (its session went with it).
                     try:
                         if self.store.job(job_id):
-                            save_session(nc, job, source.session())
+                            self.call(save_session(nc, job, source.session()))
                     finally:
                         source.close()
             self.store.finish(job_id, "ok", message)
@@ -143,15 +171,18 @@ class Executor:
             if not self.store.job(job_id):
                 return
             message = str(error) or type(error).__name__
-            self.store.finish(job_id, "auth" if isinstance(error, AuthError) else "failed", message)
-            self.notify(nc, f"Harvester: {job.name} failed", message)
+            status = "auth" if isinstance(error, AuthError) else "failed"
+            LOG.warning("job %s (%s) %s: %s", job_id, job.user, status, message)
+            self.store.finish(job_id, status, message)
+            # Told once: the same failure on the next scheduled runs is no news.
+            if (job.last_status, job.last_message) != (status, message):
+                self.notify(nc, f"Harvester: {job.name} failed", message)
         finally:
             self.running = None
 
-    @staticmethod
-    def notify(nc: NextcloudApp, subject: str, message: str) -> None:
+    def notify(self, nc: AsyncNextcloudApp, subject: str, message: str) -> None:
         """Tells the job's user, with a link to the app's page; a notification that fails is lost."""
         try:
-            nc.notifications.create(plain(subject), plain(message), link=page_link(nc))
+            self.call(nc.notifications.create(plain(subject), plain(message), link=page_link(nc)))
         except Exception:  # pylint: disable=broad-exception-caught
-            pass
+            LOG.warning("a notification could not be sent: %s", subject)

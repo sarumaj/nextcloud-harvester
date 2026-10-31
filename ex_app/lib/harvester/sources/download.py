@@ -13,12 +13,16 @@ from typing import BinaryIO
 
 import httpx
 
-from ..browser import allowed_url, challenge_in_html
+from ..browser import allowed_url, challenge_in_html, reachable
 from .base import AuthError, ChallengeError, Option, SourceError
 
+USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) Nextcloud-Harvester"
 # Waits a site asks for, per file; and the longest one honoured.
 MAX_WAITS = 5
 MAX_WAIT = 900
+# Network failures (a dropped connection, a timeout) tried again per file, after growing pauses.
+RETRIES = 3
+RETRY_PAUSE = 10
 # What a file must start with, and its extension when the name has none. Audio and video are
 # told by their content type instead (their containers do not start alike).
 FILE_TYPES: dict[str, tuple[tuple[bytes, ...], str]] = {
@@ -31,13 +35,31 @@ FILE_TYPES: dict[str, tuple[tuple[bytes, ...], str]] = {
     "html": ((), ".html"),
 }
 DOWNLOAD_OPTIONS = {
-    "file_type": Option("File type", "any", "any, pdf, zip, image, audio, video or html: anything else is refused."),
-    "min_size": Option("Smallest file (bytes)", 0, "Smaller answers are refused (an error page, say)."),
+    "file_type": Option(
+        "File types",
+        "any",
+        "One or several (Ctrl or ⌘ and click to pick more, e.g. pdf and zip); any: every type. Anything else is "
+        "refused (an error page, say).",
+        choices=("any", "pdf", "zip", "image", "audio", "video", "html"),
+        multiple=True,
+    ),
+    "min_size": Option(
+        "Smallest file (bytes)", 0, "Smaller answers are refused (an error page, say).", unit="bytes", minimum=0
+    ),
+    "max_size": Option(
+        "Largest file (MB)",
+        4096,
+        "A larger file is refused (the container's disk and memory).",
+        unit="MB",
+        minimum=1,
+    ),
     "wait_pattern": Option(
         "Wait pattern",
         "",
         "Regular expression on the URL the site redirects to when it wants a pause; its first group is the "
         "seconds (e.g. wait_sec=(\\d+)).",
+        kind="regex",
+        placeholder="wait_sec=(\\d+)",
     ),
 }
 
@@ -55,11 +77,15 @@ class Response:
 Opener = Callable[[str], contextlib.AbstractContextManager[Response]]
 
 
+def file_types(settings: dict) -> list[str]:
+    """The job's file types: one or several, comma-separated ("pdf,zip"); none or "any": any."""
+    types = [kind.strip().lower() for kind in str(settings.get("file_type", "any") or "any").split(",") if kind.strip()]
+    return ["any"] if not types or "any" in types else list(dict.fromkeys(types))
+
+
 def problems(settings: dict) -> list[str]:
     """What is wrong with a job's download settings."""
-    found = []
-    if str(settings.get("file_type", "any")) not in FILE_TYPES:
-        found.append(f"unknown file type {settings.get('file_type')}")
+    found = [f"unknown file type {kind}" for kind in file_types(settings) if kind not in FILE_TYPES]
     try:
         re.compile(str(settings.get("wait_pattern", "")))
     except re.error as error:
@@ -68,8 +94,26 @@ def problems(settings: dict) -> list[str]:
 
 
 def extension(settings: dict) -> str:
-    """The extension a file of the job's type gets when its name has none."""
-    return FILE_TYPES[str(settings.get("file_type", "any"))][1]
+    """The extension a file of the job's type gets when its name has none: only with one type
+    (with several, a name without one cannot tell which)."""
+    types = file_types(settings)
+    return FILE_TYPES.get(types[0], ((), ""))[1] if len(types) == 1 else ""
+
+
+def accepts(types: list[str], content_type: str, start: bytes) -> bool:
+    """Whether a file is of one of the types: by how it starts, or for audio and video by its
+    content type (their containers do not start alike)."""
+    if "any" in types:
+        return True
+    for kind in types:
+        magic, _ = FILE_TYPES.get(kind, ((), ""))
+        if magic and start.startswith(magic):
+            return True
+        if kind in ("audio", "video") and content_type.startswith((f"{kind}/", "application/octet-stream", "binary/")):
+            return True
+        if kind == "html" and content_type.startswith("text/html"):
+            return True
+    return False
 
 
 def with_extension(path: str, settings: dict) -> str:
@@ -77,6 +121,18 @@ def with_extension(path: str, settings: dict) -> str:
     name with a dot of its own, "v2.0 notes", still gets ".pdf")."""
     extension_ = extension(settings)
     return path + extension_ if extension_ and not path.lower().endswith(extension_) else path
+
+
+def guarded_client(**options) -> httpx.Client:
+    """An HTTP client for the sources: every request, a redirect's too, only to an address the
+    app may reach (browser.reachable), else SourceError."""
+
+    def check(request: httpx.Request) -> None:
+        if not reachable(str(request.url)):
+            raise SourceError(f"{request.url} may not be reached")
+
+    settings = {"follow_redirects": True, "timeout": 120, "headers": {"User-Agent": USER_AGENT}} | options
+    return httpx.Client(event_hooks={"request": [check]}, **settings)
 
 
 def http(client: httpx.Client) -> Opener:
@@ -113,35 +169,57 @@ def fetch(
     ChallengeError) when the answer is not the file."""
     if not allowed_url(url):
         raise SourceError(f"{url} may not be opened")
-    file_type = str(settings.get("file_type", "any"))
-    magic, _ = FILE_TYPES[file_type]
-    for _ in range(MAX_WAITS):
-        with opener(url) as response:
-            wait = pause(response, str(settings.get("wait_pattern", "")))
-            if wait is not None:
-                sleep(wait)
-                continue
-            if response.status in (401, 403):
-                raise AuthError(f"{url} answered {response.status}: the account may not download it")
-            if response.status >= 400:
-                raise SourceError(f"{url} answered {response.status}")
-            content_type = response.headers.get("content-type", "")
-            if content_type.startswith("text/html") and file_type != "html":
-                kind = challenge_in_html(b"".join(response.chunks).decode("utf-8", "replace"))
-                if kind:
-                    raise ChallengeError(response.url, kind)
-                raise SourceError(f"got a web page instead of a file for {url} (signed out?)")
-            if file_type in ("audio", "video") and not content_type.startswith(
-                (f"{file_type}/", "application/octet-stream", "binary/")
-            ):
-                raise SourceError(f"{url} is {content_type or 'of no type'}, not {file_type}")
-            size = 0
-            for chunk in response.chunks:
-                if size == 0 and magic and not chunk.startswith(magic):
-                    raise SourceError(f"{url} is not a {file_type} file")
-                dest.write(chunk)
-                size += len(chunk)
-            if size < int(settings.get("min_size", 0) or 0):
-                raise SourceError(f"{url} gave only {size} bytes")
+    failures = 0
+    for _ in range(MAX_WAITS + RETRIES):
+        try:
+            done = _attempt(opener, url, dest, settings, sleep)
+        except (httpx.TransportError, ConnectionError, TimeoutError) as error:
+            # A dropped connection or a timeout: tried again after a pause, a few times; what was
+            # written so far is dropped.
+            failures += 1
+            if failures > RETRIES:
+                raise SourceError(f"{url} could not be fetched: {error}") from error
+            dest.seek(0)
+            dest.truncate()
+            sleep(RETRY_PAUSE * failures)
+            continue
+        if done:
             return
     raise SourceError(f"the site kept asking to wait for {url}")
+
+
+def _attempt(
+    opener: Opener, url: str, dest: BinaryIO, settings: dict, sleep: Callable[[float], None]
+) -> bool:  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    """One request for the file: True once it is written, False after a pause the site asked for."""
+    types = file_types(settings)
+    with opener(url) as response:
+        wait = pause(response, str(settings.get("wait_pattern", "")))
+        if wait is not None:
+            sleep(wait)
+            return False
+        if response.status in (401, 403):
+            raise AuthError(f"{url} answered {response.status}: the account may not download it")
+        if response.status >= 400:
+            raise SourceError(f"{url} answered {response.status}")
+        content_type = response.headers.get("content-type", "")
+        if content_type.startswith("text/html") and "html" not in types:
+            kind = challenge_in_html(b"".join(response.chunks).decode("utf-8", "replace"))
+            if kind:
+                raise ChallengeError(response.url, kind)
+            raise SourceError(f"got a web page instead of a file for {url} (signed out?)")
+        largest = int(settings.get("max_size", 4096) or 4096) * 1024 * 1024
+        announced = response.headers.get("content-length", "")
+        if announced.isdigit() and int(announced) > largest:
+            raise SourceError(f"{url} is {int(announced) // 1048576} MB, more than the job's largest file")
+        size = 0
+        for chunk in response.chunks:
+            if size == 0 and not accepts(types, content_type, chunk):
+                raise SourceError(f"{url} is not of the job's file types ({', '.join(types)})")
+            size += len(chunk)
+            if size > largest:
+                raise SourceError(f"{url} is larger than the job's largest file")
+            dest.write(chunk)
+        if size < int(settings.get("min_size", 0) or 0):
+            raise SourceError(f"{url} gave only {size} bytes")
+        return True

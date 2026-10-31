@@ -24,7 +24,7 @@ from playwright.async_api import Browser, BrowserContext, CDPSession, Page, Play
 
 from .. import patterns
 from ..recipe import steps_from_events
-from . import LAUNCH_ARGS, SCRIPT, VIEWPORT, allowed_url
+from . import LAUNCH_ARGS, SCRIPT, VIEWPORT, allowed_url, child_env, reachable
 
 # record: steps; browse: go somewhere unrecorded; follow, links, next: pick links.
 MODES = ("record", "browse", "follow", "links", "next")
@@ -69,7 +69,7 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         """Starts the browser with an empty page, or with a job's session at a page of it (the one
         that asked for a person)."""
         self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(args=LAUNCH_ARGS)
+        self._browser = await self._playwright.chromium.launch(args=LAUNCH_ARGS, env=child_env())
         self._context = await self._browser.new_context(
             viewport=VIEWPORT, accept_downloads=False, storage_state=session or None  # type: ignore[arg-type]
         )
@@ -97,7 +97,8 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
 
     @staticmethod
     async def _guard(route: Route) -> None:
-        if allowed_url(route.request.url):
+        # The name's lookup off the event loop (the screen and the input go on meanwhile).
+        if await asyncio.to_thread(reachable, route.request.url):
             await route.continue_()
         else:
             await route.abort("blockedbyclient")

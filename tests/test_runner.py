@@ -2,6 +2,7 @@
 
 # pylint: disable=missing-function-docstring
 
+import asyncio
 import datetime
 import json
 import sqlite3
@@ -109,34 +110,42 @@ def test_store(tmp_path):
 
 
 class FakePreferences:
-    """A user's preferences in Nextcloud: a dictionary."""
+    """A user's preferences in Nextcloud: a dictionary (async, as nc_py_api's client)."""
 
     def __init__(self):
         self.values: dict[str, str] = {}
 
-    def get_value(self, key, default=None):
+    async def get_value(self, key, default=None):
         return self.values.get(key, default)
 
-    def set_value(self, key, value, sensitive=None):  # pylint: disable=unused-argument
+    async def set_value(self, key, value, sensitive=None):  # pylint: disable=unused-argument
         self.values[key] = value
+
+    async def delete(self, keys, not_fail=True):  # pylint: disable=unused-argument
+        for key in [keys] if isinstance(keys, str) else keys:
+            self.values.pop(key, None)
 
 
 class FakeNextcloud:  # pylint: disable=too-few-public-methods
-    """What the executor uses of NextcloudApp."""
+    """What the executor uses of AsyncNextcloudApp."""
 
     def __init__(self):
         self.preferences_ex = FakePreferences()
         self.sent: list[tuple[str, str, str]] = []
         self.notifications = self
         self.app_cfg = type("Config", (), {"endpoint": "https://cloud.example/"})()
-        self.user = ""
+        self._user = ""
         # Set by the tests that store files.
         self.files = None
 
-    def set_user(self, user):
-        self.user = user
+    @property
+    async def user(self):
+        return self._user
 
-    def create(self, subject, message="", link=""):
+    async def set_user(self, user):
+        self._user = user
+
+    async def create(self, subject, message="", link=""):
         self.sent.append((subject, message, link))
 
 
@@ -190,48 +199,50 @@ def test_an_older_database_gets_the_new_column(tmp_path):
 
 
 class FakeFiles:
-    """Nextcloud's files as nc_py_api reaches them: by_path raises for a missing path (404)."""
+    """Nextcloud's files as nc_py_api's async client reaches them: by_path raises for a missing
+    path (404); assigning a tag twice and creating an existing one answer 409 Conflict; "hidden"
+    exists but is not visible to the user."""
 
     def __init__(self):
         self.stored: dict[str, bytes] = {}
-        self.tags = {}
-        self.assigned = set()
+        self.tags: dict[str, int] = {}
+        self.assigned: set[tuple[int, int]] = set()
 
-    def by_path(self, path):
+    async def by_path(self, path):
         if path not in self.stored:
             raise NextcloudExceptionNotFound(f"<list: u, {path}>")
         return type("Node", (), {"info": type("Info", (), {"fileid": list(self.stored).index(path) + 1})()})()
 
-    def makedirs(self, path, exist_ok=False):  # pylint: disable=unused-argument
+    async def makedirs(self, path, exist_ok=False):  # pylint: disable=unused-argument
         return None
 
-    def upload_stream(self, path, content):
+    async def upload_stream(self, path, content):
         self.stored[path] = content.read()
-        return self.by_path(path)
+        return await self.by_path(path)
 
-    # Tags as Nextcloud keeps them: "hidden" exists but is not visible to the user; assigning a
-    # tag twice and creating an existing one answer 409 Conflict.
-    tags: dict[str, int] = {}
-    assigned: set[tuple[int, int]] = set()
-
-    def list_tags(self):
+    async def list_tags(self):
         return [type("Tag", (), {"display_name": name, "tag_id": i})() for name, i in self.tags.items()]
 
-    def create_tag(self, name):
+    async def create_tag(self, name):
         if name in self.tags or name == "hidden":
             raise NextcloudException(409, "Conflict")
         self.tags[name] = len(self.tags) + 1
 
-    def assign_tag(self, file_id, tag_id):
+    async def assign_tag(self, file_id, tag_id):
         if (file_id, tag_id) in self.assigned:
             raise NextcloudException(409, "Conflict")
         self.assigned.add((file_id, tag_id))
 
 
+def library_of(nc) -> NextcloudLibrary:
+    """The Nextcloud library over the fake, its requests run to their end as the executor does."""
+    return NextcloudLibrary(nc, asyncio.new_event_loop().run_until_complete)  # type: ignore[arg-type]
+
+
 def test_the_nextcloud_library_takes_a_missing_file_for_one_to_download():
     nc = FakeNextcloud()
     nc.files = FakeFiles()
-    library = NextcloudLibrary(nc)  # type: ignore[arg-type]
+    library = library_of(nc)
     job = Job(user="u", name="n", source="fake", target="/Zeitschriften/ix", schedule="* * * * *")
     seen: set[str] = set()
     assert runner.run(job, FakeSource({}, {}, None), library, seen.__contains__, seen.add, lambda s: None) == (
@@ -243,14 +254,14 @@ def test_the_nextcloud_library_takes_a_missing_file_for_one_to_download():
 def test_tagging_survives_tags_already_there_and_hidden_ones():
     nc = FakeNextcloud()
     nc.files = FakeFiles()
-    library = NextcloudLibrary(nc)  # type: ignore[arg-type]
+    library = library_of(nc)
     job = Job(user="u", name="n", source="fake", target="/x", schedule="* * * * *", tags=["mine", "hidden"])
     seen: set[str] = set()
     runner.run(job, FakeSource({}, {}, None), library, seen.__contains__, seen.add, lambda s: None)
     assert nc.files.assigned == {(1, 1), (2, 1), (3, 1)}, "'mine' on each file, 'hidden' left out"
     # A run that broke off after a file was tagged: it is found again and tagged again.
     library.tag(1, ["mine"])
-    assert NextcloudLibrary(nc).find("/x/a.txt") == 1  # type: ignore[arg-type]
+    assert library_of(nc).find("/x/a.txt") == 1
 
 
 class PartlyBroken(FakeSource):
@@ -329,3 +340,12 @@ def test_notifications_and_tags_come_out_as_they_are():
         "(year)/x names issue, see /login?forward=％2Fselect"
     )
     assert len(render_tags(["{subject}"], {"subject": "Re: " * 30})[0]) <= 64
+
+
+def test_minus_one_files_per_run_means_no_limit():
+    job = Job(user="u", name="n", source="fake", target="/In", schedule="* * * * *", options={"max_items": -1})
+    seen: set[str] = set()
+    assert runner.run(job, FakeSource({}, {}, None), FakeLibrary(), seen.__contains__, seen.add, lambda s: None) == (
+        "3 downloaded"
+    )
+    assert runner.FULL_PASS in seen

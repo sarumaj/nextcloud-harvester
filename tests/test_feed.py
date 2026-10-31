@@ -86,7 +86,7 @@ def test_atom_entries_links():
 def test_the_wrong_type_is_refused():
     made = Feed({"url": "https://example.org/podcast.rss", "file_type": "audio"}, {}, client())
     notes = next(item for item in made.items(lambda key: False) if item.url.endswith(".pdf"))
-    with pytest.raises(SourceError, match="not audio"):
+    with pytest.raises(SourceError, match=r"not of the job.s file types \(audio\)"):
         made.fetch(notes, io.BytesIO())
 
 

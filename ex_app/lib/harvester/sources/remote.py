@@ -23,7 +23,7 @@ from collections.abc import Callable, Iterator
 from typing import BinaryIO
 
 from .. import patterns
-from ..browser import allowed_host, allowed_url
+from ..browser import allowed_host, allowed_url, child_env
 from .base import Item, Option, Source, SourceError
 
 # Remotes on other machines. Not: local, and the wrappers (alias, union, combine, crypt, chunker,
@@ -107,14 +107,20 @@ class Remote(Source):  # pylint: disable=too-many-instance-attributes
     )
     credentials = ("config",)
     options = {
-        "path": Option("Folder on the remote", "", "The folder on the remote (empty: its root)."),
-        "include": Option("Files", "", "rclone's filter for the files, e.g. *.pdf or **/*.jpg (empty: all)."),
-        "recursive": Option("With subfolders", 1, "1: also the files in the folder's subfolders."),
+        "path": Option(
+            "Folder on the remote", "", "The folder on the remote (empty: its root).", placeholder="Documents/Invoices"
+        ),
+        "include": Option(
+            "Files", "", "rclone's filter for the files, e.g. *.pdf or **/*.jpg (empty: all).", placeholder="*.pdf"
+        ),
+        "recursive": Option("With subfolders", 1, "Also the files in the folder's subfolders.", kind="flag"),
         "path_template": Option(
             "File name",
             "{path}",
             "Relative to the job's folder: {path} (below the remote's folder), {dir}, {filename}, {stem}, {ext}, "
             "{year}, {month}, {day} (of the file's time).",
+            kind="template",
+            values=("path", "dir", "filename", "stem", "ext", "year", "month", "day"),
         ),
     }
     pause = 0.0
@@ -181,7 +187,12 @@ class Remote(Source):  # pylint: disable=too-many-instance-attributes
         if str(self.settings["include"]).strip():
             arguments += ["--include", str(self.settings["include"]).strip()]
         result = self.run(
-            self._command(*arguments, self._target()), capture_output=True, text=True, timeout=TIMEOUT, check=False
+            self._command(*arguments, self._target()),
+            capture_output=True,
+            text=True,
+            timeout=TIMEOUT,
+            check=False,
+            env=child_env(),
         )
         if result.returncode != 0:
             raise SourceError(f"rclone could not list {self._target()}: {last_line(result.stderr)}")
@@ -219,7 +230,8 @@ class Remote(Source):  # pylint: disable=too-many-instance-attributes
     def fetch(self, item: Item, dest: BinaryIO) -> None:
         # rclone's messages go to a file: a pipe read only at the end could fill up and stall it.
         with tempfile.TemporaryFile() as messages:
-            with self.popen(self._command("cat", item.url), stdout=subprocess.PIPE, stderr=messages) as process:
+            command = self._command("cat", item.url)
+            with self.popen(command, stdout=subprocess.PIPE, stderr=messages, env=child_env()) as process:
                 assert process.stdout is not None
                 for chunk in iter(lambda: process.stdout.read(1 << 20), b""):  # type: ignore[union-attr]
                     dest.write(chunk)

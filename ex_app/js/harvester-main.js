@@ -43,6 +43,47 @@
 			help ? el('small', { text: help }) : '')
 	}
 
+	// A size given in a unit (bytes, KB, MB, GB) in the largest unit it fills: 1572864 bytes is
+	// "≈ 1.5 MB", 4096 MB "= 4 GB". Units of 1024, as file managers count.
+	const SIZE_UNITS = ['bytes', 'KB', 'MB', 'GB', 'TB']
+	function sizeHint(value, unit) {
+		const number = Number(value)
+		if (value === '' || !Number.isFinite(number) || number < 0) return ''
+		let bytes = number * 1024 ** Math.max(0, SIZE_UNITS.indexOf(unit))
+		let index = 0
+		while (bytes >= 1024 && index < SIZE_UNITS.length - 1) {
+			bytes /= 1024
+			index += 1
+		}
+		const rounded = Math.round(bytes * 10) / 10
+		return `${rounded === bytes ? '=' : '≈'} ${rounded.toLocaleString()} ${SIZE_UNITS[index]}`
+	}
+	window.__harvesterSizeHint = sizeHint
+
+	// Each source's icon (24 × 24, drawn in the text's colour): a globe, an envelope, a feed, a
+	// play button, a picture, a cloud, a tag.
+	const ICONS = {
+		site: [['circle', { cx: 12, cy: 12, r: 9 }], ['ellipse', { cx: 12, cy: 12, rx: 4, ry: 9 }], ['path', { d: 'M3 12h18M5 7h14M5 17h14' }]],
+		mail: [['rect', { x: 3, y: 5, width: 18, height: 14, rx: 2 }], ['path', { d: 'M3 7l9 6 9-6' }]],
+		feed: [['circle', { cx: 6, cy: 18, r: 1.5 }], ['path', { d: 'M5 11a8 8 0 0 1 8 8M5 5a14 14 0 0 1 14 14' }]],
+		media: [['rect', { x: 3, y: 5, width: 18, height: 14, rx: 3 }], ['path', { d: 'M10 9l5 3-5 3z' }]],
+		gallery: [['rect', { x: 3, y: 4, width: 18, height: 16, rx: 2 }], ['circle', { cx: 9, cy: 9, r: 1.5 }], ['path', { d: 'M4 18l5-5 4 4 3-3 4 4' }]],
+		remote: [['path', { d: 'M7 18h10a4 4 0 0 0 .5-7.97A6 6 0 0 0 6.1 9.1 4.5 4.5 0 0 0 7 18z' }]],
+		releases: [['path', { d: 'M3 12V4h8l10 10-8 8z' }], ['circle', { cx: 7.5, cy: 7.5, r: 1.5 }]],
+	}
+	function icon(source) {
+		const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+		for (const [name, value] of Object.entries({ viewBox: '0 0 24 24', width: 20, height: 20, fill: 'none', stroke: 'currentColor', 'stroke-width': 1.8, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', class: 'harvester-icon', 'aria-hidden': 'true' })) {
+			svg.setAttribute(name, String(value))
+		}
+		for (const [tag, attributes] of ICONS[source] || ICONS.site) {
+			const shape = document.createElementNS('http://www.w3.org/2000/svg', tag)
+			for (const [name, value] of Object.entries(attributes)) shape.setAttribute(name, String(value))
+			svg.append(shape)
+		}
+		return svg
+	}
+
 	function when(timestamp) {
 		return timestamp ? new Date(timestamp * 1000).toLocaleString() : 'never'
 	}
@@ -64,7 +105,8 @@
 			const state = job.running ? 'running' : job.last_status || 'never'
 			const label = { running: 'Running', ok: 'OK', failed: 'Failed', auth: 'Sign-in refused', challenge: 'Needs you', never: 'Not run yet' }[state] || state
 			body.append(el('tr', {},
-				el('td', {}, el('strong', { text: job.name }), job.enabled ? '' : el('span', { class: 'harvester-chip', text: 'paused' })),
+				el('td', { class: 'harvester-with-icon', title: (sources.find((x) => x.name === job.source) || {}).title || job.source },
+					icon(job.source), el('strong', { text: job.name }), job.enabled ? '' : el('span', { class: 'harvester-chip', text: 'paused' })),
 				el('td', { class: 'harvester-muted', text: job.target }),
 				el('td', {}, el('code', { text: job.schedule })),
 				el('td', {}, ...job.tags.map((tag) => el('span', { class: 'harvester-chip', text: tag }))),
@@ -124,7 +166,7 @@
 		})
 		// One card per source: a blank job of it.
 		const kinds = sources.map((source) => el('div', { class: 'harvester-card harvester-kind' },
-			el('h3', { text: source.title }),
+			el('h3', { class: 'harvester-with-icon' }, icon(source.name), el('span', { text: source.title })),
 			el('p', { class: 'harvester-muted', text: source.description }),
 			el('button', { class: 'primary', text: 'Start', onclick: () => renderForm(root, null, { ...BLANK, source: source.name }) })))
 		root.replaceChildren(
@@ -394,11 +436,105 @@
 		url.focus()
 	}
 
+	// The input of an option, after its kind: an address, a pattern or a template (monospace), a
+	// number with its bounds, text with suggestions.
+	let suggestionLists = 0
+	function optionInput(option, current) {
+		const number = typeof option.default === 'number'
+		const attributes = { value: current, type: option.kind === 'url' ? 'url' : number ? 'number' : 'text', spellcheck: 'false' }
+		if (option.placeholder) attributes.placeholder = option.placeholder
+		if (number && option.minimum !== null && option.minimum !== undefined) attributes.min = String(option.minimum)
+		if (number && option.maximum !== null && option.maximum !== undefined) attributes.max = String(option.maximum)
+		if (['regex', 'template'].includes(option.kind)) attributes.class = 'harvester-code'
+		const input = el('input', attributes)
+		if (option.suggestions && option.suggestions.length) {
+			const id = `harvester-suggestions-${++suggestionLists}`
+			input.setAttribute('list', id)
+			// In the page already: a list the input refers to must be in the document.
+			document.body.append(el('datalist', { id }, ...option.suggestions.map((value) => el('option', { value }))))
+		}
+		return input
+	}
+
+	// What an option shows below its input: a pattern's check as typed, a template's values to
+	// insert at the caret, an address's check.
+	function optionHelp(option, input) {
+		if (option.kind === 'regex') {
+			const verdict = el('small', { class: 'harvester-check-result' })
+			const check = () => {
+				if (!input.value) {
+					verdict.textContent = ''
+					return
+				}
+				try {
+					// Python's named groups (?P<name>) as JavaScript writes them.
+					new RegExp(input.value.replace(/\(\?P</g, '(?<'))
+					verdict.textContent = '✓ a valid pattern'
+					verdict.classList.remove('harvester-error')
+				} catch (e) {
+					verdict.textContent = `✗ ${e.message.replace(/^Invalid regular expression: /, '')}`
+					verdict.classList.add('harvester-error')
+				}
+			}
+			input.addEventListener('input', check)
+			check()
+			return verdict
+		}
+		if (option.kind === 'url') {
+			const verdict = el('small', { class: 'harvester-check-result' })
+			const check = () => {
+				const bad = input.value && !/^https?:\/\/[^/\s]+/.test(input.value)
+				verdict.textContent = bad ? '✗ an address starting with https://' : ''
+				verdict.classList.toggle('harvester-error', Boolean(bad))
+			}
+			input.addEventListener('input', check)
+			check()
+			return verdict
+		}
+		if (option.kind === 'template' && option.values && option.values.length) {
+			const insert = (name) => {
+				const at = input.selectionStart ?? input.value.length
+				const end = input.selectionEnd ?? at
+				input.value = `${input.value.slice(0, at)}{${name}}${input.value.slice(end)}`
+				input.focus()
+				input.setSelectionRange(at + name.length + 2, at + name.length + 2)
+			}
+			return el('div', { class: 'harvester-values' }, el('small', { class: 'harvester-muted', text: 'Insert: ' }),
+				...option.values.map((name) => el('button', { type: 'button', class: 'harvester-chip', text: `{${name}}`, onclick: () => insert(name) })))
+		}
+		return null
+	}
+
 	function renderForm(root, job, prefill) {
 		const value = job || prefill || BLANK
 		const name = el('input', { value: value.name, required: '' })
 		const target = el('input', { value: value.target })
 		const schedule = el('input', { value: value.schedule })
+		// The schedule in words and its next runs in the person's time, as it is typed (the
+		// server reads it as the executor does).
+		const scheduleHint = el('p', { class: 'harvester-schedule', 'aria-live': 'polite' })
+		let scheduleTimer
+		const explainSchedule = () => {
+			clearTimeout(scheduleTimer)
+			scheduleTimer = setTimeout(async () => {
+				try {
+					const answer = await api('GET', `/schedule?expression=${encodeURIComponent(schedule.value.trim())}`)
+					scheduleHint.classList.toggle('harvester-error', Boolean(answer.error))
+					if (answer.error) {
+						scheduleHint.textContent = answer.error
+						return
+					}
+					const format = { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }
+					const next = answer.next.map((at) => new Date(at * 1000).toLocaleString(undefined, format)).join(' · ')
+					scheduleHint.replaceChildren(el('strong', { text: answer.description }), el('br'),
+						el('span', { class: 'harvester-muted', text: `Next runs (your time): ${next}` }))
+				} catch (e) {
+					scheduleHint.textContent = ''
+				}
+			}, 250)
+		}
+		schedule.addEventListener('input', explainSchedule)
+		explainSchedule()
 		const tags = el('input', { value: value.tags.join(', ') })
 		const enabled = el('input', { type: 'checkbox' })
 		enabled.checked = value.enabled !== false
@@ -425,8 +561,42 @@
 				options.append(field(option.title, textarea, option.description),
 					el('button', { type: 'button', text: 'Record in the browser', onclick: () => openRecorder(root, page, textarea, applySuggestions) }))
 			} else {
-				optionInputs[key] = el('input', { value: current, type: typeof option.default === 'number' ? 'number' : 'text' })
+				if (option.kind === 'flag') {
+					// On or off, kept as 1 or 0 (as the jobs saved before the checkbox).
+					const box = el('input', { type: 'checkbox' })
+					box.checked = Number(current) === 1
+					optionInputs[key] = { get value() { return box.checked ? 1 : 0 } }
+					options.append(el('label', { class: 'harvester-check' }, box,
+						el('span', {}, el('strong', { text: option.title }), el('br'), el('small', { class: 'harvester-muted', text: option.description }))))
+					continue
+				}
+				if (option.choices && option.choices.length) {
+					// The values it may have; several (kept comma-separated) where it allows them.
+					const chosen = String(current).split(',').map((v) => v.trim())
+					const select = el('select', option.multiple ? { multiple: '', size: String(Math.min(option.choices.length, 7)) } : {},
+						...option.choices.map((choice) => {
+							const item = el('option', { value: choice, text: choice })
+							item.selected = chosen.includes(choice)
+							return item
+						}))
+					optionInputs[key] = {
+						get value() { return [...select.selectedOptions].map((item) => item.value).join(',') || option.default },
+					}
+					options.append(field(option.title, select, option.description))
+					continue
+				}
+				optionInputs[key] = optionInput(option, current)
 				options.append(field(option.title, optionInputs[key], option.description))
+				const extra = optionHelp(option, optionInputs[key])
+				if (extra) optionInputs[key].after(extra)
+				if (option.unit) {
+					// A size in readable units beside the number, as it is typed.
+					const readable = el('small', { class: 'harvester-size' })
+					const update = () => { readable.textContent = sizeHint(optionInputs[key].value, option.unit) }
+					optionInputs[key].addEventListener('input', update)
+					optionInputs[key].after(readable)
+					update()
+				}
 			}
 		}
 
@@ -454,10 +624,11 @@
 				}
 			},
 		},
-		el('h2', { text: job ? `Edit ${job.name}` : `New job: ${chosen.title}` }),
+		el('h2', { class: 'harvester-with-icon' }, icon(chosen.name), el('span', { text: job ? `Edit ${job.name}` : `New job: ${chosen.title}` })),
 		field('Name', name),
 		field('Folder', target, 'In your files, e.g. /Magazines/iX.'),
 		field('Schedule', schedule, 'Cron: minute hour day month weekday (UTC). 0 6 * * * is daily at 06:00.'),
+		scheduleHint,
 		field('Tags', tags, 'Comma-separated; may use the link’s values, e.g. {year}. A tag whose value a file lacks is left out.'),
 		el('label', { class: 'harvester-check' }, enabled, el('span', { text: 'Enabled: runs on its schedule' })),
 		options,
@@ -510,6 +681,20 @@
 		#harvester .harvester-field > span { font-weight: bold; }
 		#harvester .harvester-check { display: flex; align-items: center; gap: 8px; margin: 12px 0; }
 		#harvester .harvester-field small { color: var(--color-text-maxcontrast); }
+		#harvester .harvester-size { font-variant-numeric: tabular-nums; }
+		#harvester .harvester-with-icon { display: flex; align-items: center; gap: 8px; }
+		#harvester .harvester-icon { flex: none; color: var(--color-primary-element); }
+		#harvester td.harvester-with-icon { display: table-cell; white-space: nowrap; }
+		#harvester td.harvester-with-icon .harvester-icon { vertical-align: middle; margin-inline-end: 6px; }
+		#harvester .harvester-code { font-family: var(--font-face-monospace, monospace); }
+		#harvester .harvester-check-result { color: var(--color-success-text, var(--color-success)); }
+		#harvester .harvester-check-result.harvester-error { color: var(--color-error-text, var(--color-error)); }
+		#harvester .harvester-values { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 4px; }
+		#harvester .harvester-values .harvester-chip { border: none; min-height: 0; padding: 2px 8px; cursor: pointer; font-family: var(--font-face-monospace, monospace); }
+		#harvester .harvester-values .harvester-chip:hover { background: var(--color-primary-element-light); }
+		#harvester .harvester-schedule { margin: -4px 0 12px; max-width: 700px; }
+		#harvester select[multiple] { height: auto; min-height: 0; padding: 4px; }
+		#harvester select[multiple] option { padding: 2px 8px; border-radius: var(--border-radius); }
 		#harvester .harvester-field input:not([type=checkbox]), #harvester .harvester-field select, #harvester .harvester-field textarea { width: 100%; margin: 0; }
 		#harvester fieldset { border: 1px solid var(--color-border); border-radius: var(--border-radius-large); padding: 8px 16px; margin: 16px 0; max-width: 760px; }
 		#harvester legend { padding: 0 4px; font-weight: bold; }

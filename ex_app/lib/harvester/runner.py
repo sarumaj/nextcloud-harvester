@@ -18,7 +18,13 @@ MAX_FAILURES = 5
 
 # Options every job has, whatever its source.
 COMMON_OPTIONS = {
-    "max_items": Option("Files per run", 10, "The rest comes in the next runs (a first run may find hundreds)."),
+    "max_items": Option(
+        "Files per run",
+        10,
+        "The rest comes in the next runs (a first run may find hundreds); -1: no limit (a run still ends "
+        "after two hours, and goes on in the next).",
+        minimum=-1,
+    ),
 }
 
 
@@ -85,13 +91,16 @@ def run(
     seen: Callable[[str], bool],
     mark_seen: Callable[[str], None],
     sleep: Callable[[float], None] = time.sleep,
+    until: float | None = None,
 ) -> str:
-    """Downloads up to max_items new items and returns what was done, in a sentence."""
+    """Downloads up to max_items new items (and stops at until, a time.monotonic()) and returns
+    what was done, in a sentence."""
     limit = int(job.options.get("max_items", COMMON_OPTIONS["max_items"].default))
     tally = Tally()
     complete = True
     for item in source.items(seen):
-        if tally.downloaded >= limit:
+        # -1: no limit of files (the time limit still holds).
+        if (0 <= limit <= tally.downloaded) or (until is not None and time.monotonic() > until):
             complete = False
             break
         # A pause between two downloads, not before the first.

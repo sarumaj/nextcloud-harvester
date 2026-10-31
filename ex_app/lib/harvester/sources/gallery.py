@@ -18,7 +18,7 @@ from typing import Any, BinaryIO
 import httpx
 
 from .. import patterns
-from ..browser import allowed_url
+from ..browser import allowed_url, child_env
 from . import download
 from .base import Item, Option, Source, SourceError
 
@@ -46,12 +46,20 @@ class Gallery(Source):
         "Images of galleries, albums and profiles on Flickr, Imgur, DeviantArt and the other sites gallery-dl supports."
     )
     options = {
-        "url": Option("Page", "", "A gallery, album or profile page."),
+        "url": Option(
+            "Page",
+            "",
+            "A gallery, album or profile page.",
+            kind="url",
+            placeholder="https://www.flickr.com/photos/name/albums/123",
+        ),
         "path": Option(
             "File name",
             "{category}/{filename}.{extension}",
             "Relative to the folder, from gallery-dl's values for the file: {category}, {filename}, {extension}, "
             "{id}, {year}, {month}, {day}, ... (they differ per site).",
+            kind="template",
+            values=("category", "filename", "extension", "stem", "ext", "year", "month", "day"),
         ),
         **download.DOWNLOAD_OPTIONS,
     }
@@ -74,7 +82,7 @@ class Gallery(Source):
         # The address after "--": never read as an option (it is http(s) in any case).
         command = [sys.executable, "-m", "gallery_dl", "--resolve-json", "--no-download", "--", self.url]
         try:
-            done = self.run(command, capture_output=True, text=True, timeout=LIST_TIMEOUT, check=False)
+            done = self.run(command, capture_output=True, text=True, timeout=LIST_TIMEOUT, check=False, env=child_env())
         except subprocess.TimeoutExpired as error:
             raise SourceError(f"gallery-dl took longer than {LIST_TIMEOUT} s for {self.url}") from error
         lines = [line for line in (done.stderr or "").splitlines() if line.strip()]

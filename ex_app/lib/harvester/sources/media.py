@@ -20,7 +20,16 @@ from ..browser import allowed_url
 from .base import Item, Option, Source, SourceError
 
 # The quiet, offline-safe options every YoutubeDL here starts from.
-BASE = {"quiet": True, "no_warnings": True, "noprogress": True, "noplaylist": True}
+# Timeouts and retries: a stalled server must not hold the executor (one run at a time).
+BASE = {
+    "quiet": True,
+    "no_warnings": True,
+    "noprogress": True,
+    "noplaylist": True,
+    "socket_timeout": 60,
+    "retries": 3,
+    "fragment_retries": 3,
+}
 # Entries that are not (yet) a file to keep.
 SKIPPED = {"is_live", "is_upcoming", "post_live"}
 
@@ -48,19 +57,35 @@ class Media(Source):
         "Videos and audio from YouTube, Vimeo and the other sites yt-dlp supports: a video, playlist or channel."
     )
     options = {
-        "url": Option("Page", "", "A video, playlist or channel page."),
+        "url": Option(
+            "Page",
+            "",
+            "A video, playlist or channel page.",
+            kind="url",
+            placeholder="https://www.youtube.com/@channel/videos",
+        ),
         "format": Option(
             "Format",
             "best[acodec!=none][vcodec!=none]/best",
             "yt-dlp's format selection; formats that come as one file only (joining streams needs ffmpeg, "
             "which the app does not have).",
+            suggestions=(
+                "best[acodec!=none][vcodec!=none]/best",
+                "best[height<=1080][acodec!=none][vcodec!=none]/best[height<=1080]",
+                "best[height<=720][acodec!=none][vcodec!=none]/best[height<=720]",
+                "bestaudio[ext=m4a]/bestaudio",
+            ),
         ),
-        "max_entries": Option("Entries per run", 30, "The newest entries of a playlist or channel looked at."),
+        "max_entries": Option(
+            "Entries per run", 30, "The newest entries of a playlist or channel looked at.", minimum=1
+        ),
         "path": Option(
             "File name",
             "{uploader}/{title} [{id}].{ext}",
             "Relative to the folder: {title}, {id}, {uploader}, {channel}, {extractor}, {ext}, {year}, {month}, "
             "{day}.",
+            kind="template",
+            values=("uploader", "channel", "title", "id", "extractor", "year", "month", "day", "ext"),
         ),
     }
     pause = 5.0

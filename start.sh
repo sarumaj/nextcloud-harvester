@@ -54,12 +54,31 @@ else
     echo "HP_SHARED_KEY is not set. Skipping FRP configuration."
 fi
 
+# frpc and the app run as the unprivileged user harvester (the image's), without a way back to
+# root (no_new_privs): a page that broke out of Chromium, which has no sandbox in a container,
+# owns no more than that user. Root only writes frpc's configuration (above) and hands the
+# app's volume to the user (the volume of an earlier version is root's).
+AS_APP=""
+if [ "$(id -u)" = 0 ] && id harvester >/dev/null 2>&1; then
+    if [ -f /frpc.toml ]; then
+        chgrp harvester /frpc.toml
+        chmod 0640 /frpc.toml
+    fi
+    if [ -n "${APP_PERSISTENT_STORAGE:-}" ]; then
+        mkdir -p "$APP_PERSISTENT_STORAGE"
+        chown -R harvester:harvester "$APP_PERSISTENT_STORAGE"
+    fi
+    AS_APP="setpriv --reuid=harvester --regid=harvester --init-groups --no-new-privs -- env HOME=/home/harvester"
+fi
+
 # If we have a configuration file and the shared key is present, start the FRP client
 if [ -f /frpc.toml ] && [ -n "$HP_SHARED_KEY" ]; then
     echo "Starting frpc in the background..."
-    frpc -c /frpc.toml &
+    # shellcheck disable=SC2086
+    $AS_APP frpc -c /frpc.toml &
 fi
 
 # Start the main application (launch cmd for ExApp is an argument for this script)
 echo "Starting application: $*"
-exec "$@"
+# shellcheck disable=SC2086
+exec $AS_APP "$@"
