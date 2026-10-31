@@ -1,0 +1,177 @@
+"""The releases source against fake GitHub and Forgejo APIs (httpx's MockTransport): no network."""
+
+# pylint: disable=missing-function-docstring
+
+import io
+
+import httpx
+import pytest
+
+from harvester.sources import AuthError, SourceError
+from harvester.sources.releases import PER_PAGE, Releases
+
+PDF = b"%PDF-1.7\n" + b"x" * 100
+
+
+def release(tag: str, published: str, assets: list[str], prerelease=False, draft=False, host="github.com") -> dict:
+    """A release as the forges' APIs give it."""
+    base = f"https://{host}/o/r/releases/download/{tag}"
+    return {
+        "tag_name": tag,
+        "name": f"Release {tag}",
+        "published_at": published,
+        "prerelease": prerelease,
+        "draft": draft,
+        "assets": [
+            {
+                "id": index,
+                "name": name,
+                "size": 10,
+                "browser_download_url": f"{base}/{name}",
+                "url": f"https://api.github.com/repos/o/r/releases/assets/{index}",
+            }
+            for index, name in enumerate(assets)
+        ],
+    }
+
+
+def source(handler, **options) -> Releases:
+    made = Releases(
+        {"repository": "https://github.com/o/r", **options},
+        {"token": options.pop("token", "")} if "token" in options else {},
+        httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    made.sleep = lambda seconds: None
+    return made
+
+
+def test_github_releases_newest_first_without_prereleases_and_drafts():
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.url.host == "api.github.com" and request.url.path == "/repos/o/r/releases"
+        return httpx.Response(
+            200,
+            json=[
+                release("v2.0.0", "2026-10-20T10:00:00Z", ["app-2.0.0.AppImage", "app-2.0.0.zip"]),
+                release("v2.1.0-rc1", "2026-10-25T10:00:00Z", ["app-2.1.0-rc1.AppImage"], prerelease=True),
+                release("v1.9.0", "2026-09-01T10:00:00Z", ["app-1.9.0.AppImage"]),
+                release("v3.0.0", "2026-10-30T10:00:00Z", ["app-3.0.0.AppImage"], draft=True),
+            ],
+        )
+
+    made = source(handler, asset_pattern=r"\.AppImage$", path="{year}/{version}/{filename}")
+    items = list(made.items(lambda key: key.endswith("1.9.0.AppImage")))
+    assert [item.path for item in items] == ["2026/2.0.0/app-2.0.0.AppImage"]
+    assert items[0].url == "https://github.com/o/r/releases/download/v2.0.0/app-2.0.0.AppImage"
+    assert items[0].values["tag"] == "v2.0.0" and items[0].values["month"] == 10
+    assert "authorization" not in requests[0].headers
+
+    with_pre = source(handler, asset_pattern=r"\.AppImage$", prereleases=1)
+    assert [item.values["tag"] for item in with_pre.items(lambda key: False)] == ["v2.0.0", "v2.1.0-rc1", "v1.9.0"]
+
+
+def test_forgejo_pages_and_token():
+    pages: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.host == "git.example.org" and request.url.path == "/api/v1/repos/o/r/releases"
+        assert request.headers["authorization"] == "token secret"
+        page = int(request.url.params["page"])
+        pages.append(page)
+        count = PER_PAGE if page == 1 else 2
+        return httpx.Response(
+            200,
+            json=[
+                release(f"v{page}.{n}", "2026-10-01T00:00:00Z", [f"f-{page}-{n}.zip"], host="git.example.org")
+                for n in range(count)
+            ],
+        )
+
+    made = Releases(
+        {"repository": "https://git.example.org/o/r.git", "max_pages": 3},
+        {"token": "secret"},
+        httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    items = list(made.items(lambda key: False))
+    assert len(items) == PER_PAGE + 2 and pages == [1, 2], "a short page is the last"
+    assert items[0].url.startswith("https://git.example.org/o/r/releases/download/")
+
+
+def test_github_with_a_token_downloads_through_the_api():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/releases"):
+            assert request.headers["authorization"] == "Bearer secret"
+            return httpx.Response(200, json=[release("v1", "2026-10-01T00:00:00Z", ["doc.pdf"])])
+        assert request.url.host == "api.github.com" and request.url.path == "/repos/o/r/releases/assets/0"
+        assert request.headers["accept"] == "application/octet-stream"
+        assert request.headers["authorization"] == "Bearer secret"
+        return httpx.Response(200, content=PDF, headers={"content-type": "application/octet-stream"})
+
+    made = source(handler, token="secret", file_type="pdf")
+    (item,) = list(made.items(lambda key: False))
+    assert item.key == "https://github.com/o/r/releases/download/v1/doc.pdf"
+    dest = io.BytesIO()
+    made.fetch(item, dest)
+    assert dest.getvalue() == PDF
+
+
+def test_the_token_does_not_follow_a_download_to_another_host():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/releases"):
+            return httpx.Response(200, json=[release("v1", "2026-10-01T00:00:00Z", ["a.zip"], host="git.example.org")])
+        assert "authorization" not in request.headers or request.url.host == "git.example.org"
+        if request.url.host == "git.example.org":
+            return httpx.Response(302, headers={"location": "https://storage.example.net/blob"})
+        return httpx.Response(200, content=b"PK\x03\x04zip", headers={"content-type": "application/zip"})
+
+    made = Releases(
+        {"repository": "https://git.example.org/o/r"},
+        {"token": "secret"},
+        httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    (item,) = list(made.items(lambda key: False))
+    dest = io.BytesIO()
+    made.fetch(item, dest)
+    assert dest.getvalue() == b"PK\x03\x04zip"
+
+
+def test_refusals():
+    def private(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"message": "Not Found"})
+
+    with pytest.raises(SourceError, match="needs a token"):
+        list(source(private).items(lambda key: False))
+
+    def refused(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401)
+
+    with pytest.raises(AuthError):
+        list(source(refused).items(lambda key: False))
+
+    def limited(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, headers={"x-ratelimit-remaining": "0"})
+
+    with pytest.raises(SourceError, match="limit"):
+        list(source(limited).items(lambda key: False))
+
+
+@pytest.mark.parametrize(
+    ("repository", "problem"),
+    [
+        ("", "not a repository"),
+        ("https://github.com/only-owner", "not a repository"),
+        ("http://10.0.0.5/o/r", "not a repository"),
+        ("file:///etc/o/r", "not a repository"),
+    ],
+)
+def test_bad_repositories_are_refused(repository, problem):
+    with pytest.raises(SourceError, match=problem):
+        Releases({"repository": repository}, {}, None)
+
+
+def test_a_bad_pattern_is_refused_and_saving_needs_no_network():
+    with pytest.raises(SourceError, match="regular expression"):
+        Releases({"repository": "https://github.com/o/r", "asset_pattern": "("}, {}, None)
+    Releases({"repository": "https://github.com/o/r"}, {}, None)

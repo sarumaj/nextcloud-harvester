@@ -417,7 +417,7 @@
 				}
 			},
 		},
-		el('h2', { text: job ? `Edit ${job.name}` : 'New job' }),
+		el('h2', { text: job ? `Edit ${job.name}` : `New job: ${chosen.title}` }),
 		field('Name', name),
 		field('Folder', target, 'In your files, e.g. /Magazines/iX.'),
 		field('Schedule', schedule, 'Cron: minute hour day month weekday (UTC). 0 6 * * * is daily at 06:00.'),

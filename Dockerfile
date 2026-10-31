@@ -45,6 +45,24 @@ RUN set -ex; \
     rm -rf /tmp/frp_${FRP_VERSION}_linux_${FRP_ARCH} /tmp/frp.tar.gz; \
     echo "FRP client installed successfully"
 
+# rclone, for the source of file stores and cloud drives (sources/remote.py), checked like frpc.
+# The zip is opened with Python's zipfile: the build stage has no unzip.
+ARG RCLONE_VERSION=1.75.2
+ARG RCLONE_AMD64_SHA256=349ac8fba6ff65d6247043f1750cdcb518ec5d500ef91463a10d37c0ccdf3702
+ARG RCLONE_ARM64_SHA256=7e1e8d69654941b7b7df84ee74c5f7fb09cce7d5496947fb7bf16b55ff427d10
+
+RUN set -ex; \
+    if [ "$(uname -m)" = "aarch64" ]; then RCLONE_ARCH=arm64; RCLONE_SHA256="${RCLONE_ARM64_SHA256}"; \
+    else RCLONE_ARCH=amd64; RCLONE_SHA256="${RCLONE_AMD64_SHA256}"; fi; \
+    curl -fsSL "https://github.com/rclone/rclone/releases/download/v${RCLONE_VERSION}/rclone-v${RCLONE_VERSION}-linux-${RCLONE_ARCH}.zip" \
+        -o /tmp/rclone.zip; \
+    echo "${RCLONE_SHA256}  /tmp/rclone.zip" | sha256sum -c -; \
+    python3 -c "import zipfile, sys; z = zipfile.ZipFile('/tmp/rclone.zip'); \
+open('/usr/local/bin/rclone', 'wb').write(z.read(next(n for n in z.namelist() if n.endswith('/rclone'))))"; \
+    chmod +x /usr/local/bin/rclone; \
+    rm /tmp/rclone.zip; \
+    /usr/local/bin/rclone version | head -1
+
 #############################
 # Stage 2: Final Runtime Image
 #############################

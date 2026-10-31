@@ -1,11 +1,34 @@
 # Harvester
 
-A Nextcloud External App (AppAPI, Python) that fetches files from websites into your folders
-on a schedule and tags them. It is generic: a site is described by a **recipe**, recorded in
+A Nextcloud External App (AppAPI, Python) that fetches files into your folders on a schedule
+and tags them: from websites, mailboxes, feeds, video and gallery sites, file stores and cloud
+drives, and release pages. It is generic: a website is described by a **recipe**, recorded in
 the app's browser or taken from a template, not by code.
 
-- **Jobs:** a recipe and its settings, a folder, a cron schedule (UTC), tags and an account.
+- **Jobs:** a source and its settings, a folder, a cron schedule (UTC), tags and an account.
   *Harvester* in Nextcloud's top menu lists your jobs, runs one now and edits them.
+- **Sources** (`ex_app/lib/harvester/sources/`), one card each on the *New job* page:
+  - `site`: files linked from a website's pages, by a recipe (below).
+  - `mail`: attachments of the messages in an IMAP mailbox (TLS), filtered by sender, subject,
+    file name, type and size; read-only (`BODY.PEEK`, the folder selected read-only), so nothing
+    is marked as read. Values: `{from}`, `{sender}`, `{subject}`, `{date}`, `{year}`, …
+  - `feed`: the files of an RSS or Atom feed, newest first: its enclosures (podcast episodes) or
+    each entry's link, through the checked download. Values: `{title}`, `{feed}`, `{author}`,
+    `{date}`, `{year}`, `{filename}`, …
+  - `media`: videos and audio from YouTube, Vimeo and the other sites yt-dlp supports (a video,
+    or the newest entries of a playlist or channel); formats that come as one file only, as the
+    image has no ffmpeg to join streams. Live and upcoming streams are skipped.
+  - `gallery`: images of galleries, albums and profiles on the sites gallery-dl supports;
+    gallery-dl lists them, Harvester downloads them with its checks and the page as `Referer`.
+  - `remote`: the files in a folder of a WebDAV, SFTP, FTP or S3 server, a Nextcloud public
+    share, Google Drive, Dropbox, OneDrive and other rclone remotes. The job's account is an
+    rclone configuration with one remote (OAuth tokens from `rclone authorize` on a computer).
+    Only remotes of other machines: no local files, wrappers, commands or private hosts.
+    Refreshed tokens are kept as the job's session.
+  - `releases`: the files attached to a repository's releases on GitHub or a Forgejo or Gitea
+    server, newest first (prereleases if asked, drafts never), filtered by a pattern on the
+    file's name; values `tag`, `version`, `name`, `repo`, `year`. A token (the job's account)
+    for private repositories and GitHub's request limit.
 - **Recipes** (`ex_app/lib/harvester/recipe.py`): the steps to sign in (replayed in Chromium;
   without steps the pages are fetched over HTTP), the listing to start at, levels of links to
   follow (a year, then its issues), the file links, and the next page's link. Each level has
@@ -36,8 +59,8 @@ the app's browser or taken from a template, not by code.
   run went through the whole site, a listing of known files ends the next runs.
 - **Templates** (`ex_app/lib/harvester/presets/*.json`): jobs for known sites with a few
   parameters, e.g. `heise.json`: heise's magazines (iX, c't, ...) as PDF for a subscription.
-- **Accounts:** a job's username and password are your sensitive preferences in Nextcloud
-  (encrypted); the page only shows whether they are set.
+- **Accounts:** a job's username and password, token or rclone configuration are your sensitive
+  preferences in Nextcloud (encrypted); the page only shows whether they are set.
 - **Safety:** the browser and the downloads reach only http(s) addresses outside local and
   private networks (a `file://` page would show the app's secret).
 

@@ -1,0 +1,86 @@
+"""The gallery source (gallery-dl) with a stand-in for gallery-dl and a fake site: no network."""
+
+# pylint: disable=missing-function-docstring
+
+import io
+import json
+import subprocess
+
+import httpx
+import pytest
+
+from harvester.sources import SourceError
+from harvester.sources.gallery import Gallery
+
+PAGE = "https://pics.example/album/42"
+JPEG = b"\xff\xd8\xff\xe0" + b"x" * 100
+
+
+def message(number: int) -> list:
+    """A Url message of gallery-dl's JSON output."""
+    data = {
+        "category": "pics",
+        "subcategory": "album",
+        "id": number,
+        "filename": f"photo{number}",
+        "extension": "jpg",
+        "date": "2025-07-14 10:20:30",
+        "tags": ["beach", "sea"],
+    }
+    return [3, f"https://cdn.pics.example/{number}.jpg", data]
+
+
+def gallery(stdout: str = "", returncode: int = 0, stderr: str = "", handler=None, **options) -> Gallery:
+    client = httpx.Client(transport=httpx.MockTransport(handler or (lambda request: httpx.Response(404))))
+    made = Gallery({"url": PAGE} | options, {}, client)
+    made.calls = []
+
+    def run(command, **kwargs):
+        made.calls.append((command, kwargs))
+        return subprocess.CompletedProcess(command, returncode, stdout, stderr)
+
+    made.run = run
+    made.sleep = lambda seconds: None
+    return made
+
+
+def test_the_galleries_new_files_with_their_names_and_values():
+    stdout = json.dumps([[2, {"category": "pics"}], message(1), message(2), [6, "https://pics.example/x", {}]])
+    source = gallery(stdout, path="{year}/{filename}.{extension}")
+    items = list(source.items(lambda key: key == "pics:1"))
+    assert [item.key for item in items] == ["pics:2"]
+    assert items[0].path == "2025/photo2.jpg"
+    assert items[0].values["month"] == 7 and "tags" not in items[0].values
+    command = source.calls[0][0]
+    assert command[-1] == PAGE and "--resolve-json" in command
+
+
+def test_the_download_has_the_gallery_as_referer_and_is_checked():
+    referers = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        referers.append(request.headers.get("referer"))
+        if request.url.path == "/1.jpg":
+            return httpx.Response(200, content=JPEG, headers={"content-type": "image/jpeg"})
+        return httpx.Response(200, text="<html>sign in</html>", headers={"content-type": "text/html"})
+
+    source = gallery(json.dumps([message(1), message(2)]), handler=handler)
+    first, second = list(source.items(lambda key: False))
+    dest = io.BytesIO()
+    source.fetch(first, dest)
+    assert dest.getvalue() == JPEG and referers == [PAGE]
+    with pytest.raises(SourceError, match="web page instead of a file"):
+        source.fetch(second, io.BytesIO())
+
+
+def test_gallery_dls_errors_and_refused_pages():
+    failed = gallery(returncode=1, stderr="[gallery-dl][error] Unsupported URL 'https://pics.example/album/42'\n")
+    with pytest.raises(SourceError, match="Unsupported URL"):
+        list(failed.items(lambda key: False))
+    with pytest.raises(SourceError, match="no JSON"):
+        list(gallery("not json").items(lambda key: False))
+    for url in ("file:///etc/passwd", "http://10.0.0.1/a"):
+        with pytest.raises(SourceError, match="may not be opened"):
+            Gallery({"url": url}, {}, None)
+    unsafe = gallery(json.dumps([[3, "http://169.254.169.254/latest", {"category": "pics", "id": 9}]]))
+    assert not list(unsafe.items(lambda key: False))

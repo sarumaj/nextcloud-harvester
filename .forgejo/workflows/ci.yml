@@ -22,7 +22,7 @@ jobs:
     steps:
       - name: Check out
         run: |
-          apt-get update -qq && apt-get install -qq -y git nodejs shellcheck >/dev/null
+          apt-get update -qq && apt-get install -qq -y git nodejs shellcheck curl >/dev/null
           git init -q . && git remote add origin "${{ github.server_url }}/${{ github.repository }}.git"
           git fetch -q --depth 1 origin "${{ github.sha }}"
           git checkout -q FETCH_HEAD
@@ -31,6 +31,13 @@ jobs:
         run: |
           pip install -q -r requirements-dev.txt
           playwright install --with-deps --only-shell chromium >/dev/null
+          # rclone for the remote source's test, the same release and check as the Dockerfile's.
+          version=$(sed -n 's/^ARG RCLONE_VERSION=//p' Dockerfile)
+          sha=$(sed -n 's/^ARG RCLONE_AMD64_SHA256=//p' Dockerfile)
+          curl -fsSL "https://github.com/rclone/rclone/releases/download/v$version/rclone-v$version-linux-amd64.zip" -o /tmp/rclone.zip
+          echo "$sha  /tmp/rclone.zip" | sha256sum -c -
+          python3 -c "import zipfile; z = zipfile.ZipFile('/tmp/rclone.zip'); open('/usr/local/bin/rclone', 'wb').write(z.read(next(n for n in z.namelist() if n.endswith('/rclone'))))"
+          chmod +x /usr/local/bin/rclone
 
       - name: Tests
         run: python -m pytest -q
