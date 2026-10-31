@@ -122,14 +122,18 @@
 					},
 				}))
 		})
+		// One card per source: a blank job of it.
+		const kinds = sources.map((source) => el('div', { class: 'harvester-card harvester-kind' },
+			el('h3', { text: source.title }),
+			el('p', { class: 'harvester-muted', text: source.description }),
+			el('button', { class: 'primary', text: 'Start', onclick: () => renderForm(root, null, { ...BLANK, source: source.name }) })))
 		root.replaceChildren(
-			el('h2', { text: 'New job' }),
-			el('div', { class: 'harvester-card' },
-				el('h3', { text: 'Any website' }),
-				el('p', { text: 'Record it in the browser: sign in if need be, then pick the links to follow and the file links; the app proposes their patterns.' }),
-				el('button', { class: 'primary', text: 'Start blank', onclick: () => renderForm(root, null) })),
-			...cards, error,
-			el('button', { text: 'Back to the jobs', onclick: () => show(root) }))
+			el('div', { class: 'harvester-header' },
+				el('div', {}, el('h2', { text: 'New job' }), el('p', { class: 'harvester-muted', text: 'What should the job fetch?' })),
+				el('button', { text: 'Back to the jobs', onclick: () => show(root) })),
+			el('div', { class: 'harvester-kinds' }, ...kinds),
+			cards.length ? el('h3', { text: 'Templates for known sites' }) : '',
+			...cards, error)
 	}
 
 	async function renderCredentials(container, job, source) {
@@ -144,11 +148,11 @@
 		const stored = await api('GET', `/jobs/${job.id}/credentials`)
 		const inputs = {}
 		for (const name of source.credentials) {
-			inputs[name] = el('input', {
-				type: name === 'password' ? 'password' : 'text',
-				placeholder: stored[name] ? '(stored, leave empty to keep)' : '',
-				autocomplete: 'off',
-			})
+			// A configuration (several lines, e.g. rclone's) in a text area; passwords and tokens hidden.
+			const placeholder = stored[name] ? '(stored, leave empty to keep)' : ''
+			inputs[name] = name === 'config'
+				? el('textarea', { rows: '8', class: 'harvester-recipe', placeholder, autocomplete: 'off', spellcheck: 'false' })
+				: el('input', { type: ['password', 'token'].includes(name) ? 'password' : 'text', placeholder, autocomplete: 'off' })
 			container.append(field(name, inputs[name]))
 		}
 		container.append(el('button', {
@@ -475,6 +479,9 @@
 		#harvester form > button, #harvester .harvester-card button { margin: 8px 8px 0 0; }
 		#harvester .harvester-error { color: var(--color-error-text, var(--color-error)); }
 		#harvester .harvester-credentials { margin-top: 24px; max-width: 760px; }
+		#harvester .harvester-kinds { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-bottom: 8px; }
+		#harvester .harvester-kinds .harvester-card { margin: 0; max-width: none; display: flex; flex-direction: column; }
+		#harvester .harvester-kinds .harvester-card p { flex: 1; }
 		#harvester .harvester-card { border: 1px solid var(--color-border); border-radius: var(--border-radius-large); padding: 12px 16px; margin: 12px 0; max-width: 760px; }
 		#harvester .harvester-recipe, #harvester .harvester-pattern { font-family: var(--font-face-monospace, monospace); }
 		#harvester .harvester-toolbar { display: flex; gap: 4px; margin: 8px 0; align-items: center; }

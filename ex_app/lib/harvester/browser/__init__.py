@@ -18,19 +18,24 @@ VIEWPORT = {"width": 1280, "height": 800}
 LAUNCH_ARGS = ["--disable-dev-shm-usage"]
 
 
+def allowed_host(host: str) -> bool:
+    """Tells whether a source may connect to the host (IMAP, SFTP, ...): not a local or private
+    name or address (the External Apps' network rules keep them off the private network too)."""
+    host = host.strip().lower().strip("[]")
+    if not host or host == "localhost" or host.endswith((".localhost", ".local", ".internal")):
+        return False
+    try:
+        return ipaddress.ip_address(host).is_global
+    except ValueError:
+        return True
+
+
 def allowed_url(url: str) -> bool:
     """Tells whether the browser may open the address: http(s), not a local or private host."""
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.hostname:
         return False
-    host = parsed.hostname.lower()
-    if host == "localhost" or host.endswith((".localhost", ".local", ".internal")):
-        return False
-    try:
-        address = ipaddress.ip_address(host)
-    except ValueError:
-        return True
-    return address.is_global
+    return allowed_host(parsed.hostname)
 
 
 # What a page asking for a person looks like: the widgets of the common CAPTCHA services (their

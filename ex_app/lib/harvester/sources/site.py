@@ -15,7 +15,6 @@ import posixpath
 import re
 import time
 from collections.abc import Callable, Generator, Iterator
-from dataclasses import dataclass
 from typing import Any, BinaryIO
 from urllib.parse import urljoin
 
@@ -23,35 +22,16 @@ from bs4 import BeautifulSoup
 from playwright.sync_api import Route, sync_playwright
 
 from .. import browser, patterns, recipe as recipes
-from .base import AuthError, ChallengeError, Item, Option, Source, SourceError
+from . import download
+from .base import ChallengeError, Item, Option, Source, SourceError
+from .download import Response
 
 # The seen key a run records once it has gone through the whole site (not stopped by
 # max_items): from then on, a listing of known files ends the run (stop_at_seen).
 FULL_PASS = "harvester:full-pass"
-# Waits the site asks for, per file; and the longest one honoured.
-MAX_WAITS = 5
-MAX_WAIT = 900
 # How long a browser step may take (ms), and how long a job waits for the browser (s).
 STEP_TIMEOUT = 30_000
 LOCK_TIMEOUT = 1800
-# What a file must start with, and its extension when the name has none.
-FILE_TYPES = {
-    "any": ((), ""),
-    "pdf": ((b"%PDF-",), ".pdf"),
-    "zip": ((b"PK\x03\x04",), ".zip"),
-    "image": ((b"\xff\xd8\xff", b"\x89PNG", b"GIF8", b"RIFF"), ""),
-    "html": ((), ".html"),
-}
-
-
-@dataclass
-class Response:
-    """A download's answer, the same over HTTP and in the browser."""
-
-    status: int
-    url: str
-    headers: dict[str, str]
-    chunks: Iterator[bytes]
 
 
 class Driver(abc.ABC):
@@ -122,15 +102,8 @@ class HttpDriver(Driver):
         found = self.links(page, selector)
         return self.open(found[0][0]) if found else None
 
-    @contextlib.contextmanager
-    def download(self, url: str) -> Iterator[Response]:
-        with self.client.stream("GET", url) as response:
-            yield Response(
-                response.status_code,
-                str(response.url),
-                {key.lower(): value for key, value in response.headers.items()},
-                response.iter_bytes(),
-            )
+    def download(self, url: str) -> contextlib.AbstractContextManager[Response]:
+        return download.http(self.client)(url)
 
 
 class BrowserDriver(Driver):
@@ -266,6 +239,10 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
 
     name = "site"
     title = "Website (recipe)"
+    description = (
+        "Files linked from a website's pages: record it in the browser (sign in if need be, then pick the links to "
+        "follow and the file links) or start from a template."
+    )
     credentials = ("username", "password")
     options = {
         "recipe": Option(
@@ -281,14 +258,7 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
             "Relative to the folder, from the link's values: {filename}, {stem}, {ext}, {text}, {page}, {host} and "
             "the pattern's groups, e.g. {year}/{text}.",
         ),
-        "file_type": Option("File type", "any", "any, pdf, zip, image or html: anything else is refused."),
-        "min_size": Option("Smallest file (bytes)", 0, "Smaller answers are refused (an error page, say)."),
-        "wait_pattern": Option(
-            "Wait pattern",
-            "",
-            "Regular expression on the URL the site redirects to when it wants a pause; its "
-            "first group is the seconds (e.g. wait_sec=(\\d+)).",
-        ),
+        **download.DOWNLOAD_OPTIONS,
         "max_pages": Option("Pages", 10, "At most this many pages of a listing."),
         "stop_at_seen": Option(
             "Stop at known files", 1, "1: once the site went through completely, a listing of known files ends the run."
@@ -303,12 +273,7 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
         except ValueError as error:
             raise SourceError(f"the recipe is not valid JSON: {error}") from error
         problems = recipes.check_recipe(self.recipe)
-        try:
-            re.compile(str(self.settings["wait_pattern"]))
-        except re.error as error:
-            problems.append(f"the wait pattern is not a regular expression ({error})")
-        if str(self.settings["file_type"]) not in FILE_TYPES:
-            problems.append(f"unknown file type {self.settings['file_type']}")
+        problems += download.problems(self.settings)
         if problems:
             raise SourceError("; ".join(problems))
         self.driver: Driver | None = None
@@ -403,52 +368,13 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
             path = patterns.render_path(str(self.settings["path"]), values)
         except (KeyError, ValueError) as error:
             raise SourceError(str(error).strip("'\"")) from error
-        extension = FILE_TYPES[str(self.settings["file_type"])][1]
+        extension = download.extension(self.settings)
         if extension and not posixpath.splitext(path)[1]:
             path += extension
         return Item(key=link, path=path, url=url, values=values)
 
-    def wait(self, response: Response) -> float | None:
-        """The pause the site asks for, or None."""
-        if response.status in (429, 503):
-            retry = response.headers.get("retry-after", "")
-            return min(float(retry) if retry.isdigit() else 60.0, MAX_WAIT)
-        pattern = str(self.settings["wait_pattern"])
-        match = re.search(pattern, response.url) if pattern else None
-        if match:
-            return min(float(match.group(1)) + 5 if match.groups() else 60.0, MAX_WAIT)
-        return None
-
     def fetch(self, item: Item, dest: BinaryIO) -> None:
-        if not browser.allowed_url(item.url):
-            raise SourceError(f"{item.url} may not be opened")
-        magic, _ = FILE_TYPES[str(self.settings["file_type"])]
-        for _ in range(MAX_WAITS):
-            with self._driver().download(item.url) as response:
-                pause = self.wait(response)
-                if pause is not None:
-                    self.sleep(pause)
-                    continue
-                if response.status in (401, 403):
-                    raise AuthError(f"{item.url} answered {response.status}: the account may not download it")
-                if response.status >= 400:
-                    raise SourceError(f"{item.url} answered {response.status}")
-                web_page = response.headers.get("content-type", "").startswith("text/html")
-                if web_page and self.settings["file_type"] != "html":
-                    kind = browser.challenge_in_html(b"".join(response.chunks).decode("utf-8", "replace"))
-                    if kind:
-                        raise ChallengeError(response.url, kind)
-                    raise SourceError(f"got a web page instead of a file for {item.url} (signed out?)")
-                size = 0
-                for chunk in response.chunks:
-                    if size == 0 and magic and not chunk.startswith(magic):
-                        raise SourceError(f"{item.url} is not a {self.settings['file_type']} file")
-                    dest.write(chunk)
-                    size += len(chunk)
-                if size < int(self.settings["min_size"]):
-                    raise SourceError(f"{item.url} gave only {size} bytes")
-                return
-        raise SourceError(f"the site kept asking to wait for {item.url}")
+        download.fetch(self._driver().download, item.url, dest, self.settings, self.sleep)
 
     def close(self) -> None:
         if self.driver:

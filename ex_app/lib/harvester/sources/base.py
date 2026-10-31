@@ -55,7 +55,10 @@ class Source(abc.ABC):
 
     name: ClassVar[str]
     title: ClassVar[str]
-    # The names of the job's credentials (kept per job in Nextcloud, encrypted).
+    # What the source fetches, for the card that starts a job of it.
+    description: ClassVar[str] = ""
+    # The names of the job's credentials (kept per job in Nextcloud, encrypted). The page asks
+    # for "password" and "token" hidden, and for "config" (several lines) in a text area.
     credentials: ClassVar[tuple[str, ...]] = ()
     options: ClassVar[dict[str, Option]] = {}
     # Seconds between two downloads, so as not to hammer the site.
