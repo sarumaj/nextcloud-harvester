@@ -3,11 +3,13 @@
       xsi:noNamespaceSchemaLocation="https://apps.nextcloud.com/schema/apps/info.xsd">
 	<id>harvester</id>
 	<name>Harvester</name>
-	<summary>Fetches files from websites into your folders on a schedule, and tags them</summary>
-	<description><![CDATA[Jobs that fetch files from websites into a folder of your files, on a schedule, and
-tag them. A site is described by a recipe: recorded in the app's browser, which proposes the
-links' patterns and outlines what they match, or taken from a template (heise's magazines).]]></description>
-	<version>0.3.2</version>
+	<summary>Fetches files from websites, mailboxes, feeds and drives into your folders, and tags them</summary>
+	<description><![CDATA[Jobs that fetch files into a folder of your files, on a schedule, and tag them: from
+websites (a recipe recorded in the app's browser, which proposes the links' patterns, or a
+template such as heise's magazines), mailbox attachments (IMAP), feeds and podcasts, video and
+gallery sites (yt-dlp, gallery-dl), file stores and cloud drives (rclone), and release pages.
+When a site asks for a person, the job waits for you to answer it in its browser.]]></description>
+	<version>0.4.0</version>
 	<licence>agpl</licence>
 	<author>Dawid Ciepiela</author>
 	<namespace>Harvester</namespace>
@@ -25,7 +27,7 @@ links' patterns and outlines what they match, or taken from a template (heise's 
 		<docker-install>
 			<registry>ghcr.io/sarumaj</registry>
 			<image>harvester</image>
-			<image-tag>0.3.2</image-tag>
+			<image-tag>0.4.0</image-tag>
 		</docker-install>
 		<routes>
 			<route>
