@@ -27,7 +27,8 @@ def steps_from_events(events: list[dict]) -> list[dict]:
 
     Typing into a field several times keeps the last value. A password is never kept: its step
     fills in the job's password, and the field filled before it in the same form the job's
-    username, so neither is in the recipe.
+    username, so neither is in the recipe. A one-time code is not kept either: its step fills in
+    the current code from the account's secret.
     """
     steps: list[dict] = []
     for event in events:
@@ -40,7 +41,10 @@ def steps_from_events(events: list[dict]) -> list[dict]:
             steps.append({"action": "press", "selector": event["selector"], "key": event.get("key", "Enter")})
         elif action == "fill":
             step = {"action": "fill", "selector": event["selector"], "value": event.get("value", "")}
-            if event.get("field") == "password":
+            if event.get("otp"):
+                # The code typed while recording is spent: the job fills in the current one.
+                step = {"action": "fill", "selector": event["selector"], "credential": "totp"}
+            elif event.get("field") == "password":
                 step = {"action": "fill", "selector": event["selector"], "credential": "password"}
                 for earlier in reversed(steps):
                     if earlier["action"] == "fill" and "value" in earlier and earlier.get("form") == event.get("form"):

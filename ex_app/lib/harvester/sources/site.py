@@ -20,9 +20,12 @@ from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 from playwright.sync_api import Route, sync_playwright
 
-from .. import browser, patterns, recipe as recipes
+from .. import browser
+from .. import cookies as cookie_jar
+from .. import otp, patterns
+from .. import recipe as recipes
 from . import download
-from .base import ChallengeError, Item, Option, Source, SourceError
+from .base import AuthError, ChallengeError, Item, Option, Source, SourceError
 from .download import Response
 
 # The seen key a run records once it has gone through the whole site (not stopped by
@@ -112,7 +115,14 @@ class BrowserDriver(Driver):
     step that fails on a page asking for a person raises ChallengeError (only then: a login page
     may well carry an invisible CAPTCHA that lets people through)."""
 
-    def __init__(self, steps: list[dict], secrets: dict[str, str], session: dict | None = None, start: str = ""):
+    def __init__(
+        self,
+        steps: list[dict],
+        secrets: dict[str, str],
+        session: dict | None = None,
+        start: str = "",
+        cookies: list[dict] | None = None,
+    ):
         if not browser.LOCK.acquire(timeout=LOCK_TIMEOUT):  # pylint: disable=consider-using-with
             raise SourceError("the browser stayed busy (a recording or another job)")
         self._playwright = None
@@ -124,6 +134,9 @@ class BrowserDriver(Driver):
                 viewport=browser.VIEWPORT, accept_downloads=False, storage_state=session or None  # type: ignore[arg-type]
             )
             self.context.route("**/*", guard)
+            # The account's cookies over the kept session's: the user gave them for this job.
+            if cookies:
+                self.context.add_cookies(cookies)  # type: ignore[arg-type]
             self.context.set_default_timeout(STEP_TIMEOUT)
             self.main = self.context.new_page()
             self.sign_in(steps, secrets, session, start)
@@ -223,13 +236,27 @@ def settle(page) -> None:
         pass  # a page that never goes quiet (ads, polling) is used as it is
 
 
+def filled(step: dict, secrets: dict[str, str]) -> str:
+    """What a fill step types: its value, an account's credential, or the current one-time code."""
+    if step.get("credential") == "totp":
+        if not secrets.get("totp"):
+            raise AuthError("the sign-in asks for a one-time code: set the code's secret in the job's account")
+        try:
+            return otp.code(secrets["totp"])
+        except ValueError as error:
+            raise AuthError(str(error)) from error
+    if step.get("credential"):
+        return secrets.get(step["credential"], "")
+    return str(step.get("value", ""))
+
+
 def replay(page, step: dict, secrets: dict[str, str]) -> None:
     """Does one recorded step."""
     action = step["action"]
     if action == "goto":
         page.goto(step["url"], wait_until="domcontentloaded")
     elif action == "fill":
-        page.fill(step["selector"], secrets.get(step["credential"], "") if step.get("credential") else step["value"])
+        page.fill(step["selector"], filled(step, secrets))
         return
     elif action == "click":
         page.click(step["selector"])
@@ -247,7 +274,25 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
         "Files linked from a website's pages: record it in the browser (sign in if need be, then pick the links to "
         "follow and the file links) or start from a template."
     )
-    credentials = ("username", "password")
+    credentials = ("username", "password", "totp", "cookies")
+    credential_help = {
+        "username": (
+            "Username",
+            "Filled into the recorded sign-in's username field; without recorded steps, sent to sites that ask with "
+            "the browser's own sign-in box (HTTP Basic).",
+        ),
+        "password": ("Password", "Filled into the recorded sign-in's password field (or sent with HTTP Basic)."),
+        "totp": (
+            "One-time code's secret",
+            "For a sign-in with an authenticator app: the secret it was given (the base32 text beside the QR code, "
+            "or the QR code's otpauth:// link). The recorded code field gets the current code.",
+        ),
+        "cookies": (
+            "Cookies",
+            "A signed-in browser's cookies for the site, instead of a recorded sign-in: a cookies.txt export "
+            "(Netscape format) or a Cookie header's name=value; name=value. They expire as they do in the browser.",
+        ),
+    }
     options = {
         "recipe": Option(
             "Recipe", "", "Record it in the browser, or start from a template; the JSON can be edited.", kind="recipe"
@@ -306,10 +351,14 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
 
     def _driver(self) -> Driver:
         if self.driver is None:
+            start = self.recipe.get("start") or ""
+            found = self.account_cookies(start)
             if recipes.uses_browser(self.recipe) or int(self.settings["browser"]):
                 steps = self.recipe.get("steps") or []
-                self.driver = BrowserDriver(steps, self.secrets, self.kept, self.recipe.get("start") or "")
+                self.driver = BrowserDriver(steps, self.secrets, self.kept, start, cookie_jar.to_playwright(found))
             else:
+                # Without recorded steps, the account's user name and password are HTTP Basic's.
+                self.sign_client(start)
                 self.driver = HttpDriver(self.client, self.kept)
         return self.driver
 

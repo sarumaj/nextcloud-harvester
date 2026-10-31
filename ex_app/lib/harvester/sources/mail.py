@@ -27,6 +27,14 @@ MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", 
 UNSAFE = re.compile(r"[\\/:*?\"<>|\s]+")
 
 
+# How a job signs in: a password, or OAuth2's XOAUTH2 with a refresh token at a provider.
+AUTHS = ("password", "oauth2-google", "oauth2-microsoft", "oauth2")
+OAUTH_TOKEN_URLS = {
+    "oauth2-google": "https://oauth2.googleapis.com/token",
+    "oauth2-microsoft": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+}
+
+
 def plain_login(text: str) -> bool:
     """Whether imaplib's LOGIN can send it: ASCII without spaces or quotes."""
     return text.isascii() and not any(char in text for char in ' "\\\t')
@@ -76,8 +84,29 @@ class Mail(Source):
     name = "mail"
     title = "Email attachments"
     description = "Attachments of the messages in a mailbox (IMAP), e.g. invoices from a sender; read-only."
-    credentials = ("username", "password")
+    credentials = ("username", "password", "client_id", "client_secret", "refresh_token")
+    credential_help = {
+        "username": ("Username", "The mailbox's login, usually its address."),
+        "password": ("Password", "For Sign-in: password (an app password where the provider has them, e.g. Gmail)."),
+        "client_id": ("OAuth client ID", "For Sign-in: OAuth2: the OAuth app's client ID."),
+        "client_secret": ("OAuth client secret", "For Sign-in: OAuth2: its secret (empty for a public client)."),
+        "refresh_token": ("OAuth refresh token", "For Sign-in: OAuth2: a refresh token with the mail scope."),
+    }
     options = {
+        "auth": Option(
+            "Sign-in",
+            "password",
+            "password; or OAuth2 with a refresh token (Microsoft's mailboxes need it, Gmail's take it): "
+            "oauth2-google, oauth2-microsoft, or oauth2 with the token endpoint below.",
+            choices=AUTHS,
+        ),
+        "token_url": Option(
+            "OAuth token endpoint",
+            "",
+            "For oauth2 only: the provider's token endpoint.",
+            kind="url",
+            placeholder="https://login.example.org/oauth2/token",
+        ),
         "host": Option(
             "IMAP server", "", "e.g. mail.example.org (TLS on the port below).", placeholder="mail.example.org"
         ),
@@ -149,9 +178,15 @@ class Mail(Source):
             except re.error as error:
                 problems.append(f"{self.options[name].title}: not a regular expression ({error})")
         problems += download.problems(self.settings)
+        auth = str(self.settings["auth"])
+        if auth not in AUTHS:
+            problems.append(f"unknown sign-in {auth}")
+        elif auth == "oauth2" and not browser.allowed_url(str(self.settings["token_url"]).strip()):
+            problems.append("OAuth2 needs the provider's token endpoint (https://...)")
         if problems:
             raise SourceError("; ".join(problems))
         self.imap: Any = None
+        self.refreshed = ""
         self.payloads: dict[str, bytes] = {}
 
     def open(self) -> Any:
@@ -162,7 +197,12 @@ class Mail(Source):
             raise SourceError(f"cannot reach {self.settings['host']}: {error}") from error
         user, password = self.secrets.get("username", ""), self.secrets.get("password", "")
         try:
-            if plain_login(user) and plain_login(password):
+            if str(self.settings["auth"]).startswith("oauth2"):
+                access = self.access_token()
+                # XOAUTH2 (Google's and Microsoft's IMAP): the user and the bearer token.
+                proof = f"user={user}\x01auth=Bearer {access}\x01\x01".encode()
+                self.imap.authenticate("XOAUTH2", lambda _: proof)
+            elif plain_login(user) and plain_login(password):
                 self.imap.login(user, password)
             else:
                 # imaplib's LOGIN sends ASCII only and does not quote the user: SASL PLAIN (UTF-8).
@@ -278,6 +318,40 @@ class Mail(Source):
         if payload is None:
             raise SourceError(f"{item.path} was not read from the mailbox")
         dest.write(payload)
+
+    def access_token(self) -> str:
+        """An access token for the mailbox, from the refresh token (and the provider's newer
+        refresh token kept for the next run, when it sends one)."""
+        if self.client is None:
+            raise SourceError("no connection for OAuth2")
+        refresh = self.refreshed or self.secrets.get("refresh_token", "")
+        client_id = self.secrets.get("client_id", "")
+        if not refresh or not client_id:
+            raise AuthError("OAuth2 needs the job's client ID and refresh token (its account)")
+        data = {"grant_type": "refresh_token", "refresh_token": refresh, "client_id": client_id}
+        if self.secrets.get("client_secret"):
+            data["client_secret"] = self.secrets["client_secret"]
+        answer = self.client.post(self.token_endpoint(), data=data)
+        token = answer.json() if answer.headers.get("content-type", "").startswith("application/json") else {}
+        if answer.status_code != 200 or not token.get("access_token"):
+            reason = token.get("error_description") or token.get("error") or f"answer {answer.status_code}"
+            raise AuthError(f"the OAuth2 provider refused the refresh token: {reason}")
+        if token.get("refresh_token") and token["refresh_token"] != refresh:
+            self.refreshed = str(token["refresh_token"])
+        return str(token["access_token"])
+
+    def token_endpoint(self) -> str:
+        """The provider's token endpoint."""
+        auth = str(self.settings["auth"])
+        return OAUTH_TOKEN_URLS.get(auth) or str(self.settings["token_url"]).strip()
+
+    def restore(self, session: dict) -> None:
+        # A refresh token the provider replaced in an earlier run (Microsoft's rotate).
+        if session.get("refresh_token"):
+            self.refreshed = str(session["refresh_token"])
+
+    def session(self) -> dict | None:
+        return {"refresh_token": self.refreshed} if self.refreshed else None
 
     def close(self) -> None:
         if self.imap is not None:

@@ -92,6 +92,7 @@
 		if (step.action === 'goto') return `Open ${step.url}`
 		if (step.action === 'click') return `Click ${step.text ? `“${step.text}”` : step.selector}`
 		if (step.action === 'press') return `Press ${step.key} in ${step.selector}`
+		if (step.credential === 'totp') return `Fill in the current one-time code (${step.selector})`
 		if (step.credential) return `Fill in the account's ${step.credential} (${step.selector})`
 		return `Fill in “${step.value}” (${step.selector})`
 	}
@@ -191,12 +192,17 @@
 		const stored = await api('GET', `/jobs/${job.id}/credentials`)
 		const inputs = {}
 		for (const name of source.credentials) {
-			// A configuration (several lines, e.g. rclone's) in a text area; passwords and tokens hidden.
+			// Several lines (rclone's configuration, cookies) in a text area; secrets hidden.
 			const placeholder = stored[name] ? '(stored, leave empty to keep)' : ''
-			inputs[name] = name === 'config'
-				? el('textarea', { rows: '8', class: 'harvester-recipe', placeholder, autocomplete: 'off', spellcheck: 'false' })
-				: el('input', { type: ['password', 'token'].includes(name) ? 'password' : 'text', placeholder, autocomplete: 'off' })
-			container.append(field(name, inputs[name]))
+			const [title, help] = (source.credential_help || {})[name] || [name, '']
+			inputs[name] = ['config', 'cookies'].includes(name)
+				? el('textarea', { rows: '6', class: 'harvester-recipe', placeholder, autocomplete: 'off', spellcheck: 'false' })
+				: el('input', {
+					type: ['password', 'token', 'secret', 'totp', 'client_secret', 'refresh_token'].includes(name) ? 'password' : 'text',
+					placeholder,
+					autocomplete: name === 'username' ? 'username' : 'off',
+				})
+			container.append(field(title, inputs[name], help))
 		}
 		container.append(el('button', {
 			text: 'Save account',

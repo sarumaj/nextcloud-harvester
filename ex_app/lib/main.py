@@ -142,6 +142,7 @@ def list_sources() -> list[dict]:
             "title": source.title,
             "description": source.description,
             "credentials": list(source.credentials),
+            "credential_help": {name: list(help_) for name, help_ in source.credential_help.items()},
             "options": {key: vars(option) for key, option in (source.options | COMMON_OPTIONS).items()},
         }
         for source in SOURCES.values()

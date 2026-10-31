@@ -154,6 +154,11 @@
 			selector: unique(el),
 			// A password is never reported: the job fills in the account's.
 			value: el.type === 'password' ? '' : el.value,
+			// A one-time code's field (an authenticator's code): the job fills in the current code.
+			otp: el.type !== 'password' && /^\d{6,10}$/.test(el.value.trim())
+				&& (el.autocomplete === 'one-time-code'
+					|| /otp|totp|2fa|mfa|one.?time|verification|security.?code|auth.?code|token/i.test(
+						[el.name, el.id, el.placeholder, el.getAttribute('aria-label') || ''].join(' '))),
 			field: el.type === 'password' ? 'password' : el.type,
 			form: el.form ? unique(el.form) : '',
 		})

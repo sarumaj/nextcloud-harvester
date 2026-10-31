@@ -148,3 +148,63 @@ def test_settings_are_checked_without_connecting():
         with pytest.raises(SourceError, match=problem):
             Mail(options, {}, None)
     Mail({"host": "imap.example.org"}, {}, None).close()
+
+
+class OAuthIMAP(FakeIMAP):
+    """An IMAP server that takes XOAUTH2 only, with the access token it knows."""
+
+    def authenticate(self, mechanism, answer):
+        proof = answer(b"")
+        self.commands.append(("AUTHENTICATE", mechanism, proof))
+        if mechanism != "XOAUTH2" or proof != b"user=me@example.org\x01auth=Bearer access-1\x01\x01":
+            raise imaplib.IMAP4.error("[AUTHENTICATIONFAILED] Invalid credentials")
+        return "OK", [b"Logged in"]
+
+
+def oauth_source(server, client, refresh="refresh-1"):
+    made = Mail(
+        {"host": "imap.example.org", "since_days": 0, "auth": "oauth2-microsoft"},
+        {"username": "me@example.org", "client_id": "app-id", "refresh_token": refresh},
+        client,
+    )
+    made.connect = lambda host, port: server  # type: ignore[method-assign]
+    return made
+
+
+def test_oauth2_signs_in_with_xoauth2_and_keeps_a_replaced_refresh_token():
+    import httpx  # pylint: disable=import-outside-toplevel
+    from urllib.parse import parse_qs  # pylint: disable=import-outside-toplevel
+
+    asked: list = []
+
+    def endpoint(request: httpx.Request) -> httpx.Response:
+        asked.append((str(request.url), {k: v[0] for k, v in parse_qs(request.content.decode()).items()}))
+        return httpx.Response(200, json={"access_token": "access-1", "refresh_token": "refresh-2", "expires_in": 3600})
+
+    server = OAuthIMAP(mailbox().messages)
+    made = oauth_source(server, httpx.Client(transport=httpx.MockTransport(endpoint)))
+    assert len(list(made.items(lambda key: False))) == 4, "the mailbox's four attachments"
+    url, form = asked[0]
+    assert url == "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+    assert form == {"grant_type": "refresh_token", "refresh_token": "refresh-1", "client_id": "app-id"}
+    assert server.commands[0][:2] == ("AUTHENTICATE", "XOAUTH2")
+    assert made.session() == {"refresh_token": "refresh-2"}, "Microsoft's new refresh token kept for the next run"
+    made.close()
+
+    later = oauth_source(OAuthIMAP(mailbox().messages), httpx.Client(transport=httpx.MockTransport(endpoint)))
+    later.restore({"refresh_token": "refresh-2"})
+    list(later.items(lambda key: False))
+    assert asked[1][1]["refresh_token"] == "refresh-2", "the next run uses the kept one"
+
+
+def test_a_refused_refresh_token_is_an_auth_error():
+    import httpx  # pylint: disable=import-outside-toplevel
+
+    def refuse(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"error": "invalid_grant", "error_description": "AADSTS70000: expired"})
+
+    made = oauth_source(OAuthIMAP(mailbox().messages), httpx.Client(transport=httpx.MockTransport(refuse)))
+    with pytest.raises(AuthError, match="AADSTS70000: expired"):
+        list(made.items(lambda key: False))
+    with pytest.raises(SourceError, match="token endpoint"):
+        Mail({"host": "imap.example.org", "auth": "oauth2", "token_url": "http://10.0.0.1/token"}, {}, None)

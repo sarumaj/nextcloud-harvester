@@ -15,7 +15,7 @@ import feedparser
 
 from .. import browser, patterns
 from . import download
-from .base import Item, Option, Source, SourceError
+from .base import ACCOUNT_HELP, Item, Option, Source, SourceError
 
 UNSAFE = re.compile(r"[\\/:*?\"<>|\s]+")
 TAKES = ("enclosures", "links")
@@ -32,6 +32,9 @@ class Feed(Source):
     name = "feed"
     title = "Feed or podcast"
     description = "The files of a news feed (RSS or Atom): podcast episodes, attached documents or each entry's link."
+    # Private feeds (a paid podcast's, a member area's): HTTP Basic or a signed-in browser's cookies.
+    credentials = ("username", "password", "cookies")
+    credential_help = ACCOUNT_HELP
     options = {
         "url": Option(
             "Feed", "", "The feed's address (RSS or Atom).", kind="url", placeholder="https://example.org/feed.xml"
@@ -98,6 +101,7 @@ class Feed(Source):
         """The feed's title and its entries, newest first."""
         assert self.client is not None
         url = str(self.settings["url"]).strip()
+        self.sign_client(url)
         response = self.client.get(url)
         if response.status_code >= 400:
             raise SourceError(f"the feed {url} answered {response.status_code}")

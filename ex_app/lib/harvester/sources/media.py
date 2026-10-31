@@ -3,9 +3,14 @@ the newest entries of a playlist or channel.
 
 Formats that come as one file only (yt-dlp's "best" with audio and video together): joining a
 separate video and audio stream needs ffmpeg, which the image does not have.
+
+The account's cookies go to yt-dlp as a cookies.txt file (0600, removed when the run ends); its
+user name and password as yt-dlp's own, for the sites whose extractors sign in.
 """
 
+import contextlib
 import datetime
+import os
 import pathlib
 import re
 import shutil
@@ -15,9 +20,9 @@ from typing import Any, BinaryIO
 
 import yt_dlp
 
-from .. import patterns
+from .. import cookies, patterns
 from ..browser import allowed_url
-from .base import Item, Option, Source, SourceError
+from .base import ACCOUNT_HELP, Item, Option, Source, SourceError
 
 # The quiet, offline-safe options every YoutubeDL here starts from.
 # Timeouts and retries: a stalled server must not hold the executor (one run at a time).
@@ -56,6 +61,13 @@ class Media(Source):
     description = (
         "Videos and audio from YouTube, Vimeo and the other sites yt-dlp supports: a video, playlist or channel."
     )
+    # Members-only and age-restricted videos: a signed-in browser's cookies (YouTube's way), or a
+    # user name and password where yt-dlp's extractor signs in (Vimeo, Nebula, ...).
+    credentials = ("username", "password", "cookies")
+    credential_help = ACCOUNT_HELP | {
+        "username": ("User name", "For the sites where yt-dlp signs in itself (not YouTube: use cookies)."),
+        "password": ("Password", "The account's password."),
+    }
     options = {
         "url": Option(
             "Page",
@@ -99,10 +111,29 @@ class Media(Source):
             raise SourceError("at least one entry per run")
         # The class used, so that tests can stand in for yt-dlp.
         self.downloader: Callable[[dict], Any] = yt_dlp.YoutubeDL
+        self.cookie_file: str | None = None
+
+    def base(self) -> dict:
+        """BASE with the account: its cookies' file (written once per run), user name, password."""
+        account = {}
+        if self.cookie_file is None:
+            found = self.account_cookies(self.url)
+            self.cookie_file = cookies.to_file(found) if found else ""
+        if self.cookie_file:
+            account["cookiefile"] = self.cookie_file
+        if self.secrets.get("username"):
+            account |= {"username": self.secrets["username"], "password": self.secrets.get("password", "")}
+        return BASE | account
+
+    def close(self) -> None:
+        if self.cookie_file:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(self.cookie_file)
+        self.cookie_file = None
 
     def _info(self, url: str, **options) -> dict:
         try:
-            with self.downloader(BASE | options) as ydl:
+            with self.downloader(self.base() | options) as ydl:
                 return ydl.sanitize_info(ydl.extract_info(url, download=False))
         except yt_dlp.utils.DownloadError as error:
             raise SourceError(f"yt-dlp: {str(error).removeprefix('ERROR: ')}") from error
@@ -161,7 +192,7 @@ class Media(Source):
         if not allowed_url(item.url):
             raise SourceError(f"{item.url} may not be opened")
         with tempfile.TemporaryDirectory(prefix="harvester-media-") as directory:
-            options = BASE | {
+            options = self.base() | {
                 "format": str(self.settings["format"]),
                 "outtmpl": str(pathlib.Path(directory) / "%(id)s.%(ext)s"),
                 "postprocessors": [],

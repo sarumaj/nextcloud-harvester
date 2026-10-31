@@ -60,7 +60,17 @@ the app's browser or taken from a template, not by code.
 - **Templates** (`ex_app/lib/harvester/presets/*.json`): jobs for known sites with a few
   parameters, e.g. `heise.json`: heise's magazines (iX, c't, ...) as PDF for a subscription.
 - **Accounts:** a job's username and password, token or rclone configuration are your sensitive
-  preferences in Nextcloud (encrypted); the page only shows whether they are set.
+  preferences in Nextcloud (encrypted); the page only shows whether they are set. Besides a
+  password, a job signs in with:
+  - **one-time codes** (`otp.py`, TOTP): a recorded sign-in's code field gets the current code
+    from the secret an authenticator app would be given (base32 text or the `otpauth://` link);
+  - **cookies** (`cookies.py`) of a browser you signed in with: a cookies.txt export or a
+    Cookie header's `name=value` pairs, for websites, feeds, yt-dlp and gallery-dl (as a 0600
+    file, removed after the run, never on a command line);
+  - **HTTP Basic** for feeds and websites without recorded steps, sent only to the site's own
+    host and scheme;
+  - **OAuth2** for mail (Gmail, Outlook or any provider's token endpoint): a client ID and secret
+    and a refresh token sign in with XOAUTH2; a refresh token the provider replaces is kept.
 - **Safety:** the browser and the downloads reach only http(s) addresses outside local and
   private networks (a `file://` page would show the app's secret).
 

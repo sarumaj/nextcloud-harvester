@@ -4,8 +4,11 @@ import abc
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import BinaryIO, ClassVar
+from urllib.parse import urlparse
 
 import httpx
+
+from .. import cookies as cookie_jar
 
 
 class SourceError(Exception):
@@ -14,6 +17,35 @@ class SourceError(Exception):
 
 class AuthError(SourceError):
     """The credentials were refused: running again will not help until they change."""
+
+
+# What the account's sign-ins without a browser are: HTTP Basic and cookies, the page's words.
+ACCOUNT_HELP = {
+    "username": ("User name", "For sites that ask with the browser's own sign-in box (HTTP Basic)."),
+    "password": ("Password", "The user name's password (HTTP Basic)."),
+    "cookies": (
+        "Cookies",
+        "A signed-in browser's cookies for the site: a cookies.txt export (Netscape format, as the "
+        '"Get cookies.txt" extensions write it) or a Cookie header\'s name=value; name=value. They '
+        "expire as they do in the browser.",
+    ),
+}
+
+
+class HostBasicAuth(httpx.Auth):
+    """HTTP Basic for one host (and scheme) only: a download elsewhere, a redirect to another
+    site, never gets the password."""
+
+    def __init__(self, url: str, username: str, password: str):
+        parsed = urlparse(url)
+        self.scheme, self.host = parsed.scheme, (parsed.hostname or "").lower()
+        self.header = httpx.BasicAuth(username, password)
+
+    def auth_flow(self, request: httpx.Request):
+        if request.url.scheme == self.scheme and request.url.host.lower() == self.host:
+            yield from self.header.auth_flow(request)
+        else:
+            yield request
 
 
 class ChallengeError(SourceError):
@@ -75,8 +107,11 @@ class Source(abc.ABC):
     # What the source fetches, for the card that starts a job of it.
     description: ClassVar[str] = ""
     # The names of the job's credentials (kept per job in Nextcloud, encrypted). The page asks
-    # for "password" and "token" hidden, and for "config" (several lines) in a text area.
+    # for "password", "token", "secret" and "totp" hidden, and for "config" and "cookies"
+    # (several lines) in a text area.
     credentials: ClassVar[tuple[str, ...]] = ()
+    # What the page says of each credential: {name: (title, help)}; the name alone otherwise.
+    credential_help: ClassVar[dict[str, tuple[str, str]]] = {}
     options: ClassVar[dict[str, Option]] = {}
     # Seconds between two downloads, so as not to hammer the site.
     pause: ClassVar[float] = 0.0
@@ -93,6 +128,25 @@ class Source(abc.ABC):
     @abc.abstractmethod
     def fetch(self, item: Item, dest: BinaryIO) -> None:
         """Writes the item's content to dest."""
+
+    def account_cookies(self, url: str) -> list[cookie_jar.Cookie]:
+        """The account's cookies (pairs of a Cookie header for url's host); AuthError when the
+        text holds none."""
+        text = self.secrets.get("cookies", "")
+        if not text.strip():
+            return []
+        found = cookie_jar.parse(text, urlparse(url).hostname or "")
+        if not found:
+            raise AuthError("the account's cookies are neither a cookies.txt export nor name=value pairs")
+        return found
+
+    def sign_client(self, url: str) -> None:
+        """Gives the run's client the account's cookies, and HTTP Basic for url's host."""
+        if self.client is None:
+            return
+        cookie_jar.to_client(self.client, self.account_cookies(url))
+        if self.secrets.get("username") and self.secrets.get("password"):
+            self.client.auth = HostBasicAuth(url, self.secrets["username"], self.secrets["password"])
 
     def restore(self, session: dict) -> None:
         """Starts from the session kept after the last run (or the user's answer to a challenge)."""
