@@ -29,6 +29,8 @@ from . import LAUNCH_ARGS, SCRIPT, VIEWPORT, allowed_url
 # record: steps; browse: go somewhere unrecorded; follow, links, next: pick links.
 MODES = ("record", "browse", "follow", "links", "next")
 EXAMPLES = 8
+# Text up to this long is typed key by key; longer (a paste) is inserted at once.
+TYPED = 200
 # Seconds closing the browser may take.
 CLOSE_TIMEOUT = 10
 HIGHLIGHT = "([selector, pattern]) => window.__harvester ? window.__harvester.highlight(selector, pattern) : null"
@@ -235,7 +237,13 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         elif kind == "key":
             await page.keyboard.press(str(message["key"]))
         elif kind == "text":
-            await page.keyboard.insert_text(str(message["text"]))
+            # Typed text with key events, as sites that check fields while typing expect; a long
+            # paste in one go. Characters outside a US keyboard arrive as input either way.
+            text = str(message["text"])
+            if len(text) <= TYPED:
+                await page.keyboard.type(text)
+            else:
+                await page.keyboard.insert_text(text)
         elif kind == "mode" and message.get("mode") in MODES:
             self.mode = message["mode"]
             await self._apply_mode()

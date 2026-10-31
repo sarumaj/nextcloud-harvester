@@ -324,3 +324,34 @@ def test_challenges_are_recognised():
             page.set_content(html)
             assert page.evaluate(site_module.browser.CHALLENGE_SCRIPT) == kind, html
         chromium.close()
+
+
+@needs_chromium
+def test_the_recorders_keys_and_typed_text_reach_the_page():
+    async def scenario():
+        driver = Driver()
+        recorder = Recorder(driver.send)
+        driver.recorder = recorder
+        await recorder.start()
+        try:
+            page = recorder._page
+            await page.set_content('<input id="q" style="width:400px">')
+            await driver.click("#q")
+            for message in (
+                {"type": "text", "text": "ac"},
+                {"type": "key", "key": "ArrowLeft"},
+                {"type": "text", "text": "b"},
+                {"type": "key", "key": "End"},
+                {"type": "text", "text": "é@ß"},
+            ):
+                await recorder.handle(message)
+            typed = await page.input_value("#q")
+            await recorder.handle({"type": "key", "key": "Control+a"})
+            await recorder.handle({"type": "key", "key": "Backspace"})
+            return typed, await page.input_value("#q")
+        finally:
+            await recorder.close()
+
+    typed, cleared = asyncio.run(scenario())
+    assert typed == "abcé@ß", "arrows move the caret; text in any layout arrives as typed"
+    assert cleared == "", "Ctrl+A then Backspace select and delete"

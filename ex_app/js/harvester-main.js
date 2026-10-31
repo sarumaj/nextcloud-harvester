@@ -189,12 +189,40 @@
 		return box
 	}
 
-	// The remote browser's screen: the person's mouse, wheel, keys and pastes go to it, at the
-	// browser's coordinates.
+	// Keys the remote browser gets as key presses: they move, delete or confirm rather than type.
+	const NON_TEXT_KEYS = new Set(['Enter', 'Tab', 'Backspace', 'Delete', 'Escape', 'ArrowLeft', 'ArrowRight', 'ArrowUp',
+		'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown', 'Insert', ...Array.from({ length: 12 }, (_, i) => `F${i + 1}`)])
+
+	// What a key press on the person's keyboard sends: a key press for the keys above and for
+	// shortcuts (Ctrl or Cmd with a letter: Ctrl+A), null for everything that types, which the
+	// browser turns into text with the person's own layout (AltGr, dead keys, input methods).
+	// AltGr reports Ctrl+Alt on Windows: that is typing, not a shortcut. Ctrl+V pastes.
+	function keyAction(event) {
+		if (event.isComposing || ['Dead', 'Process', 'Unidentified', 'Shift', 'Control', 'Alt', 'AltGraph', 'Meta'].includes(event.key)) return null
+		const altGraph = event.getModifierState('AltGraph') || (event.ctrlKey && event.altKey)
+		const shortcut = (event.ctrlKey || event.metaKey) && !altGraph && event.key.length === 1 && event.key.toLowerCase() !== 'v'
+		if (!NON_TEXT_KEYS.has(event.key) && !shortcut) return null
+		const modifiers = [['Control', event.ctrlKey && !altGraph], ['Alt', event.altKey && !altGraph], ['Meta', event.metaKey], ['Shift', event.shiftKey]]
+			.filter(([, on]) => on).map(([name]) => name)
+		const key = shortcut ? event.key.toLowerCase() : event.key
+		return { type: 'key', key: [...modifiers, key].join('+') }
+	}
+	window.__harvesterKeyAction = keyAction
+
+	// The remote browser's screen: the person's mouse and wheel go to it at the browser's
+	// coordinates; the keyboard types into an invisible text field over it (the person's layout),
+	// whose text goes to the browser as text. Returns the box to put on the page.
 	function wireScreen(screen, send) {
+		const keys = el('textarea', {
+			class: 'harvester-keys', 'aria-label': 'Keyboard of the remote browser',
+			autocomplete: 'off', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false',
+		})
+		const box = el('div', { class: 'harvester-screen-box' }, screen, keys)
+		screen.focusKeys = () => keys.focus({ preventScroll: true })
+
 		function point(event) {
-			const box = screen.getBoundingClientRect()
-			return { x: (event.clientX - box.left) * VIEWPORT.width / box.width, y: (event.clientY - box.top) * VIEWPORT.height / box.height }
+			const area = screen.getBoundingClientRect()
+			return { x: (event.clientX - area.left) * VIEWPORT.width / area.width, y: (event.clientY - area.top) * VIEWPORT.height / area.height }
 		}
 		let lastMove = 0
 		screen.addEventListener('mousemove', (event) => {
@@ -205,23 +233,32 @@
 		for (const kind of ['down', 'up']) {
 			screen.addEventListener(`mouse${kind}`, (event) => {
 				event.preventDefault()
-				screen.focus({ preventScroll: true })
+				screen.focusKeys()
 				send({ type: 'mouse', event: kind, button: event.button === 2 ? 'right' : 'left', ...point(event) })
 			})
 		}
 		screen.addEventListener('contextmenu', (event) => event.preventDefault())
 		screen.addEventListener('wheel', (event) => { event.preventDefault(); send({ type: 'wheel', dx: event.deltaX, dy: event.deltaY }) }, { passive: false })
-		screen.addEventListener('keydown', (event) => {
-			if ((event.ctrlKey || event.metaKey) && event.key === 'v') return // the paste event sends the text
+
+		keys.addEventListener('keydown', (event) => {
+			const action = keyAction(event)
+			if (!action) return // typing: the text arrives as input
 			event.preventDefault()
-			const modifiers = ['Control', 'Alt', 'Meta', 'Shift'].filter((m) => event.getModifierState(m) && m !== event.key)
-			const key = event.key.length === 1 && modifiers.every((m) => m === 'Shift') ? event.key : [...modifiers, event.key === ' ' ? 'Space' : event.key].join('+')
-			send({ type: 'key', key })
+			send(action)
 		})
-		screen.addEventListener('paste', (event) => {
+		// The typed text, once composed (dead keys and input methods finish in compositionend).
+		const flush = () => {
+			const text = keys.value
+			keys.value = ''
+			if (text) send({ type: 'text', text })
+		}
+		keys.addEventListener('input', (event) => { if (!event.isComposing) flush() })
+		keys.addEventListener('compositionend', flush)
+		keys.addEventListener('paste', (event) => {
 			event.preventDefault()
 			send({ type: 'text', text: event.clipboardData.getData('text') })
 		})
+		return box
 	}
 
 	// A job that met a page asking for a person: the browser opens there with the job's session;
@@ -248,7 +285,7 @@
 			else if (data.type === 'session-saved') { socket.close(); show(root) }
 		})
 		socket.addEventListener('close', () => { if (root.contains(screen)) message.textContent ||= 'The browser closed.' })
-		wireScreen(screen, send)
+		const box = wireScreen(screen, send)
 		root.replaceChildren(el('div', { class: 'harvester-recorder' },
 			el('div', { class: 'harvester-header' },
 				el('div', {},
@@ -257,8 +294,8 @@
 				el('div', {}, done, el('button', { text: 'Cancel', onclick: () => { socket.close(); show(root) } }))),
 			el('div', { class: 'harvester-toolbar' }, url),
 			message,
-			el('div', { class: 'harvester-stage' }, screen)))
-		screen.focus({ preventScroll: true })
+			el('div', { class: 'harvester-stage' }, box)))
+		screen.focusKeys()
 	}
 
 	// The recorder: the browser's screen, the person's mouse and keys to it, and the recipe so far.
@@ -288,7 +325,7 @@
 		for (const [mode, label] of labels) {
 			const radio = el('input', { type: 'radio', name: 'harvester-mode', value: mode })
 			radio.checked = mode === 'record'
-			radio.addEventListener('change', () => { send({ type: 'mode', mode }); modeHelp.textContent = help[mode]; screen.focus({ preventScroll: true }) })
+			radio.addEventListener('change', () => { send({ type: 'mode', mode }); modeHelp.textContent = help[mode]; screen.focusKeys() })
 			modes.append(el('label', {}, radio, ` ${label} `))
 		}
 
@@ -337,7 +374,7 @@
 		})
 		socket.addEventListener('close', () => { message.textContent ||= 'The recorder’s browser closed.' })
 
-		wireScreen(screen, send)
+		const box = wireScreen(screen, send)
 
 		root.replaceChildren(el('div', { class: 'harvester-recorder' },
 			el('h2', { text: 'Recorder' }),
@@ -351,7 +388,7 @@
 				el('button', { class: 'primary', text: 'Done', onclick: () => close(true) }),
 				el('button', { text: 'Cancel', onclick: () => close(false) })),
 			modes, modeHelp, message,
-			el('div', { class: 'harvester-stage' }, screen, panel)))
+			el('div', { class: 'harvester-stage' }, box, panel)))
 		renderPanel()
 		url.addEventListener('keydown', (event) => { if (event.key === 'Enter') send({ type: 'goto', url: url.value }) })
 		url.focus()
@@ -488,11 +525,13 @@
 		#harvester .harvester-url { flex: 1; margin: 0; }
 		#harvester .harvester-modes label { margin-inline-end: 12px; }
 		#harvester .harvester-stage { display: flex; gap: 12px; align-items: flex-start; margin-top: 8px; }
+		#harvester .harvester-screen-box { flex: 3; min-width: 0; max-width: calc((100vh - 260px) * 1.6); position: relative; }
 		#harvester .harvester-screen {
-			flex: 3; min-width: 0; aspect-ratio: 1280 / 800; max-width: calc((100vh - 260px) * 1.6);
+			display: block; width: 100%; aspect-ratio: 1280 / 800;
 			border: 1px solid var(--color-border); border-radius: var(--border-radius); background: var(--color-background-dark); cursor: crosshair;
 		}
-		#harvester .harvester-screen:focus { outline: 2px solid var(--color-primary-element); }
+		#harvester .harvester-keys { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; resize: none; pointer-events: none; border: 0; padding: 0; }
+		#harvester .harvester-screen-box:focus-within .harvester-screen { outline: 2px solid var(--color-primary-element); }
 		#harvester .harvester-steps { flex: 1; min-width: 300px; max-height: 80vh; overflow: auto; overflow-wrap: anywhere; font-size: 90%; }
 		#harvester .harvester-level { border-inline-start: 3px solid var(--color-primary-element); padding-inline-start: 8px; margin: 8px 0; }
 		#harvester .harvester-value { background: var(--color-primary-element-light); border-radius: 4px; padding: 0 4px; margin-inline-end: 4px; font-family: var(--font-face-monospace, monospace); }
