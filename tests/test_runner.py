@@ -7,7 +7,7 @@ import json
 import sqlite3
 import time
 
-from nc_py_api import NextcloudExceptionNotFound
+from nc_py_api import NextcloudException, NextcloudExceptionNotFound
 
 from harvester import executor as executor_module
 from harvester import runner
@@ -191,6 +191,8 @@ class FakeFiles:
 
     def __init__(self):
         self.stored: dict[str, bytes] = {}
+        self.tags = {}
+        self.assigned = set()
 
     def by_path(self, path):
         if path not in self.stored:
@@ -204,6 +206,24 @@ class FakeFiles:
         self.stored[path] = content.read()
         return self.by_path(path)
 
+    # Tags as Nextcloud keeps them: "hidden" exists but is not visible to the user; assigning a
+    # tag twice and creating an existing one answer 409 Conflict.
+    tags: dict[str, int] = {}
+    assigned: set[tuple[int, int]] = set()
+
+    def list_tags(self):
+        return [type("Tag", (), {"display_name": name, "tag_id": i})() for name, i in self.tags.items()]
+
+    def create_tag(self, name):
+        if name in self.tags or name == "hidden":
+            raise NextcloudException(409, "Conflict")
+        self.tags[name] = len(self.tags) + 1
+
+    def assign_tag(self, file_id, tag_id):
+        if (file_id, tag_id) in self.assigned:
+            raise NextcloudException(409, "Conflict")
+        self.assigned.add((file_id, tag_id))
+
 
 def test_the_nextcloud_library_takes_a_missing_file_for_one_to_download():
     nc = FakeNextcloud()
@@ -215,3 +235,16 @@ def test_the_nextcloud_library_takes_a_missing_file_for_one_to_download():
         "3 downloaded"
     )
     assert library.find("/Zeitschriften/ix/a.txt") == 1 and library.find("/Zeitschriften/ix/missing") is None
+
+
+def test_tagging_survives_tags_already_there_and_hidden_ones():
+    nc = FakeNextcloud()
+    nc.files = FakeFiles()
+    library = NextcloudLibrary(nc)  # type: ignore[arg-type]
+    job = Job(user="u", name="n", source="fake", target="/x", schedule="* * * * *", tags=["mine", "hidden"])
+    seen: set[str] = set()
+    runner.run(job, FakeSource({}, {}, None), library, seen.__contains__, seen.add, lambda s: None)
+    assert nc.files.assigned == {(1, 1), (2, 1), (3, 1)}, "'mine' on each file, 'hidden' left out"
+    # A run that broke off after a file was tagged: it is found again and tagged again.
+    library.tag(1, ["mine"])
+    assert NextcloudLibrary(nc).find("/x/a.txt") == 1  # type: ignore[arg-type]

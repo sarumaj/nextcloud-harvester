@@ -3,7 +3,7 @@
 import posixpath
 from typing import BinaryIO
 
-from nc_py_api import NextcloudApp, NextcloudExceptionNotFound
+from nc_py_api import NextcloudApp, NextcloudException, NextcloudExceptionNotFound
 
 from .runner import Library
 
@@ -31,12 +31,26 @@ class NextcloudLibrary(Library):
         return {tag.display_name: tag.tag_id for tag in self.nc.files.list_tags()}
 
     def tag(self, file_id: int, tags: list[str]) -> None:
+        # Nextcloud answers 409 Conflict to a tag already on the file (a file tagged before a run
+        # broke off, then found again) and to a new tag whose name a tag the user cannot see has:
+        # neither stops the run. A tag the user cannot see or assign is left out.
         if any(name not in self._tags for name in tags):
             self._tags = self._tag_ids()
             missing = [name for name in tags if name not in self._tags]
             for name in missing:
-                self.nc.files.create_tag(name)
+                try:
+                    self.nc.files.create_tag(name)
+                except NextcloudException as error:
+                    if error.status_code != 409:
+                        raise
             if missing:
                 self._tags = self._tag_ids()
         for name in tags:
-            self.nc.files.assign_tag(file_id, self._tags[name])
+            tag_id = self._tags.get(name)
+            if tag_id is None:
+                continue
+            try:
+                self.nc.files.assign_tag(file_id, tag_id)
+            except NextcloudException as error:
+                if error.status_code != 409:
+                    raise
