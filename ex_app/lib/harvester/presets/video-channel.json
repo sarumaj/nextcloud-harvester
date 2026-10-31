@@ -1,0 +1,36 @@
+{
+  "title": "Video channel",
+  "source": "media",
+  "description": "A YouTube, Vimeo or other channel's newest videos (up to 1080p, one file each), into a folder per channel, tagged with its name.",
+  "parameters": {
+    "url": {
+      "title": "Channel",
+      "default": "",
+      "check": "^https?://[^\\\\s{}$]+$",
+      "description": "The channel's or playlist's page. e.g. https://www.youtube.com/@name/videos"
+    },
+    "name": {
+      "title": "Name",
+      "default": "Channel",
+      "check": "^[^/{}$]{1,80}$",
+      "description": "For the folder and the tag."
+    }
+  },
+  "job": {
+    "name": "${name}",
+    "source": "media",
+    "target": "/Videos/${name}",
+    "schedule": "30 4 * * *",
+    "tags": [
+      "${name}",
+      "{year}"
+    ],
+    "options": {
+      "url": "${url}",
+      "format": "best[height<=1080][acodec!=none][vcodec!=none]/best[height<=1080]",
+      "max_entries": 15,
+      "path": "{year}/{year}-{month:02d}-{day:02d} {title} [{id}].{ext}",
+      "max_items": 3
+    }
+  }
+}

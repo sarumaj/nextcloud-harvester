@@ -1,0 +1,34 @@
+{
+  "title": "Gallery or album",
+  "source": "gallery",
+  "description": "The images of a gallery, album or profile on Flickr, Imgur, DeviantArt and the other sites gallery-dl knows, new ones on each run.",
+  "parameters": {
+    "url": {
+      "title": "Page",
+      "default": "",
+      "check": "^https?://[^\\\\s{}$]+$",
+      "description": "The gallery's, album's or profile's page. e.g. https://www.flickr.com/photos/name/albums/123"
+    },
+    "name": {
+      "title": "Name",
+      "default": "Gallery",
+      "check": "^[^/{}$]{1,80}$",
+      "description": "For the folder and the tag."
+    }
+  },
+  "job": {
+    "name": "${name}",
+    "source": "gallery",
+    "target": "/Pictures/${name}",
+    "schedule": "0 3 * * *",
+    "tags": [
+      "${name}"
+    ],
+    "options": {
+      "url": "${url}",
+      "path": "{year}/{filename}.{extension}",
+      "file_type": "image",
+      "max_items": 50
+    }
+  }
+}

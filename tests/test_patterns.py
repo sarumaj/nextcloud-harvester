@@ -50,3 +50,26 @@ def test_heise_template_makes_a_valid_job():
     Site(job["options"], {}, None).close()
     with pytest.raises(ValueError):
         make_job("heise", {"magazine": "../x"})
+
+
+SAMPLES = {
+    "url": "https://example.org/feed.xml",
+    "name": "Example",
+    "host": "mail.example.org",
+    "folder": "INBOX",
+    "sender": "shop.example",
+    "repository": "https://github.com/rclone/rclone",
+    "files": r"linux-amd64\.zip$",
+}
+
+
+@pytest.mark.parametrize("preset_id", sorted(PRESETS))
+def test_every_template_makes_a_job_its_source_accepts(preset_id):
+    from harvester.sources import SOURCES  # pylint: disable=import-outside-toplevel
+
+    preset = PRESETS[preset_id]
+    job = make_job(preset_id, {key: value for key, value in SAMPLES.items() if key in preset.get("parameters", {})})
+    assert job["source"] in SOURCES and (preset.get("source") or job["source"]) == job["source"]
+    SOURCES[job["source"]](job["options"], {}, None).close()
+    for parameter in preset.get("parameters", {}).values():
+        assert parameter["title"] and "description" in parameter

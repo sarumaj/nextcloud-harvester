@@ -150,7 +150,8 @@
 				return field(spec.title, inputs[name], spec.description)
 			})
 			return el('div', { class: 'harvester-card' },
-				el('h3', { text: preset.title }), el('p', { text: preset.description }), ...fields,
+				el('h3', { class: 'harvester-with-icon' }, icon(preset.source), el('span', { text: preset.title })),
+				el('p', { class: 'harvester-muted', text: preset.description }), ...fields,
 				el('button', {
 					class: 'primary',
 					text: 'Use this template',

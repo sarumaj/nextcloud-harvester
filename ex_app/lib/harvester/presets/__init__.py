@@ -33,5 +33,7 @@ def make_job(preset_id: str, given: dict[str, str]) -> dict:
             raise ValueError(f"{spec['title']}: {value} is not allowed")
         parameters[name] = value
     job = _fill(preset["job"], parameters)
-    job["options"]["recipe"] = json.dumps(job["options"]["recipe"], indent=2)
+    # A website's recipe is an object here; the job keeps it as JSON (other sources have none).
+    if isinstance(job.get("options", {}).get("recipe"), dict):
+        job["options"]["recipe"] = json.dumps(job["options"]["recipe"], indent=2)
     return job

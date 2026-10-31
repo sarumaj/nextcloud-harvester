@@ -1,0 +1,40 @@
+{
+  "title": "PDFs linked from a page",
+  "source": "site",
+  "description": "Every PDF a web page links to (minutes, schedules, newsletters), new ones on each run. For a page behind a login or built by JavaScript, record it in the browser instead.",
+  "parameters": {
+    "url": {
+      "title": "Page",
+      "default": "",
+      "check": "^https?://[^\\\\s{}$]+$",
+      "description": "The page with the links. e.g. https://www.example.org/downloads"
+    },
+    "name": {
+      "title": "Name",
+      "default": "Downloads",
+      "check": "^[^/{}$]{1,80}$",
+      "description": "For the folder and the tag."
+    }
+  },
+  "job": {
+    "name": "${name}",
+    "source": "site",
+    "target": "/Documents/${name}",
+    "schedule": "0 6 * * *",
+    "tags": [
+      "${name}"
+    ],
+    "options": {
+      "recipe": {
+        "start": "${url}",
+        "links": {
+          "selector": "a[href]",
+          "pattern": "\\.pdf(\\?|$)"
+        }
+      },
+      "path": "{filename}",
+      "file_type": "pdf",
+      "stop_at_seen": 0
+    }
+  }
+}

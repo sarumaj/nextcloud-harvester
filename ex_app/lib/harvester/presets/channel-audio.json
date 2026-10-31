@@ -1,0 +1,36 @@
+{
+  "title": "Channel as audio",
+  "source": "media",
+  "description": "The sound of a channel's newest videos (talks, lectures, music) as audio files, like a podcast.",
+  "parameters": {
+    "url": {
+      "title": "Channel",
+      "default": "",
+      "check": "^https?://[^\\\\s{}$]+$",
+      "description": "The channel's or playlist's page. e.g. https://www.youtube.com/@name/videos"
+    },
+    "name": {
+      "title": "Name",
+      "default": "Talks",
+      "check": "^[^/{}$]{1,80}$",
+      "description": "For the folder and the tag."
+    }
+  },
+  "job": {
+    "name": "${name} (audio)",
+    "source": "media",
+    "target": "/Audio/${name}",
+    "schedule": "30 4 * * *",
+    "tags": [
+      "${name}",
+      "audio"
+    ],
+    "options": {
+      "url": "${url}",
+      "format": "bestaudio[ext=m4a]/bestaudio",
+      "max_entries": 15,
+      "path": "{year}/{title} [{id}].{ext}",
+      "max_items": 5
+    }
+  }
+}

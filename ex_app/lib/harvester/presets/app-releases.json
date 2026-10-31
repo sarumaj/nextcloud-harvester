@@ -1,0 +1,41 @@
+{
+  "title": "App releases",
+  "source": "releases",
+  "description": "The new releases' files of an app on GitHub, GitLab, Codeberg or your own Forgejo or GitLab, e.g. its AppImage or installer.",
+  "parameters": {
+    "repository": {
+      "title": "Repository",
+      "default": "",
+      "check": "^https?://[^\\\\s{}$]+$",
+      "description": "The repository's page. e.g. https://github.com/owner/name"
+    },
+    "files": {
+      "title": "Files",
+      "default": ".*",
+      "check": "^[^\\r\\n]{1,200}$",
+      "description": "A pattern of the file names, e.g. \\.AppImage$ or x86_64.*\\.tar\\.gz$"
+    },
+    "name": {
+      "title": "Name",
+      "default": "App",
+      "check": "^[^/{}$]{1,80}$",
+      "description": "For the folder and the tag."
+    }
+  },
+  "job": {
+    "name": "${name} releases",
+    "source": "releases",
+    "target": "/Software/${name}",
+    "schedule": "0 6 * * 1",
+    "tags": [
+      "${name}",
+      "release"
+    ],
+    "options": {
+      "repository": "${repository}",
+      "asset_pattern": "${files}",
+      "path": "{tag}/{filename}",
+      "max_items": 10
+    }
+  }
+}

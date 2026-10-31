@@ -1,5 +1,6 @@
 {
   "title": "heise magazines (PDF)",
+  "source": "site",
   "description": "The issues of iX, c't, Make, Mac & i, Technology Review, ... that your heise+ or magazine subscription may download. After saving, set the job's account: your heise login.",
   "parameters": {
     "magazine": {"title": "Magazine in heise's URLs", "default": "ix", "check": "^[a-z0-9-]+$", "description": "ix, ct, make, mac-and-i, tr, ..."},

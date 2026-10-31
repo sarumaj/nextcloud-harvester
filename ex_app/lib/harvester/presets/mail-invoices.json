@@ -1,0 +1,53 @@
+{
+  "title": "Invoices from email",
+  "source": "mail",
+  "description": "The PDF attachments of a sender's messages (invoices, statements, payslips), read-only, into a folder by year. After saving, set the job's account: the mailbox's login.",
+  "parameters": {
+    "host": {
+      "title": "IMAP server",
+      "default": "",
+      "check": "^[A-Za-z0-9.-]+$",
+      "description": "e.g. mail.example.org"
+    },
+    "folder": {
+      "title": "Folder",
+      "default": "INBOX",
+      "check": "^[^\\r\\n\"]{1,200}$",
+      "description": "e.g. INBOX or INBOX/Invoices"
+    },
+    "sender": {
+      "title": "Sender",
+      "default": "",
+      "check": "^[^\\r\\n]{0,200}$",
+      "description": "A part of the sender's address or name, e.g. shop.example (empty: any)."
+    },
+    "name": {
+      "title": "Name",
+      "default": "Invoices",
+      "check": "^[^/{}$]{1,80}$",
+      "description": "For the folder and the tag."
+    }
+  },
+  "job": {
+    "name": "${name}",
+    "source": "mail",
+    "target": "/Documents/${name}",
+    "schedule": "0 7 * * *",
+    "tags": [
+      "${name}",
+      "{year}"
+    ],
+    "options": {
+      "host": "${host}",
+      "port": 993,
+      "folder": "${folder}",
+      "since_days": 365,
+      "from_pattern": "${sender}",
+      "subject_pattern": "",
+      "filename_pattern": "\\.pdf$",
+      "path": "{year}/{date} {stem}{ext}",
+      "file_type": "pdf",
+      "max_items": -1
+    }
+  }
+}

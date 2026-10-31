@@ -152,7 +152,13 @@ def list_sources() -> list[dict]:
 def list_presets() -> list[dict]:
     """The templates of jobs for known sites, with their parameters."""
     return [
-        {"id": preset_id, "title": p["title"], "description": p["description"], "parameters": p.get("parameters", {})}
+        {
+            "id": preset_id,
+            "title": p["title"],
+            "source": p.get("source") or p["job"].get("source", "site"),
+            "description": p["description"],
+            "parameters": p.get("parameters", {}),
+        }
         for preset_id, p in sorted(PRESETS.items())
     ]
 

@@ -1,0 +1,29 @@
+{
+  "title": "Folder of another Nextcloud (public link)",
+  "source": "remote",
+  "description": "The files of a folder someone shared by a public link from their Nextcloud. After saving, set the job's account to an rclone configuration: [share], type = webdav, vendor = nextcloud, url = https://their.cloud/public.php/webdav, user = the link's last part (the share's token).",
+  "parameters": {
+    "name": {
+      "title": "Name",
+      "default": "Shared folder",
+      "check": "^[^/{}$]{1,80}$",
+      "description": "For the folder and the tag."
+    }
+  },
+  "job": {
+    "name": "${name}",
+    "source": "remote",
+    "target": "/Shared/${name}",
+    "schedule": "0 */6 * * *",
+    "tags": [
+      "${name}"
+    ],
+    "options": {
+      "path": "",
+      "include": "",
+      "recursive": 1,
+      "path_template": "{path}",
+      "max_items": -1
+    }
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "title": "Podcast",
+  "source": "feed",
+  "description": "A podcast's episodes, newest first, into a folder of its own, tagged with the podcast's name and the year.",
+  "parameters": {
+    "url": {
+      "title": "Feed",
+      "default": "",
+      "check": "^https?://[^\\\\s{}$]+$",
+      "description": "The podcast's RSS feed. e.g. https://feeds.example.org/show.xml"
+    },
+    "name": {
+      "title": "Name",
+      "default": "My podcast",
+      "check": "^[^/{}$]{1,80}$",
+      "description": "For the folder and the tag."
+    }
+  },
+  "job": {
+    "name": "${name}",
+    "source": "feed",
+    "target": "/Podcasts/${name}",
+    "schedule": "0 5 * * *",
+    "tags": [
+      "${name}",
+      "{year}",
+      "podcast"
+    ],
+    "options": {
+      "url": "${url}",
+      "take": "enclosures",
+      "path": "{year}/{date} {title}{ext}",
+      "file_type": "audio",
+      "max_items": 5
+    }
+  }
+}
