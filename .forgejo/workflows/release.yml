@@ -1,15 +1,25 @@
 ---
-# A tag vX.Y.Z (the version and the image tag in appinfo/info.xml) becomes a release: the
-# External App's source as harvester-X.Y.Z.tar.gz on the Forgejo release, signed with the
-# app's key when there is one. The homelab's nextcloud role builds the image from the tag and
-# registers the app with that version, so a tag that differs from info.xml fails here.
+# A tag vX.Y.Z (the version and the image tag in appinfo/info.xml) becomes a release:
+# - the External App's source as harvester-X.Y.Z.tar.gz on the Forgejo release, signed with
+#   the app's key when there is one;
+# - its image, built with Kaniko (the runners' job containers cannot run Docker or Buildah:
+#   no Docker socket, no user namespaces), pushed as X.Y.Z to each registry that has a token.
+# The homelab's nextcloud role builds the image from the tag itself and registers the app with
+# that version, so a tag that differs from info.xml fails here.
 #
-# Not published on the Nextcloud app store: info.xml names the image local.homelab/harvester,
-# which only the homelab's own daemon has (no registry other servers could pull it from), and
-# the store's schema does not know an External App's routes yet.
+# Registries (the same build, so the same digest, in each):
+# - Forgejo's: git.ciepiela.org/dawid/harvester, with REGISTRY_TOKEN, a token of the
+#   repository's owner with the scope write:package (the job's own token may not push
+#   packages: 401 reqPackageAccess, measured 2026-10-31);
+# - GitHub's: ghcr.io/<GHCR_OWNER>/harvester, with GHCR_TOKEN, a GitHub token (classic, scope
+#   write:packages) of GHCR_USER, both variables of the repository.
+# Without a token the image is built and checked, not pushed.
 #
-# Secrets: APP_SIGNING_KEY, the private key of an app store certificate for harvester (PEM).
-# Without it the archive is attached unsigned.
+# Not published on the Nextcloud app store yet: info.xml still names the homelab's local
+# image (local.homelab/harvester).
+#
+# Secrets: APP_SIGNING_KEY, the private key of an app store certificate for harvester (PEM);
+# REGISTRY_TOKEN and GHCR_TOKEN as above. Variables: GHCR_USER, GHCR_OWNER.
 #
 # Run by hand ("tag": an existing tag) to make the release of a tag pushed before this
 # workflow existed: fj actions dispatch release.yml main -I tag=v0.3.0.
@@ -88,3 +98,53 @@ jobs:
             url=$(curl -fsS -H "$auth" -F "attachment=@$name" "$API/releases/$id/assets?name=$name" | jq -r .browser_download_url)
             echo "$name: $url"
           done
+
+  image:
+    needs: release
+    runs-on: docker
+    # The debug image has a shell (busybox) for the steps.
+    container: ghcr.io/osscontainertools/kaniko:v1.28.6-debug
+    timeout-minutes: 40
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+      SERVER: ${{ github.server_url }}
+      REPOSITORY: ${{ github.repository }}
+      OWNER: ${{ github.repository_owner }}
+      ACTOR: ${{ github.actor }}
+    steps:
+      - name: Build and push the image
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          GHCR_USER: ${{ vars.GHCR_USER }}
+          GHCR_OWNER: ${{ vars.GHCR_OWNER }}
+        run: |
+          set -eu
+          version=${TAG#v}
+          host=${SERVER#https://}
+          auths="" destinations=""
+          add() {  # registry, user, token, image
+            auths="$auths${auths:+,}\"$1\":{\"auth\":\"$(printf '%s:%s' "$2" "$3" | base64 | tr -d '\n')\"}"
+            destinations="$destinations --destination=$4:$version"
+            echo "Pushing to $4:$version"
+          }
+          if [ -n "$REGISTRY_TOKEN" ]; then add "$host" "$OWNER" "$REGISTRY_TOKEN" "$host/$OWNER/harvester"; fi
+          if [ -n "$GHCR_TOKEN" ] && [ -n "$GHCR_USER" ] && [ -n "$GHCR_OWNER" ]; then
+            add ghcr.io "$GHCR_USER" "$GHCR_TOKEN" "ghcr.io/$GHCR_OWNER/harvester"
+          fi
+          printf '{"auths":{%s}}' "$auths" > /kaniko/.docker/config.json
+          if [ -z "$destinations" ]; then
+            echo "::warning::No registry token: the image is built, not pushed"
+            destinations="--no-push"
+          fi
+          # From the tag through Git (TLS checked), not through busybox's wget (which is not).
+          # Kaniko replaces the root filesystem while it builds: everything stays below /kaniko.
+          # shellcheck disable=SC2086
+          /kaniko/executor \
+            --context "git://${host}/${REPOSITORY}.git#refs/tags/${TAG}" \
+            --dockerfile Dockerfile \
+            --label "org.opencontainers.image.source=${SERVER}/${REPOSITORY}" \
+            --label "org.opencontainers.image.version=${version}" \
+            --label "org.opencontainers.image.licenses=AGPL-3.0-or-later" \
+            $destinations
+
