@@ -60,7 +60,8 @@ jobs:
         run: |
           git archive --format=tar --prefix=harvester/ "$TAG" -- . ':!.forgejo' ':!tests' ':!renovate.json' \
             | gzip -n > "harvester-$VERSION.tar.gz"
-          tar -tzf "harvester-$VERSION.tar.gz" | head -20
+          # Counted, not piped to head: with pipefail, head's early exit fails the step (SIGPIPE).
+          echo "$(tar -tzf "harvester-$VERSION.tar.gz" | wc -l) entries"
           ls -l "harvester-$VERSION.tar.gz"
 
       - name: Sign the archive
