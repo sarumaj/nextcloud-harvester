@@ -7,9 +7,12 @@ import json
 import sqlite3
 import time
 
+from nc_py_api import NextcloudExceptionNotFound
+
 from harvester import executor as executor_module
 from harvester import runner
 from harvester.executor import is_due
+from harvester.nextcloud import NextcloudLibrary
 from harvester.sources import ChallengeError, Item, Source
 from harvester.store import Job, Store
 
@@ -179,3 +182,34 @@ def test_an_older_database_gets_the_new_column(tmp_path):
     old.close()
     job = Store(path).job(1)
     assert job is not None and job.challenge_url is None
+
+
+class FakeFiles:
+    """Nextcloud's files as nc_py_api reaches them: by_path raises for a missing path (404)."""
+
+    def __init__(self):
+        self.stored: dict[str, bytes] = {}
+
+    def by_path(self, path):
+        if path not in self.stored:
+            raise NextcloudExceptionNotFound(f"<list: u, {path}>")
+        return type("Node", (), {"info": type("Info", (), {"fileid": list(self.stored).index(path) + 1})()})()
+
+    def makedirs(self, path, exist_ok=False):  # pylint: disable=unused-argument
+        return None
+
+    def upload_stream(self, path, content):
+        self.stored[path] = content.read()
+        return self.by_path(path)
+
+
+def test_the_nextcloud_library_takes_a_missing_file_for_one_to_download():
+    nc = FakeNextcloud()
+    nc.files = FakeFiles()  # type: ignore[attr-defined]
+    library = NextcloudLibrary(nc)  # type: ignore[arg-type]
+    job = Job(user="u", name="n", source="fake", target="/Zeitschriften/ix", schedule="* * * * *")
+    seen: set[str] = set()
+    assert runner.run(job, FakeSource({}, {}, None), library, seen.__contains__, seen.add, lambda s: None) == (
+        "3 downloaded"
+    )
+    assert library.find("/Zeitschriften/ix/a.txt") == 1 and library.find("/Zeitschriften/ix/missing") is None

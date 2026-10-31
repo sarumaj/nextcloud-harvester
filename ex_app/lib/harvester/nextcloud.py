@@ -3,7 +3,7 @@
 import posixpath
 from typing import BinaryIO
 
-from nc_py_api import NextcloudApp
+from nc_py_api import NextcloudApp, NextcloudExceptionNotFound
 
 from .runner import Library
 
@@ -16,7 +16,11 @@ class NextcloudLibrary(Library):
         self._tags: dict[str, int] = {}
 
     def find(self, path: str) -> int | None:
-        node = self.nc.files.by_path(path)
+        # by_path raises for a path that does not exist (WebDAV's 404), rather than returning None.
+        try:
+            node = self.nc.files.by_path(path)
+        except NextcloudExceptionNotFound:
+            return None
         return node.info.fileid if node else None
 
     def put(self, path: str, content: BinaryIO) -> int:
