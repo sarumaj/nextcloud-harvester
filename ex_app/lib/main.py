@@ -190,10 +190,10 @@ def explain_schedule(expression: Annotated[str, Query(max_length=100)]) -> dict:
 @APP.get("/api/jobs")
 async def list_jobs(nc: NC) -> list[dict]:
     """The user's jobs, with how their last run went."""
-    running = STATE["executor"].running
-    paused = STATE["executor"].paused
+    executor = STATE["executor"]
+    running = executor.running
     return [
-        vars(job) | {"running": job.id == running, "paused": job.id == running and paused}
+        vars(job) | {"running": job.id in running, "paused": executor.paused(job.id or 0)}
         for job in store().jobs(await nc.user)
     ]
 
@@ -201,15 +201,14 @@ async def list_jobs(nc: NC) -> list[dict]:
 @APP.get("/api/log")
 async def progress_log(nc: NC, job: int | None = None, after: int = 0) -> dict:
     """The user's progress log after the line after: of one job of theirs, or of all; and which
-    of their jobs runs now."""
+    of their jobs run now."""
     if job is not None:
         await own_job(job, nc)
     user = await nc.user
-    running = STATE["executor"].running
-    running_job = store().job(running) if running is not None else None
+    mine = {listed.id for listed in store().jobs(user)}
     return {
         "lines": store().log_lines(user, job, max(after, 0)),
-        "running": running if running_job and running_job.user == user else None,
+        "running": [job_id for job_id in STATE["executor"].running if job_id in mine],
     }
 
 

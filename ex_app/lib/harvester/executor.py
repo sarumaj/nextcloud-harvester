@@ -1,14 +1,18 @@
-"""Runs the jobs when their schedule says, and when a user asks; one at a time."""
+"""Runs the jobs when their schedule says, and when a user asks; a few at once (RUNNERS), never
+one twice, and one per site at a time."""
 
 import asyncio
 import datetime
 import json
 import logging
+import os
 import queue
+import re
 import threading
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
+from urllib.parse import urlparse
 
 from croniter import croniter
 from nc_py_api import AsyncNextcloudApp
@@ -25,6 +29,52 @@ LOG = logging.getLogger("harvester.executor")
 RUN_LIMIT = 2 * 3600
 # A paused run that nobody resumes ends after this long (it holds the browser meanwhile).
 PAUSE_LIMIT = 6 * 3600
+# How many jobs run at once (each a thread; a website job also takes one of the browsers).
+RUNNERS = max(1, int(os.environ.get("HARVESTER_RUNNERS", "2")))
+ADDRESS = re.compile(r"https?://[^\s\"'<>]+")
+
+
+def site_of(job: Job) -> str:
+    """The site a job fetches from (the host of the first address in its options), so that two
+    jobs of one site do not run at once; a job without an address is a site of its own."""
+    for value in job.options.values():
+        found = ADDRESS.search(str(value))
+        if found and urlparse(found.group(0)).hostname:
+            return str(urlparse(found.group(0)).hostname).lower().removeprefix("www.")
+    return f"job:{job.id}"
+
+
+class Control:
+    """A running job's controls from the page: paused (it waits before its next file) and
+    stopped (it ends there, and at once in a wait); the time paused does not count against
+    RUN_LIMIT."""
+
+    def __init__(self) -> None:
+        self.paused = threading.Event()
+        self.stopped = threading.Event()
+        self.paused_for = 0.0
+
+    def nap(self, seconds: float) -> None:
+        """The run's waits (between files, retries, what a site asks for): ended at once by a
+        stop, which then ends the run (Stopped)."""
+        if self.stopped.wait(max(0.0, seconds)):
+            raise Stopped("stopped")
+
+    def checkpoint(self, report: Callable[[str, str], None]) -> bool:
+        """Asked by the run before each file: waits while it is paused (up to PAUSE_LIMIT, then
+        it stops), and says whether to stop."""
+        if self.paused.is_set() and not self.stopped.is_set():
+            report("info", "Paused")
+            began = time.monotonic()
+            while self.paused.is_set() and not self.stopped.is_set():
+                if time.monotonic() - began > PAUSE_LIMIT:
+                    self.stopped.set()
+                    break
+                time.sleep(1)
+            self.paused_for += time.monotonic() - began
+            if not self.stopped.is_set():
+                report("info", "Resumed")
+        return self.stopped.is_set()
 
 
 def connect_nextcloud() -> AsyncNextcloudApp:
@@ -90,76 +140,65 @@ class Executor:
     refuses to run a second loop in a thread ("Cannot run the event loop while another loop is
     running")."""
 
-    def __init__(self, store: Store, connect: Callable[[], AsyncNextcloudApp] | None = None):
+    def __init__(self, store: Store, connect: Callable[[], AsyncNextcloudApp] | None = None, runners: int = RUNNERS):
         self.store = store
         self.connect = connect or connect_nextcloud
         self.requests: queue.Queue[int] = queue.Queue()
-        self.running: int | None = None
-        # The running job's controls from the page: paused (it waits before its next file)
-        # and stopped (it ends there); the time paused does not count against RUN_LIMIT.
-        self._paused = threading.Event()
-        self._stopped = threading.Event()
-        self._paused_for = 0.0
+        self.runners = runners
+        # The running jobs' controls, and their sites; changed under _lock.
+        self.controls: dict[int, Control] = {}
+        self._sites: dict[int, str] = {}
+        self._queued: set[int] = set()
+        self._lock = threading.Lock()
         self._events: asyncio.AbstractEventLoop | None = None
         self._events_lock = threading.Lock()
-        self._thread = threading.Thread(target=self._loop, name="executor", daemon=True)
-
-    def start(self) -> None:
-        """Starts the thread."""
-        self._thread.start()
-
-    def request(self, job_id: int) -> None:
-        """Runs the job as soon as the jobs before it are done."""
-        self.requests.put(job_id)
 
     @property
-    def paused(self) -> bool:
-        """Whether the running job is paused."""
-        return self._paused.is_set()
+    def running(self) -> list[int]:
+        """The jobs running now."""
+        with self._lock:
+            return sorted(self.controls)
+
+    def start(self) -> None:
+        """Starts the schedule's thread and the runners."""
+        threading.Thread(target=self._schedule, name="schedule", daemon=True).start()
+        for number in range(self.runners):
+            threading.Thread(target=self._runner, name=f"runner-{number}", daemon=True).start()
+
+    def request(self, job_id: int) -> None:
+        """Runs the job as soon as a runner and its site are free (once, if asked twice)."""
+        with self._lock:
+            if job_id in self._queued:
+                return
+            self._queued.add(job_id)
+        self.requests.put(job_id)
+
+    def paused(self, job_id: int) -> bool:
+        """Whether the job runs and is paused."""
+        control = self.controls.get(job_id)
+        return bool(control and control.paused.is_set())
 
     def pause(self, job_id: int) -> bool:
-        """Pauses the job before its next file, if it is the one running."""
-        if self.running != job_id:
-            return False
-        self._paused.set()
-        return True
+        """Pauses the job before its next file, if it runs."""
+        control = self.controls.get(job_id)
+        if control:
+            control.paused.set()
+        return control is not None
 
     def resume(self, job_id: int) -> bool:
         """Lets the paused job go on."""
-        if self.running != job_id:
-            return False
-        self._paused.clear()
-        return True
+        control = self.controls.get(job_id)
+        if control:
+            control.paused.clear()
+        return control is not None
 
     def stop(self, job_id: int) -> bool:
-        """Ends the job's run before its next file (also a paused one)."""
-        if self.running != job_id:
-            return False
-        self._stopped.set()
-        self._paused.clear()
-        return True
-
-    def nap(self, seconds: float) -> None:
-        """The run's waits (between files, retries, what a site asks for): ended at once by a
-        stop, which then ends the run (Stopped)."""
-        if self._stopped.wait(max(0.0, seconds)):
-            raise Stopped("stopped")
-
-    def checkpoint(self, report: Callable[[str, str], None]) -> bool:
-        """Asked by the run before each file: waits while it is paused (up to PAUSE_LIMIT, then
-        it stops), and says whether to stop."""
-        if self._paused.is_set() and not self._stopped.is_set():
-            report("info", "Paused")
-            began = time.monotonic()
-            while self._paused.is_set() and not self._stopped.is_set():
-                if time.monotonic() - began > PAUSE_LIMIT:
-                    self._stopped.set()
-                    break
-                time.sleep(1)
-            self._paused_for += time.monotonic() - began
-            if not self._stopped.is_set():
-                report("info", "Resumed")
-        return self._stopped.is_set()
+        """Ends the job's run before its next file, and at once in a wait (also a paused one)."""
+        control = self.controls.get(job_id)
+        if control:
+            control.stopped.set()
+            control.paused.clear()
+        return control is not None
 
     def call(self, awaitable: Awaitable[Any]) -> Any:
         """Runs a Nextcloud request to its end on the requests' event loop (started at first use)
@@ -174,39 +213,64 @@ class Executor:
 
         return asyncio.run_coroutine_threadsafe(wait(), self._events).result()
 
-    def _loop(self) -> None:
+    def _schedule(self) -> None:
+        """Each minute, the jobs that are due go into the queue (unless running or queued)."""
         while True:
             # Whatever goes wrong here (the database, a bug), the thread goes on: else no job
             # would run again until the app restarts, and nobody would be told.
             try:
-                self._turn()
+                for job in self.store.jobs():
+                    if job.id is not None and job.id not in self.controls and is_due(job, time.time()):
+                        self.request(job.id)
             except Exception:  # pylint: disable=broad-exception-caught
-                LOG.exception("the executor's turn failed")
+                LOG.exception("the schedule's turn failed")
+            time.sleep(60)
+
+    def _runner(self) -> None:
+        """Takes the queued jobs one after another; one whose site is busy waits its turn."""
+        while True:
+            try:
+                job_id = self.requests.get()
+                # Read again just before its run: it may have been changed, disabled or deleted.
+                job = self.store.job(job_id)
+                if not job:
+                    with self._lock:
+                        self._queued.discard(job_id)
+                    continue
+                if not self._claim(job):
+                    # Its site (or the job itself) is busy: back to the queue, a little later.
+                    time.sleep(2)
+                    self.requests.put(job_id)
+                    continue
+                try:
+                    self.run(job)
+                finally:
+                    with self._lock:
+                        self.controls.pop(job_id, None)
+                        self._sites.pop(job_id, None)
+            except Exception:  # pylint: disable=broad-exception-caught
+                LOG.exception("a runner's turn failed")
                 time.sleep(60)
 
-    def _turn(self) -> None:
-        """Runs the run asked for (or waits a minute for one), then the jobs that are due."""
-        try:
-            job = self.store.job(self.requests.get(timeout=60))
-            if job:
-                self.run(job)
-        except queue.Empty:
-            pass
-        for listed in self.store.jobs():
-            # Read again just before its run: the runs before it may have taken long, and the
-            # job may have been changed, disabled or deleted meanwhile.
-            job = self.store.job(listed.id or 0)
-            if job and is_due(job, time.time()):
-                self.run(job)
+    def _claim(self, job: Job) -> bool:
+        """Takes the job for this runner unless it runs, or a job of its site does."""
+        assert job.id is not None
+        site = site_of(job)
+        with self._lock:
+            if job.id in self.controls or site in self._sites.values():
+                return False
+            self.controls[job.id] = Control()
+            self._sites[job.id] = site
+            self._queued.discard(job.id)
+            return True
 
     def run(self, job: Job) -> None:
         """Runs the job and records how it went; a new failure is also a notification to its user."""
         assert job.id is not None
         job_id = job.id
-        self._paused.clear()
-        self._stopped.clear()
-        self._paused_for = 0.0
-        self.running = job_id
+        # Its controls: a runner made them when it took the job; a direct call (tests) makes them.
+        with self._lock:
+            control = self.controls.setdefault(job_id, Control())
         # The last run's message goes: the page shows this run's progress (its log) instead.
         self.store.begin(job_id)
         nc = self.connect()
@@ -222,7 +286,7 @@ class Executor:
                 source = source_class(job.options, credentials, client)
                 # Every wait of the source ends at once when the run is stopped.
                 if hasattr(source, "sleep"):
-                    source.sleep = self.nap
+                    source.sleep = control.nap
                 kept = self.call(load_session(nc, job))
                 if kept:
                     source.restore(kept)
@@ -233,10 +297,10 @@ class Executor:
                         NextcloudLibrary(nc, self.call),
                         lambda key: self.store.seen(job_id, key),
                         lambda key: self.store.mark_seen(job_id, key),
-                        until=lambda: started + RUN_LIMIT + self._paused_for,
+                        until=lambda: started + RUN_LIMIT + control.paused_for,
                         report=lambda level, text: self.store.log(job_id, level, text),
-                        sleep=self.nap,
-                        stopped=lambda: self.checkpoint(lambda level, text: self.store.log(job_id, level, text)),
+                        sleep=control.nap,
+                        stopped=lambda: control.checkpoint(lambda level, text: self.store.log(job_id, level, text)),
                     )
                 finally:
                     # Kept also after a failure: cookies set before it (a sign-in) still count;
@@ -269,9 +333,8 @@ class Executor:
             if (job.last_status, job.last_message) != (status, message):
                 self.notify(nc, f"Harvester: {job.name} failed", message)
         finally:
-            self.running = None
-            self._paused.clear()
-            self._stopped.clear()
+            with self._lock:
+                self.controls.pop(job_id, None)
 
     def notify(self, nc: AsyncNextcloudApp, subject: str, message: str) -> None:
         """Tells the job's user, with a link to the app's page; a notification that fails is lost."""

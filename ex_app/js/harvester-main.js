@@ -168,7 +168,7 @@
 			el('div', { class: 'harvester-progress-head' }, el('h3', { text: 'Progress' }), select), list)
 		let after = 0
 		let timer = null
-		const running = (jobs.find((job) => job.running) || {}).id ?? null
+		const running = jobs.filter((job) => job.running).map((job) => job.id)
 		const clock = (at) => {
 			const date = new Date(at * 1000)
 			return date.toDateString() === new Date().toDateString() ? date.toLocaleTimeString() : date.toLocaleString()
@@ -181,7 +181,7 @@
 			if (!document.body.contains(panel)) return
 			try {
 				const data = await api('GET', `/log?after=${after}${select.value ? `&job=${select.value}` : ''}`)
-				if (data.running !== running) {
+				if (String(data.running) !== String(running)) {
 					show(root)
 					return
 				}
@@ -190,14 +190,14 @@
 					list.append(line(entry))
 					after = entry.id
 					const message = root.querySelector(`[data-job-message="${entry.job}"]`)
-					if (message && entry.job === running) message.textContent = entry.message
+					if (message && running.includes(entry.job)) message.textContent = entry.message
 				}
 				while (list.children.length > 300) list.firstChild.remove()
 				if (!list.children.length) list.append(el('li', { class: 'harvester-muted', text: 'No runs yet.' }))
 				else if (data.lines.length && list.firstChild.classList.contains('harvester-muted')) list.firstChild.remove()
 				if (stick) list.scrollTop = list.scrollHeight
 			} catch (e) { /* tried again below */ }
-			timer = setTimeout(poll, running !== null ? 2000 : 10000)
+			timer = setTimeout(poll, running.length ? 2000 : 10000)
 		}
 		select.addEventListener('change', () => {
 			try { localStorage.setItem('harvester-log-job', select.value) } catch (e) { /* not kept */ }

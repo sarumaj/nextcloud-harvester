@@ -84,9 +84,13 @@ the app's browser or taken from a template, not by code.
   the two hours; after six hours unresumed it stops), a stopped one ends and keeps what it saved,
   and its next run goes on from there; a stop also ends a wait (a retry, the site asking to wait)
   at once, and the file it was at comes next run.
+- **Runners:** `HARVESTER_RUNNERS` jobs run at once (2 by default), each in a thread of its own;
+  a job never runs twice at once, and jobs of the same site (the host of the job's address) wait
+  for each other, so no site gets more than one job's requests. The schedule and **Run now** only
+  queue a job; a queued job asked for again runs once.
 - **Browsers:** up to `HARVESTER_BROWSERS` Chromiums at once (3 by default; each takes some
-  300-600 MB): one for the running job, the others for recordings, so people record side by side
-  and while a job runs. When all are taken, the recorder's screen says so instead of staying empty.
+  300-600 MB): each running website job takes one, recordings the others, so people record side
+  by side and while jobs run. When all are taken, the recorder's screen says so instead of staying empty.
 - **Notifications:** a job that needs a person, or fails, notifies its user; the same failure
   again on the next runs does not.
 - **Templates** (`ex_app/lib/harvester/presets/*.json`), jobs with a few parameters, one card
