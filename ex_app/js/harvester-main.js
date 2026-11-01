@@ -368,7 +368,23 @@
 			})
 		}
 		screen.addEventListener('contextmenu', (event) => event.preventDefault())
-		screen.addEventListener('wheel', (event) => { event.preventDefault(); send({ type: 'wheel', dx: event.deltaX, dy: event.deltaY }) }, { passive: false })
+		// The wheel's movement added up and sent once a frame, in pixels (a trackpad fires dozens
+		// of events a second; one message each queued up behind the browser: a late, jerky scroll).
+		let wheel = null
+		screen.addEventListener('wheel', (event) => {
+			event.preventDefault()
+			const unit = event.deltaMode === 1 ? 40 : event.deltaMode === 2 ? screen.size.height : 1
+			const scale = screen.size.height / (screen.getBoundingClientRect().height || screen.size.height)
+			if (!wheel) {
+				wheel = { dx: 0, dy: 0 }
+				requestAnimationFrame(() => {
+					send({ type: 'wheel', dx: Math.round(wheel.dx), dy: Math.round(wheel.dy) })
+					wheel = null
+				})
+			}
+			wheel.dx += event.deltaX * unit * scale
+			wheel.dy += event.deltaY * unit * scale
+		}, { passive: false })
 
 		keys.addEventListener('keydown', (event) => {
 			const action = keyAction(event)
@@ -475,7 +491,8 @@
 			if (data.type === 'frame') {
 				screen.frame(data.data)
 				if (message.textContent === 'Starting the browser…') message.textContent = ''
-			} else if (data.type === 'url') url.value = data.url
+			} else if (data.type === 'cursor') screen.style.cursor = data.cursor
+			else if (data.type === 'url') url.value = data.url
 			else if (data.type === 'error') { message.textContent = data.message; done.disabled = false; screen.say(data.message) }
 			else if (data.type === 'session-saved') { socket.close(); show(root) }
 			else if (data.type === 'viewport') screen.resized(data)
@@ -556,6 +573,7 @@
 		socket.addEventListener('message', (event) => {
 			const data = JSON.parse(event.data)
 			if (data.type === 'frame') screen.frame(data.data)
+			else if (data.type === 'cursor') screen.style.cursor = data.cursor
 			else if (data.type === 'url') url.value = data.url
 			else if (data.type === 'error') { message.textContent = data.message; screen.say(data.message) }
 			else if (data.type === 'viewport') screen.resized(data)
@@ -896,7 +914,7 @@
 		#harvester .harvester-screen-box { flex: 3; min-width: 0; max-width: calc((100vh - 260px) * 1.6); position: relative; }
 		#harvester .harvester-screen {
 			display: block; width: 100%; aspect-ratio: 1280 / 800;
-			border: 1px solid var(--color-border); border-radius: var(--border-radius); background: var(--color-background-dark); cursor: crosshair;
+			border: 1px solid var(--color-border); border-radius: var(--border-radius); background: var(--color-background-dark); cursor: default;
 		}
 		#harvester .harvester-keys { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; resize: none; pointer-events: none; border: 0; padding: 0; }
 		#harvester .harvester-screen:not([src]) { visibility: hidden; }

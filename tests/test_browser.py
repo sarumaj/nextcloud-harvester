@@ -381,3 +381,31 @@ def test_the_recorders_keys_and_typed_text_reach_the_page():
     typed, cleared = asyncio.run(scenario())
     assert typed == "abcé@ß", "arrows move the caret; text in any layout arrives as typed"
     assert cleared == "", "Ctrl+A then Backspace select and delete"
+
+
+@needs_chromium
+def test_the_recorder_shows_the_pages_cursor_and_never_records_it():
+    async def scenario():
+        driver = Driver()
+        recorder = Recorder(driver.send)
+        driver.recorder = recorder
+        await recorder.start()
+        try:
+            await recorder._context.route(f"{SITE}/**", async_site(Site()))
+            for page, selector in ((f"{SITE}/login", "#login-user"), (f"{SITE}/select/mag/archiv", "a.years__link")):
+                await recorder.handle({"type": "goto", "url": page})
+                await recorder._page.wait_for_load_state()
+                box = await recorder._page.locator(selector).first.bounding_box()
+                await recorder.handle({"type": "mouse", "event": "move", "x": box["x"] + 5, "y": box["y"] + 5})
+                await asyncio.sleep(0.3)
+            await driver.mode("follow")
+            box = await recorder._page.locator("a.years__link >> nth=1").bounding_box()
+            await recorder.handle({"type": "mouse", "event": "move", "x": box["x"] + 8, "y": box["y"] + 8})
+            await asyncio.sleep(0.3)
+        finally:
+            await recorder.close()
+        cursors = [m["cursor"] for m in driver.sent if m["type"] == "cursor"]
+        assert "text" in cursors and "pointer" in cursors and cursors[-1] == "crosshair"
+        assert not any(event.get("action") == "cursor" for event in recorder.events)
+
+    asyncio.run(scenario())

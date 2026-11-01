@@ -51,7 +51,9 @@ the app's browser or taken from a template, not by code.
   the job fills in its account. **⛶ Full window** gives the browser the whole screen (the
   browser's full screen, above Nextcloud's header; Esc leaves it): it takes the screen's size,
   pages lay out for it, the controls float over it and the recipe is in a drawer. When the browser
-  cannot start, the page says why instead of showing an empty screen.
+  cannot start, the page says why instead of showing an empty screen. The screen takes the cursor
+  the page shows under the mouse (a crosshair while picking); the wheel's movement goes to the
+  browser once a frame, in pixels.
 - **Sessions and challenges:** a job keeps its browser session (cookies, local storage;
   encrypted in Nextcloud, like its account) and replays the sign-in only when the listing shows
   a login form. When a site asks for a person instead (reCAPTCHA, hCaptcha, Cloudflare, "verify

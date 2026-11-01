@@ -37,6 +37,13 @@ HIGHLIGHT = "([selector, pattern]) => window.__harvester ? window.__harvester.hi
 MATCHES = "els => els.map(e => [e.href || '', (e.innerText || '').trim().slice(0, 80)])"
 
 
+# The cursors the page's screen may take (CSS keywords), as the page under the mouse shows them.
+CURSORS = frozenset(
+    "default pointer text crosshair move grab grabbing not-allowed wait progress help cell copy "
+    "zoom-in zoom-out col-resize row-resize ew-resize ns-resize nesw-resize nwse-resize vertical-text".split()
+)
+
+
 class Recorder:  # pylint: disable=too-many-instance-attributes
     """One recording: a browser, the page shown and the recipe so far."""
 
@@ -187,6 +194,11 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         return 0
 
     async def _report(self, _source, event: dict) -> None:
+        if event.get("action") == "cursor":
+            # Shown on the page's screen, never a step; only cursors CSS knows by name.
+            cursor = str(event.get("cursor", ""))
+            await self.send({"type": "cursor", "cursor": cursor if cursor in CURSORS else "default"})
+            return
         if event.get("action") != "pick":
             if self.mode == "record":
                 self.events.append(event)

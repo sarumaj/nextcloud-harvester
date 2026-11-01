@@ -116,6 +116,18 @@
 	const TYPING = 'textarea, select, input:not([type=submit]):not([type=button]):not([type=checkbox]):not([type=radio]):not([type=image]):not([type=reset])'
 	const picking = () => ['follow', 'links', 'next'].includes(state.mode)
 
+	// The cursor the page shows where the mouse is (a hand over a link, a bar in a field), or a
+	// crosshair while picking: the recorder's screen shows it, as a browser would.
+	let cursor = ''
+	document.addEventListener('mouseover', (event) => {
+		let wanted = picking() ? 'crosshair' : getComputedStyle(event.target).cursor
+		if (wanted === 'auto') wanted = event.target.matches(TYPING) || event.target.isContentEditable ? 'text' : 'default'
+		if (wanted !== cursor) {
+			cursor = wanted
+			report({ action: 'cursor', cursor })
+		}
+	}, true)
+
 	document.addEventListener('mouseover', (event) => {
 		if (!picking()) {
 			if (hovered) hovered.style.boxShadow = ''
