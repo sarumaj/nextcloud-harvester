@@ -6,7 +6,7 @@
     "url": {
       "title": "Channel",
       "default": "",
-      "check": "^https?://[^\\\\s{}$]+$",
+      "check": "^https?://[^\\s{}$]+$",
       "description": "The channel's or playlist's page. e.g. https://www.youtube.com/@name/videos"
     },
     "name": {

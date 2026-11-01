@@ -38,8 +38,14 @@ class NextcloudLibrary(Library):
         return node.info.fileid if node else None
 
     def put(self, path: str, content: BinaryIO) -> int:
+        # upload_stream's node has only the OC-FileId header's text, its info.fileid stays 0
+        # (nc_py_api 0.30.3), so the file is looked up for its id: tagging id 0 answers 404.
         self.call(self.nc.files.makedirs(posixpath.dirname(path), exist_ok=True))
-        return self.call(self.nc.files.upload_stream(path, content)).info.fileid
+        self.call(self.nc.files.upload_stream(path, content))
+        file_id = self.find(path)
+        if not file_id:
+            raise NextcloudException(404, "Not Found", info=f"{path} after its upload")
+        return file_id
 
     def _tag_ids(self) -> dict[str, int]:
         return {tag.display_name: tag.tag_id for tag in self.call(self.nc.files.list_tags())}

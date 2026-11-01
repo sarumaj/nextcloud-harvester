@@ -202,7 +202,8 @@ class FakeFiles:
     """Nextcloud's files as nc_py_api's async client reaches them: by_path raises for a missing
     path, as 0.30.3 does, a plain NextcloudException with status 404 (check_error, not its
     NextcloudExceptionNotFound); assigning a tag twice and creating an existing one answer 409
-    Conflict; "hidden" exists but is not visible to the user."""
+    Conflict; "hidden" exists but is not visible to the user. upload_stream's node has no id
+    (0), as nc_py_api's, and tagging a file that does not exist answers 404."""
 
     def __init__(self):
         self.stored: dict[str, bytes] = {}
@@ -218,8 +219,9 @@ class FakeFiles:
         return None
 
     async def upload_stream(self, path, content):
+        # As nc_py_api's: the node's info.fileid is 0, only by_path gives the id.
         self.stored[path] = content.read()
-        return await self.by_path(path)
+        return type("Node", (), {"info": type("Info", (), {"fileid": 0})()})()
 
     async def list_tags(self):
         return [type("Tag", (), {"display_name": name, "tag_id": i})() for name, i in self.tags.items()]
@@ -230,6 +232,8 @@ class FakeFiles:
         self.tags[name] = len(self.tags) + 1
 
     async def assign_tag(self, file_id, tag_id):
+        if file_id not in range(1, len(self.stored) + 1):
+            raise NextcloudException(404, "Not Found", info=f"(Adding `{tag_id}` to {file_id})")
         if (file_id, tag_id) in self.assigned:
             raise NextcloudException(409, "Conflict")
         self.assigned.add((file_id, tag_id))

@@ -6,7 +6,7 @@
     "repository": {
       "title": "Repository",
       "default": "",
-      "check": "^https?://[^\\\\s{}$]+$",
+      "check": "^https?://[^\\s{}$]+$",
       "description": "The repository's page. e.g. https://github.com/owner/name"
     },
     "files": {

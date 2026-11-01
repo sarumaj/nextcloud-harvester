@@ -6,7 +6,7 @@
     "url": {
       "title": "Feed",
       "default": "",
-      "check": "^https?://[^\\\\s{}$]+$",
+      "check": "^https?://[^\\s{}$]+$",
       "description": "The podcast's RSS feed. e.g. https://feeds.example.org/show.xml"
     },
     "name": {

@@ -6,7 +6,7 @@
     "url": {
       "title": "Page",
       "default": "",
-      "check": "^https?://[^\\\\s{}$]+$",
+      "check": "^https?://[^\\s{}$]+$",
       "description": "The page with the links. e.g. https://www.example.org/downloads"
     },
     "name": {

@@ -53,12 +53,12 @@ def test_heise_template_makes_a_valid_job():
 
 
 SAMPLES = {
-    "url": "https://example.org/feed.xml",
+    "url": "https://feeds.example.org/show.xml",
     "name": "Example",
     "host": "mail.example.org",
     "folder": "INBOX",
     "sender": "shop.example",
-    "repository": "https://github.com/rclone/rclone",
+    "repository": "https://github.com/sharkdp/fd",
     "files": r"linux-amd64\.zip$",
 }
 
@@ -73,3 +73,19 @@ def test_every_template_makes_a_job_its_source_accepts(preset_id):
     SOURCES[job["source"]](job["options"], {}, None).close()
     for parameter in preset.get("parameters", {}).values():
         assert parameter["title"] and "description" in parameter
+
+
+ADDRESSES = sorted(
+    (preset_id, name)
+    for preset_id, preset in PRESETS.items()
+    for name, parameter in preset.get("parameters", {}).items()
+    if parameter.get("check", "").startswith("^https?://")
+)
+
+
+@pytest.mark.parametrize(("preset_id", "name"), ADDRESSES)
+def test_a_templates_address_may_have_any_letter_but_no_space(preset_id, name):
+    # The check once refused every address with an "s" after the scheme (a backslash too many).
+    assert make_job(preset_id, {name: "https://www.sounds.example/shows/s"})
+    with pytest.raises(ValueError):
+        make_job(preset_id, {name: "https://example.org/a b"})

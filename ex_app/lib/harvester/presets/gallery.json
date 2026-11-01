@@ -6,7 +6,7 @@
     "url": {
       "title": "Page",
       "default": "",
-      "check": "^https?://[^\\\\s{}$]+$",
+      "check": "^https?://[^\\s{}$]+$",
       "description": "The gallery's, album's or profile's page. e.g. https://www.flickr.com/photos/name/albums/123"
     },
     "name": {
