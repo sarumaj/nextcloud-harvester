@@ -148,3 +148,28 @@ def test_several_file_types():
     assert download.extension(settings) == "" and download.extension({"file_type": "pdf"}) == ".pdf"
     assert download.file_types({"file_type": "pdf,any"}) == ["any"]
     assert download.problems({"file_type": "pdf,exe"}) == ["unknown file type exe"]
+
+
+def test_nextcloud_requests_run_while_a_browser_is_open(tmp_path):
+    # Playwright's sync API keeps an event loop running in its thread: a request run on a loop
+    # there failed with "Cannot run the event loop while another loop is running".
+    from playwright.sync_api import sync_playwright  # pylint: disable=import-outside-toplevel
+
+    from harvester import executor as executor_module  # pylint: disable=import-outside-toplevel
+    from harvester.store import Store  # pylint: disable=import-outside-toplevel
+
+    async def answer(value):
+        return value
+
+    async def refuse():
+        raise SourceError("refused")
+
+    executor = executor_module.Executor(Store(str(tmp_path / "jobs.db")))
+    assert executor.call(answer(1)) == 1
+    playwright = sync_playwright().start()
+    try:
+        assert executor.call(answer(2)) == 2
+        with pytest.raises(SourceError, match="refused"):
+            executor.call(refuse())
+    finally:
+        playwright.stop()

@@ -73,8 +73,11 @@ def page_link(nc: AsyncNextcloudApp) -> str:
 class Executor:
     """The background thread: a queue of the runs asked for, and the schedule checked each minute.
 
-    nc_py_api's client is asynchronous, the sources are not: the thread has an event loop of its
-    own, and each Nextcloud request runs to its end on it (call), between the sources' work."""
+    nc_py_api's client is asynchronous, the sources are not: each Nextcloud request runs to its
+    end (call) on an event loop in a thread of its own. Not on one in the executor's thread:
+    Playwright's sync API keeps its own loop running there while a browser is open, and asyncio
+    refuses to run a second loop in a thread ("Cannot run the event loop while another loop is
+    running")."""
 
     def __init__(self, store: Store, connect: Callable[[], AsyncNextcloudApp] = AsyncNextcloudApp):
         self.store = store
@@ -82,6 +85,7 @@ class Executor:
         self.requests: queue.Queue[int] = queue.Queue()
         self.running: int | None = None
         self._events: asyncio.AbstractEventLoop | None = None
+        self._events_lock = threading.Lock()
         self._thread = threading.Thread(target=self._loop, name="executor", daemon=True)
 
     def start(self) -> None:
@@ -93,10 +97,17 @@ class Executor:
         self.requests.put(job_id)
 
     def call(self, awaitable: Awaitable[Any]) -> Any:
-        """Runs a Nextcloud request to its end on the thread's event loop."""
-        if self._events is None:
-            self._events = asyncio.new_event_loop()
-        return self._events.run_until_complete(awaitable)
+        """Runs a Nextcloud request to its end on the requests' event loop (started at first use)
+        and returns its result or raises its error."""
+        with self._events_lock:
+            if self._events is None:
+                self._events = asyncio.new_event_loop()
+                threading.Thread(target=self._events.run_forever, name="nextcloud", daemon=True).start()
+
+        async def wait() -> Any:
+            return await awaitable
+
+        return asyncio.run_coroutine_threadsafe(wait(), self._events).result()
 
     def _loop(self) -> None:
         while True:

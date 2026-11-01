@@ -1,8 +1,8 @@
 """The user's files and tags in Nextcloud, through the app's access as that user.
 
 nc_py_api's client is asynchronous; the runner and the sources are not (Playwright's sync API,
-httpx). The executor's thread keeps an event loop of its own and passes its run_until_complete
-as call: each Nextcloud request runs to its end there, between the sources' work.
+httpx). The executor passes call, which runs each Nextcloud request to its end on an event loop
+in a thread of its own (Executor.call), between the sources' work.
 """
 
 import posixpath
