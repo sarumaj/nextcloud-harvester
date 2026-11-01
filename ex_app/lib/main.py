@@ -191,7 +191,11 @@ def explain_schedule(expression: Annotated[str, Query(max_length=100)]) -> dict:
 async def list_jobs(nc: NC) -> list[dict]:
     """The user's jobs, with how their last run went."""
     running = STATE["executor"].running
-    return [vars(job) | {"running": job.id == running} for job in store().jobs(await nc.user)]
+    paused = STATE["executor"].paused
+    return [
+        vars(job) | {"running": job.id == running, "paused": job.id == running and paused}
+        for job in store().jobs(await nc.user)
+    ]
 
 
 @APP.get("/api/log")
@@ -242,6 +246,30 @@ async def delete_job(job_id: int, nc: NC) -> dict:
 async def run_job(job_id: int, nc: NC) -> dict:
     """Runs a job now (after the one running)."""
     STATE["executor"].request((await own_job(job_id, nc)).id)
+    return {}
+
+
+@APP.post("/api/jobs/{job_id}/pause")
+async def pause_job(job_id: int, nc: NC) -> dict:
+    """Pauses the user's running job before its next file."""
+    if not STATE["executor"].pause((await own_job(job_id, nc)).id):
+        raise HTTPException(409, "The job is not running.")
+    return {}
+
+
+@APP.post("/api/jobs/{job_id}/resume")
+async def resume_job(job_id: int, nc: NC) -> dict:
+    """Lets the user's paused job go on."""
+    if not STATE["executor"].resume((await own_job(job_id, nc)).id):
+        raise HTTPException(409, "The job is not running.")
+    return {}
+
+
+@APP.post("/api/jobs/{job_id}/stop")
+async def stop_job(job_id: int, nc: NC) -> dict:
+    """Ends the user's running job before its next file; what it saved stays."""
+    if not STATE["executor"].stop((await own_job(job_id, nc)).id):
+        raise HTTPException(409, "The job is not running.")
     return {}
 
 

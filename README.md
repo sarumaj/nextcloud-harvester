@@ -50,7 +50,8 @@ the app's browser or taken from a template, not by code.
   a file name and tags. Edit a pattern and the outlines follow. Passwords are never recorded:
   the job fills in its account. **⛶ Full window** gives the browser the whole screen (the
   browser's full screen, above Nextcloud's header; Esc leaves it): it takes the screen's size,
-  pages lay out for it, the controls float over it and the recipe is in a drawer.
+  pages lay out for it, the controls float over it and the recipe is in a drawer. When the browser
+  cannot start, the page says why instead of showing an empty screen.
 - **Sessions and challenges:** a job keeps its browser session (cookies, local storage;
   encrypted in Nextcloud, like its account) and replays the sign-in only when the listing shows
   a login form. When a site asks for a person instead (reCAPTCHA, hCaptcha, Cloudflare, "verify
@@ -76,6 +77,10 @@ the app's browser or taken from a template, not by code.
   next time; a run ends after two hours in any case. One file that fails does not stop the
   others (it is tried again next run), five failures without a success do. Once a run went
   through the whole site, a listing of known files ends the next runs.
+- **Pause and stop:** while a job runs, **Run now** becomes **Pause** (then **Resume**) and
+  **Stop**. Both act before the next file: a paused run waits (its time does not count against
+  the two hours; after six hours unresumed it stops), a stopped one ends and keeps what it saved,
+  and its next run goes on from there. A paused website job keeps the browser, so recordings wait.
 - **Notifications:** a job that needs a person, or fails, notifies its user; the same failure
   again on the next runs does not.
 - **Templates** (`ex_app/lib/harvester/presets/*.json`), jobs with a few parameters, one card

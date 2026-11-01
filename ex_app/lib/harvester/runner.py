@@ -103,7 +103,7 @@ class Tally:
         return message
 
 
-def run(  # pylint: disable=too-many-arguments  # the run's parts, each given by the executor
+def run(  # pylint: disable=too-many-arguments,too-many-locals  # the run's parts, each given by the executor
     job: Job,
     source: Source,
     library: Library,
@@ -111,22 +111,31 @@ def run(  # pylint: disable=too-many-arguments  # the run's parts, each given by
     mark_seen: Callable[[str], None],
     sleep: Callable[[float], None] = time.sleep,
     *,
-    until: float | None = None,
+    until: float | Callable[[], float] | None = None,
     report: Report = lambda level, text: None,
+    stopped: Callable[[], bool] = lambda: False,
 ) -> str:
-    """Downloads up to max_items new items (and stops at until, a time.monotonic()) and returns
-    what was done, in a sentence; report hears of each step (the page's progress log)."""
+    """Downloads up to max_items new items (and stops at until, a time.monotonic(), or a
+    function giving it) and returns what was done, in a sentence; report hears of each step
+    (the page's progress log). stopped is asked before each file: it may wait while the run is
+    paused, and True ends the run there (the rest comes next run, as at the limits)."""
     limit = int(job.options.get("max_items", COMMON_OPTIONS["max_items"].default))
     tally = Tally()
     complete = True
+    halted = False
     report("info", "Looking for new files")
     for item in source.items(seen):
+        if stopped():
+            report("info", "Stopped: the rest comes next run")
+            halted = True
+            complete = False
+            break
         # -1: no limit of files (the time limit still holds).
         if 0 <= limit <= tally.downloaded:
             report("info", f"{limit} files this run (Files per run): the rest comes next run")
             complete = False
             break
-        if until is not None and time.monotonic() > until:
+        if until is not None and time.monotonic() > (until() if callable(until) else until):
             report("info", "The run's time is up: the rest comes next run")
             complete = False
             break
@@ -155,4 +164,4 @@ def run(  # pylint: disable=too-many-arguments  # the run's parts, each given by
     if complete:
         # The whole site is known now: later runs may stop at known files (stop_at_seen).
         mark_seen(FULL_PASS)
-    return tally.sentence()
+    return f"{tally.sentence()}; stopped, the rest comes next run" if halted else tally.sentence()

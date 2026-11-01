@@ -23,6 +23,8 @@ LOG = logging.getLogger("harvester.executor")
 # The longest a run goes on: then it stops after the file it is at, the rest comes next run
 # (a first run of a big site, a slow server), and the other jobs get their turn.
 RUN_LIMIT = 2 * 3600
+# A paused run that nobody resumes ends after this long (it holds the browser meanwhile).
+PAUSE_LIMIT = 6 * 3600
 
 
 def connect_nextcloud() -> AsyncNextcloudApp:
@@ -93,6 +95,11 @@ class Executor:
         self.connect = connect or connect_nextcloud
         self.requests: queue.Queue[int] = queue.Queue()
         self.running: int | None = None
+        # The running job's controls from the page: paused (it waits before its next file)
+        # and stopped (it ends there); the time paused does not count against RUN_LIMIT.
+        self._paused = threading.Event()
+        self._stopped = threading.Event()
+        self._paused_for = 0.0
         self._events: asyncio.AbstractEventLoop | None = None
         self._events_lock = threading.Lock()
         self._thread = threading.Thread(target=self._loop, name="executor", daemon=True)
@@ -104,6 +111,49 @@ class Executor:
     def request(self, job_id: int) -> None:
         """Runs the job as soon as the jobs before it are done."""
         self.requests.put(job_id)
+
+    @property
+    def paused(self) -> bool:
+        """Whether the running job is paused."""
+        return self._paused.is_set()
+
+    def pause(self, job_id: int) -> bool:
+        """Pauses the job before its next file, if it is the one running."""
+        if self.running != job_id:
+            return False
+        self._paused.set()
+        return True
+
+    def resume(self, job_id: int) -> bool:
+        """Lets the paused job go on."""
+        if self.running != job_id:
+            return False
+        self._paused.clear()
+        return True
+
+    def stop(self, job_id: int) -> bool:
+        """Ends the job's run before its next file (also a paused one)."""
+        if self.running != job_id:
+            return False
+        self._stopped.set()
+        self._paused.clear()
+        return True
+
+    def checkpoint(self, report: Callable[[str, str], None]) -> bool:
+        """Asked by the run before each file: waits while it is paused (up to PAUSE_LIMIT, then
+        it stops), and says whether to stop."""
+        if self._paused.is_set() and not self._stopped.is_set():
+            report("info", "Paused")
+            began = time.monotonic()
+            while self._paused.is_set() and not self._stopped.is_set():
+                if time.monotonic() - began > PAUSE_LIMIT:
+                    self._stopped.set()
+                    break
+                time.sleep(1)
+            self._paused_for += time.monotonic() - began
+            if not self._stopped.is_set():
+                report("info", "Resumed")
+        return self._stopped.is_set()
 
     def call(self, awaitable: Awaitable[Any]) -> Any:
         """Runs a Nextcloud request to its end on the requests' event loop (started at first use)
@@ -147,6 +197,9 @@ class Executor:
         """Runs the job and records how it went; a new failure is also a notification to its user."""
         assert job.id is not None
         job_id = job.id
+        self._paused.clear()
+        self._stopped.clear()
+        self._paused_for = 0.0
         self.running = job_id
         # The last run's message goes: the page shows this run's progress (its log) instead.
         self.store.begin(job_id)
@@ -158,6 +211,7 @@ class Executor:
                 name: self.call(nc.preferences_ex.get_value(credential_key(job, name))) or ""
                 for name in source_class.credentials
             }
+            started = time.monotonic()
             with guarded_client() as client:
                 source = source_class(job.options, credentials, client)
                 kept = self.call(load_session(nc, job))
@@ -170,8 +224,9 @@ class Executor:
                         NextcloudLibrary(nc, self.call),
                         lambda key: self.store.seen(job_id, key),
                         lambda key: self.store.mark_seen(job_id, key),
-                        until=time.monotonic() + RUN_LIMIT,
+                        until=lambda: started + RUN_LIMIT + self._paused_for,
                         report=lambda level, text: self.store.log(job_id, level, text),
+                        stopped=lambda: self.checkpoint(lambda level, text: self.store.log(job_id, level, text)),
                     )
                 finally:
                     # Kept also after a failure: cookies set before it (a sign-in) still count;
@@ -205,6 +260,8 @@ class Executor:
                 self.notify(nc, f"Harvester: {job.name} failed", message)
         finally:
             self.running = None
+            self._paused.clear()
+            self._stopped.clear()
 
     def notify(self, nc: AsyncNextcloudApp, subject: str, message: str) -> None:
         """Tells the job's user, with a link to the app's page; a notification that fails is lost."""

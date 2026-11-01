@@ -103,8 +103,8 @@
 			el('thead', {}, el('tr', {}, ...['Job', 'Folder', 'Schedule', 'Tags', 'Last run', ''].map((h) => el('th', { text: h })))))
 		const body = el('tbody', {})
 		for (const job of jobs) {
-			const state = job.running ? 'running' : job.last_status || 'never'
-			const label = { running: 'Running', ok: 'OK', failed: 'Failed', auth: 'Sign-in refused', challenge: 'Needs you', never: 'Not run yet' }[state] || state
+			const state = job.running ? (job.paused ? 'held' : 'running') : job.last_status || 'never'
+			const label = { running: 'Running', held: 'Paused', ok: 'OK', failed: 'Failed', auth: 'Sign-in refused', challenge: 'Needs you', never: 'Not run yet' }[state] || state
 			body.append(el('tr', {},
 				el('td', { class: 'harvester-with-icon', title: (sources.find((x) => x.name === job.source) || {}).title || job.source },
 					icon(job.source), el('strong', { text: job.name }), job.enabled ? '' : el('span', { class: 'harvester-chip', text: 'paused' })),
@@ -120,7 +120,14 @@
 					})),
 				el('td', { class: 'harvester-actions' },
 					state === 'challenge' ? el('button', { class: 'primary', text: 'Continue in the browser', onclick: () => openSession(root, job) }) : '',
-					el('button', { text: 'Run now', onclick: async () => { await api('POST', `/jobs/${job.id}/run`); show(root) } }),
+					// While it runs: pause (or resume) and stop instead of Run now; a stopped run
+					// keeps what it saved, and the next run goes on from there.
+					...(job.running
+						? [
+							el('button', { text: job.paused ? 'Resume' : 'Pause', onclick: async () => { await api('POST', `/jobs/${job.id}/${job.paused ? 'resume' : 'pause'}`); show(root) } }),
+							el('button', { text: 'Stop', onclick: async () => { await api('POST', `/jobs/${job.id}/stop`); show(root) } }),
+						]
+						: [el('button', { text: 'Run now', onclick: async () => { await api('POST', `/jobs/${job.id}/run`); show(root) } })]),
 					el('button', { text: 'Edit', onclick: () => renderForm(root, job) }),
 					el('button', {
 						class: 'error',
@@ -846,6 +853,7 @@
 		#harvester .harvester-log-error .harvester-log-text { color: var(--color-error-text, var(--color-error)); }
 		#harvester .harvester-log-done .harvester-log-text { color: var(--color-success-text, var(--color-success)); font-weight: bold; }
 		#harvester .harvester-status-running { background: var(--color-primary-element); color: var(--color-primary-element-text); }
+		#harvester .harvester-status-held { background: var(--color-warning); color: var(--color-warning-text, #000); }
 		#harvester .harvester-status-challenge { background: var(--color-warning); color: var(--color-warning-text, #000); }
 		#harvester .harvester-field { display: flex; flex-direction: column; gap: 2px; margin: 12px 0; max-width: 700px; }
 		#harvester .harvester-field > span { font-weight: bold; }
