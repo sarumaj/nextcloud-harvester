@@ -48,9 +48,9 @@ the app's browser or taken from a template, not by code.
   a pattern with named groups for each (`patterns.propose`), outlines what it matches in the
   page (solid) and what it leaves out (dashed), lists examples with their values, and proposes
   a file name and tags. Edit a pattern and the outlines follow. Passwords are never recorded:
-  the job fills in its account. **⛶ Full window** gives the browser the whole window (it takes
-  the window's size, pages lay out for it), with the controls floating over the screen and the
-  recipe in a drawer.
+  the job fills in its account. **⛶ Full window** gives the browser the whole screen (the
+  browser's full screen, above Nextcloud's header; Esc leaves it): it takes the screen's size,
+  pages lay out for it, the controls float over it and the recipe is in a drawer.
 - **Sessions and challenges:** a job keeps its browser session (cookies, local storage;
   encrypted in Nextcloud, like its account) and replays the sign-in only when the listing shows
   a login form. When a site asks for a person instead (reCAPTCHA, hCaptcha, Cloudflare, "verify

@@ -199,7 +199,8 @@
 			list.replaceChildren()
 			poll()
 		})
-		poll()
+		// The first poll once the panel is on the page (it is returned before it is added).
+		setTimeout(poll, 0)
 		return panel
 	}
 
@@ -388,22 +389,43 @@
 			send({ type: 'viewport', width: Math.round(box.clientWidth), height: Math.round(box.clientHeight) })
 		}
 		const resized = () => { clearTimeout(timer); timer = setTimeout(fit, 300) }
-		const button = el('button', {
-			class: 'harvester-wide-switch',
-			text: '⛶',
-			title: 'Full window (again: back)',
-			'aria-label': 'Full window',
-			onclick: () => {
-				const wide = container.classList.toggle('harvester-wide')
-				button.setAttribute('aria-pressed', String(wide))
-				if (wide) {
-					window.addEventListener('resize', resized)
-					requestAnimationFrame(fit)
-				} else {
-					window.removeEventListener('resize', resized)
-					send({ type: 'viewport', ...VIEWPORT })
-				}
-			},
+		// Drawn, not a character: fonts often lack ⛶.
+		const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+		svg.setAttribute('viewBox', '0 0 24 24')
+		svg.setAttribute('width', '18')
+		svg.setAttribute('height', '18')
+		svg.setAttribute('aria-hidden', 'true')
+		const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+		path.setAttribute('d', 'M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5')
+		path.setAttribute('fill', 'none')
+		path.setAttribute('stroke', 'currentColor')
+		path.setAttribute('stroke-width', '2')
+		svg.append(path)
+		const button = el('button', { class: 'harvester-wide-switch', title: 'Full window (again: back)', 'aria-label': 'Full window' }, svg)
+		const leave = () => {
+			container.classList.remove('harvester-wide')
+			button.setAttribute('aria-pressed', 'false')
+			window.removeEventListener('resize', resized)
+			send({ type: 'viewport', ...VIEWPORT })
+		}
+		// The browser's full screen puts the view above everything (Nextcloud's header too,
+		// which no z-index inside the page can cover); Esc leaves it as usual.
+		document.addEventListener('fullscreenchange', () => {
+			if (!document.fullscreenElement && container.classList.contains('harvester-wide')) leave()
+			else resized()
+		})
+		button.addEventListener('click', () => {
+			if (container.classList.contains('harvester-wide')) {
+				if (document.fullscreenElement) document.exitFullscreen().catch(() => leave())
+				else leave()
+				return
+			}
+			container.classList.add('harvester-wide')
+			button.setAttribute('aria-pressed', 'true')
+			window.addEventListener('resize', resized)
+			const request = container.requestFullscreen ? container.requestFullscreen() : Promise.reject(new Error('none'))
+			// Without the browser's full screen (refused, or none), the page's own full window.
+			request.catch(() => null).finally(() => requestAnimationFrame(fit))
 		})
 		return button
 	}
@@ -821,8 +843,8 @@
 		#harvester .harvester-log time { color: var(--color-text-maxcontrast); flex: none; }
 		#harvester .harvester-log-job { color: var(--color-primary-element); flex: none; }
 		#harvester .harvester-log-text { overflow-wrap: anywhere; }
-		#harvester .harvester-log-error .harvester-log-text { color: var(--color-error); }
-		#harvester .harvester-log-done .harvester-log-text { color: var(--color-success); font-weight: bold; }
+		#harvester .harvester-log-error .harvester-log-text { color: var(--color-error-text, var(--color-error)); }
+		#harvester .harvester-log-done .harvester-log-text { color: var(--color-success-text, var(--color-success)); font-weight: bold; }
 		#harvester .harvester-status-running { background: var(--color-primary-element); color: var(--color-primary-element-text); }
 		#harvester .harvester-status-challenge { background: var(--color-warning); color: var(--color-warning-text, #000); }
 		#harvester .harvester-field { display: flex; flex-direction: column; gap: 2px; margin: 12px 0; max-width: 700px; }
