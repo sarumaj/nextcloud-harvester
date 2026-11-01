@@ -113,7 +113,7 @@ jobs:
     needs: release
     runs-on: docker
     # The debug image has a shell (busybox) for the steps.
-    container: ghcr.io/osscontainertools/kaniko:v1.28.6-debug
+    container: ghcr.io/osscontainertools/kaniko:v1.29.0-debug
     timeout-minutes: 40
     env:
       TAG: ${{ inputs.tag || github.ref_name }}

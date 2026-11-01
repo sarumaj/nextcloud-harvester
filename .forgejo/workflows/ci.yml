@@ -17,7 +17,7 @@ concurrency:
 jobs:
   python:
     runs-on: docker
-    container: docker.io/library/python:3.12-slim-bookworm
+    container: docker.io/library/python:3.15-slim-bookworm
     timeout-minutes: 15
     steps:
       - name: Check out
