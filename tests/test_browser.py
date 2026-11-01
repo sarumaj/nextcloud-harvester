@@ -143,6 +143,27 @@ async def outlined(recorder: Recorder) -> list[str]:
 
 
 @needs_chromium
+def test_the_recorder_shows_its_first_page_once():
+    # The context's "page" event fires for the first page too: shown twice, its screencast
+    # was set up twice and the second stopped the first half-way (a broken screen in 0.7.1).
+    async def scenario():
+        driver = Driver()
+        recorder = Recorder(driver.send)
+        await recorder.start()
+        try:
+            await recorder._context.route(f"{SITE}/**", async_site(Site()))
+            await recorder.handle({"type": "goto", "url": f"{SITE}/login"})
+            await asyncio.sleep(1.5)
+        finally:
+            await recorder.close()
+        urls = [m["url"] for m in driver.sent if m["type"] == "url" and m["url"].endswith("/login")]
+        assert urls == [f"{SITE}/login"]
+        assert any(m["type"] == "frame" for m in driver.sent)
+
+    asyncio.run(scenario())
+
+
+@needs_chromium
 def test_recorder_records_the_login_and_proposes_the_levels_patterns():
     async def scenario():
         driver = Driver()

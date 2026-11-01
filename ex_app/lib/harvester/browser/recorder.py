@@ -108,7 +108,12 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
             await route.abort("blockedbyclient")
 
     async def _show(self, page: Page) -> None:
-        """Shows this page (the first, or a new tab or window the site opened)."""
+        """Shows this page (the first, or a new tab or window the site opened). Once per page:
+        the context's "page" event also fires for the first one, which start() shows itself, and
+        a second screencast set up meanwhile would stop the first's half-way (0.7.1's broken
+        screen)."""
+        if page is self._page:
+            return
         if self._cdp:
             try:
                 await self._cdp.send("Page.stopScreencast")

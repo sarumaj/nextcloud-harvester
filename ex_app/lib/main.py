@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -21,6 +22,8 @@ from harvester.presets import PRESETS, make_job
 from harvester.runner import COMMON_OPTIONS
 from harvester.sources import FULL_PASS, SOURCES, SourceError
 from harvester.store import Job, Store
+
+LOGGER = logging.getLogger("harvester")
 
 STATE: dict = {}
 # A recording ends after this many seconds without a message from the page.
@@ -279,11 +282,19 @@ async def record(websocket: WebSocket, nc: NC) -> None:
     # The job's (or the form's) HTTP/1.1 only: known before the browser starts.
     http1 = websocket.query_params.get("http1") == "1" or bool(job and int(job.options.get("http1", 0) or 0))
     try:
-        if job:
-            await recorder.start(await load_session(nc, job), job.challenge_url or start_of(job), http1=http1)
-            await recorder.handle({"type": "mode", "mode": "browse"})
-        else:
-            await recorder.start(http1=http1)
+        try:
+            if job:
+                await recorder.start(await load_session(nc, job), job.challenge_url or start_of(job), http1=http1)
+                await recorder.handle({"type": "mode", "mode": "browse"})
+            else:
+                await recorder.start(http1=http1)
+        except Exception as error:  # pylint: disable=broad-exception-caught
+            # The page says why instead of a screen that stays empty.
+            LOGGER.exception("the recorder's browser did not start")
+            text = (str(error) or type(error).__name__).splitlines()[0]
+            await websocket.send_json({"type": "error", "message": f"The browser did not start: {text}"})
+            await websocket.close(code=1011)
+            return
         while True:
             message = await asyncio.wait_for(websocket.receive_json(), RECORDER_IDLE)
             try:
