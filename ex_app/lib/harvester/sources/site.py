@@ -122,6 +122,7 @@ class BrowserDriver(Driver):
         session: dict | None = None,
         start: str = "",
         cookies: list[dict] | None = None,
+        http1: bool = False,
     ):
         if not browser.LOCK.acquire(timeout=LOCK_TIMEOUT):  # pylint: disable=consider-using-with
             raise SourceError("the browser stayed busy (a recording or another job)")
@@ -129,9 +130,11 @@ class BrowserDriver(Driver):
         self._browser = None
         try:
             self._playwright = sync_playwright().start()
-            self._browser = self._playwright.chromium.launch(args=browser.LAUNCH_ARGS, env=browser.child_env())
+            self._browser = self._playwright.chromium.launch(**browser.launch_options(http1))
             self.context = self._browser.new_context(
-                viewport=browser.VIEWPORT, accept_downloads=False, storage_state=session or None  # type: ignore[arg-type]
+                **browser.context_options(self._browser.version),
+                accept_downloads=False,
+                storage_state=session or None,  # type: ignore[arg-type]
             )
             self.context.route("**/*", guard)
             # The account's cookies over the kept session's: the user gave them for this job.
@@ -159,9 +162,8 @@ class BrowserDriver(Driver):
                 found = self.challenge(self.main)
                 if found:
                     raise ChallengeError(*found) from error
-                raise SourceError(
-                    f"step {number} ({step['action']} {step.get('text') or ''}) failed: {error}"
-                ) from error
+                why = browser.connection_refused(error) or str(error)
+                raise SourceError(f"step {number} ({step['action']} {step.get('text') or ''}) failed: {why}") from error
 
     def challenge(self, page: Any) -> tuple[str, str] | None:
         try:
@@ -177,7 +179,13 @@ class BrowserDriver(Driver):
         if url is None:
             return self.main
         page = self.context.new_page()
-        page.goto(url, wait_until="domcontentloaded")
+        try:
+            page.goto(url, wait_until="domcontentloaded")
+        except Exception as error:
+            why = browser.connection_refused(error)
+            if why:
+                raise SourceError(f"{url}: {why}") from error
+            raise
         settle(page)
         return page
 
@@ -303,6 +311,13 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
             "Fetch the pages in Chromium even without steps (pages built by JavaScript).",
             kind="flag",
         ),
+        "http1": Option(
+            "HTTP/1.1 only",
+            0,
+            "For sites whose protection cuts the browser's connection (ERR_HTTP2_PROTOCOL_ERROR): the browser "
+            "speaks the older HTTP/1.1 with them, also in the recorder.",
+            kind="flag",
+        ),
         "download_url": Option(
             "Download URL",
             "{url}",
@@ -355,7 +370,14 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
             found = self.account_cookies(start)
             if recipes.uses_browser(self.recipe) or int(self.settings["browser"]):
                 steps = self.recipe.get("steps") or []
-                self.driver = BrowserDriver(steps, self.secrets, self.kept, start, cookie_jar.to_playwright(found))
+                self.driver = BrowserDriver(
+                    steps,
+                    self.secrets,
+                    self.kept,
+                    start,
+                    cookie_jar.to_playwright(found),
+                    http1=bool(int(self.settings["http1"])),
+                )
             else:
                 # Without recorded steps, the account's user name and password are HTTP Basic's.
                 self.sign_client(start)

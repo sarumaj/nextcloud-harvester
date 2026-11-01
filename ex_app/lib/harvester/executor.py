@@ -25,6 +25,15 @@ LOG = logging.getLogger("harvester.executor")
 RUN_LIMIT = 2 * 3600
 
 
+def connect_nextcloud() -> AsyncNextcloudApp:
+    """The app's client for the runs. Its uploads in chunks are nc_py_api's first kind (v1):
+    its second (v2, 0.30.3) numbers the first chunk 0, and Nextcloud refuses that (1 to 10000)
+    on storage with multipart uploads (S3): every file over a chunk (5 MB) failed with 400.
+    Not through the environment: nc_py_api reads CHUNKED_UPLOAD_V2 as a string, true unless
+    empty."""
+    return AsyncNextcloudApp(chunked_upload_v2=False)
+
+
 def is_due(job: Job, now: float) -> bool:
     """Tells whether the schedule has come round since the last run (or since the job was made)."""
     # A job waiting for its user (a challenge) runs again once answered, or by hand.
@@ -79,9 +88,9 @@ class Executor:
     refuses to run a second loop in a thread ("Cannot run the event loop while another loop is
     running")."""
 
-    def __init__(self, store: Store, connect: Callable[[], AsyncNextcloudApp] = AsyncNextcloudApp):
+    def __init__(self, store: Store, connect: Callable[[], AsyncNextcloudApp] | None = None):
         self.store = store
-        self.connect = connect
+        self.connect = connect or connect_nextcloud
         self.requests: queue.Queue[int] = queue.Queue()
         self.running: int | None = None
         self._events: asyncio.AbstractEventLoop | None = None
@@ -139,6 +148,8 @@ class Executor:
         assert job.id is not None
         job_id = job.id
         self.running = job_id
+        # The last run's message goes: the page shows this run's progress (its log) instead.
+        self.store.begin(job_id)
         nc = self.connect()
         try:
             self.call(nc.set_user(job.user))
@@ -160,6 +171,7 @@ class Executor:
                         lambda key: self.store.seen(job_id, key),
                         lambda key: self.store.mark_seen(job_id, key),
                         until=time.monotonic() + RUN_LIMIT,
+                        report=lambda level, text: self.store.log(job_id, level, text),
                     )
                 finally:
                     # Kept also after a failure: cookies set before it (a sign-in) still count;
@@ -170,11 +182,13 @@ class Executor:
                     finally:
                         source.close()
             self.store.finish(job_id, "ok", message)
+            self.store.log(job_id, "done", message)
         except ChallengeError as error:
             # Not a failure of the job: it waits for its user to answer the page in the browser.
             if not self.store.job(job_id):
                 return
             self.store.finish(job_id, "challenge", str(error), challenge_url=error.url)
+            self.store.log(job_id, "error", str(error))
             self.notify(nc, f"Harvester: {job.name} needs you", f"{error.url} asks for a person ({error.kind}).")
         except Exception as error:  # pylint: disable=broad-exception-caught
             # Whatever broke, the job is marked and the thread goes on with the others; a job
@@ -185,6 +199,7 @@ class Executor:
             status = "auth" if isinstance(error, AuthError) else "failed"
             LOG.warning("job %s (%s) %s: %s", job_id, job.user, status, message)
             self.store.finish(job_id, status, message)
+            self.store.log(job_id, "error", message)
             # Told once: the same failure on the next scheduled runs is no news.
             if (job.last_status, job.last_message) != (status, message):
                 self.notify(nc, f"Harvester: {job.name} failed", message)

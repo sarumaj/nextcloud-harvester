@@ -44,7 +44,21 @@ class Library(abc.ABC):
         """Gives the file the collaborative tags, creating those that do not exist yet."""
 
 
-def place(job: Job, source: Source, library: Library, item, pause: Callable[[], None]) -> bool:
+# A line of a run's progress: its level (info, error) and its text.
+Report = Callable[[str, str], None]
+
+
+def size_text(size: int) -> str:
+    """A file's size for people: 512 B, 3.4 MB."""
+    value = float(size)
+    for unit in ("B", "KB", "MB", "GB"):
+        if value < 1000 or unit == "GB":
+            return f"{value:.0f} {unit}" if unit == "B" else f"{value:.1f} {unit}"
+        value /= 1000
+    return f"{value:.1f} GB"
+
+
+def place(job: Job, source: Source, library: Library, item, pause: Callable[[], None], report: Report) -> bool:
     """Puts the item's file into the job's folder (after the pause) and tags it; False when it
     was there already (downloaded by hand or by an earlier job: kept, tagged and not downloaded
     again)."""
@@ -55,10 +69,15 @@ def place(job: Job, source: Source, library: Library, item, pause: Callable[[], 
     fetched = file_id is None
     if file_id is None:
         pause()
+        report("info", f"Downloading {path}")
         with tempfile.TemporaryFile() as content:
             source.fetch(item, content)
+            size = content.tell()
             content.seek(0)
             file_id = library.put(path, content)
+        report("info", f"Saved {path} ({size_text(size)})")
+    else:
+        report("info", f"Already in the folder, tagged: {path}")
     # The job's tags are templates of the link's values: {year} is the link's year.
     tags = render_tags(job.tags, item.values)
     if tags:
@@ -84,29 +103,37 @@ class Tally:
         return message
 
 
-def run(
+def run(  # pylint: disable=too-many-arguments  # the run's parts, each given by the executor
     job: Job,
     source: Source,
     library: Library,
     seen: Callable[[str], bool],
     mark_seen: Callable[[str], None],
     sleep: Callable[[float], None] = time.sleep,
+    *,
     until: float | None = None,
+    report: Report = lambda level, text: None,
 ) -> str:
     """Downloads up to max_items new items (and stops at until, a time.monotonic()) and returns
-    what was done, in a sentence."""
+    what was done, in a sentence; report hears of each step (the page's progress log)."""
     limit = int(job.options.get("max_items", COMMON_OPTIONS["max_items"].default))
     tally = Tally()
     complete = True
+    report("info", "Looking for new files")
     for item in source.items(seen):
         # -1: no limit of files (the time limit still holds).
-        if (0 <= limit <= tally.downloaded) or (until is not None and time.monotonic() > until):
+        if 0 <= limit <= tally.downloaded:
+            report("info", f"{limit} files this run (Files per run): the rest comes next run")
+            complete = False
+            break
+        if until is not None and time.monotonic() > until:
+            report("info", "The run's time is up: the rest comes next run")
             complete = False
             break
         # A pause between two downloads, not before the first.
         pause = (lambda: sleep(source.pause)) if tally.downloaded else (lambda: None)
         try:
-            if place(job, source, library, item, pause):
+            if place(job, source, library, item, pause, report):
                 tally.downloaded += 1
             else:
                 tally.adopted += 1
@@ -116,6 +143,7 @@ def run(
             # One file the site will not give (an error page, the wrong type): the others go on,
             # and it is tried again next run, not marked as seen.
             tally.failures.append(str(error))
+            report("error", f"{item.path}: {error}")
             complete = False
             if len(tally.failures) >= MAX_FAILURES and not tally.downloaded:
                 break

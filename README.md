@@ -8,7 +8,9 @@ the app's browser or taken from a template, not by code.
 - **Jobs:** a source and its settings, a folder, a cron schedule (UTC), tags and an account.
   *Harvester* in Nextcloud's top menu lists your jobs, runs one now and edits them. The form
   explains the schedule in words as it is typed, with its next runs, and shows sizes in KB, MB
-  or GB.
+  or GB. Below the jobs, a **progress log** of what the runs do (searching, each file downloaded,
+  saved or found already there, errors, the outcome), live while one runs, of all jobs or of one;
+  a new run clears its job's last message.
 - **Sources** (`ex_app/lib/harvester/sources/`), one card each on the *New job* page:
   - `site`: files linked from a website's pages, by a recipe (below).
   - `mail`: attachments of the messages in an IMAP mailbox (TLS), filtered by sender, subject,
@@ -46,7 +48,9 @@ the app's browser or taken from a template, not by code.
   a pattern with named groups for each (`patterns.propose`), outlines what it matches in the
   page (solid) and what it leaves out (dashed), lists examples with their values, and proposes
   a file name and tags. Edit a pattern and the outlines follow. Passwords are never recorded:
-  the job fills in its account.
+  the job fills in its account. **⛶ Full window** gives the browser the whole window (it takes
+  the window's size, pages lay out for it), with the controls floating over the screen and the
+  recipe in a drawer.
 - **Sessions and challenges:** a job keeps its browser session (cookies, local storage;
   encrypted in Nextcloud, like its account) and replays the sign-in only when the listing shows
   a login form. When a site asks for a person instead (reCAPTCHA, hCaptcha, Cloudflare, "verify
@@ -54,10 +58,19 @@ the app's browser or taken from a template, not by code.
   scheduled runs wait. **Continue in the browser** opens the recorder's browser with the job's
   session at that page: the person answers it, **Done** keeps the session and runs the job.
   Harvester never answers a challenge itself.
+- **A person's browser:** sites' bot protection (Cloudflare, ...) refuses a browser that says it is
+  automated, or cuts its connection (`ERR_HTTP2_PROTOCOL_ERROR`). Chromium runs as the full browser
+  in its new headless mode (not the headless shell), without the automation flag, with Chrome's
+  user agent and one language and time zone for recordings and runs (`HARVESTER_LOCALE`,
+  `HARVESTER_TIMEZONE`, default `en-US`, `Europe/Berlin`). A website job's **HTTP/1.1 only**
+  serves the sites that cut HTTP/2 connections, in the recorder too.
 - **Downloads:** a pause between files; waits when the site asks (429 or 503 with
   `Retry-After`, or a wait pattern on the URL it redirects to, like heise's `wait_sec=`) and
   three retries of a broken transfer; never a web page instead of a file; expected file types
   (`pdf`, `zip`, `image`, ..., several separated by commas), a smallest and a largest size.
+  Files go to Nextcloud in chunks of nc_py_api's first kind: its second numbers the first chunk 0,
+  which Nextcloud refuses where the storage takes multipart uploads (S3), so every file over 5 MB
+  failed with 400.
 - **Repeat runs:** a job remembers what it downloaded; a file already in the folder is tagged
   and not downloaded again. At most `max_items` files per run (`-1`: no limit), the rest comes
   next time; a run ends after two hours in any case. One file that fails does not stop the
@@ -98,7 +111,7 @@ the app's browser or taken from a template, not by code.
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
-.venv/bin/playwright install --only-shell chromium   # for the browser's tests
+.venv/bin/playwright install chromium   # for the browser's tests (the full browser)
 .venv/bin/python -m pytest -q
 .venv/bin/black --check ex_app tests && .venv/bin/pylint ex_app/lib tests
 ```

@@ -191,6 +191,21 @@ async def list_jobs(nc: NC) -> list[dict]:
     return [vars(job) | {"running": job.id == running} for job in store().jobs(await nc.user)]
 
 
+@APP.get("/api/log")
+async def progress_log(nc: NC, job: int | None = None, after: int = 0) -> dict:
+    """The user's progress log after the line after: of one job of theirs, or of all; and which
+    of their jobs runs now."""
+    if job is not None:
+        await own_job(job, nc)
+    user = await nc.user
+    running = STATE["executor"].running
+    running_job = store().job(running) if running is not None else None
+    return {
+        "lines": store().log_lines(user, job, max(after, 0)),
+        "running": running if running_job and running_job.user == user else None,
+    }
+
+
 @APP.post("/api/jobs")
 async def create_job(body: JobIn, nc: NC) -> dict:
     """Adds a job."""
@@ -261,12 +276,14 @@ async def record(websocket: WebSocket, nc: NC) -> None:
     if not allowed:
         return
     recorder = Recorder(websocket.send_json)
+    # The job's (or the form's) HTTP/1.1 only: known before the browser starts.
+    http1 = websocket.query_params.get("http1") == "1" or bool(job and int(job.options.get("http1", 0) or 0))
     try:
         if job:
-            await recorder.start(await load_session(nc, job), job.challenge_url or start_of(job))
+            await recorder.start(await load_session(nc, job), job.challenge_url or start_of(job), http1=http1)
             await recorder.handle({"type": "mode", "mode": "browse"})
         else:
-            await recorder.start()
+            await recorder.start(http1=http1)
         while True:
             message = await asyncio.wait_for(websocket.receive_json(), RECORDER_IDLE)
             try:

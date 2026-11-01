@@ -75,10 +75,11 @@ COPY --from=builder /usr/local/ /usr/local/
 RUN apt-get update && apt-get install -y --no-install-recommends procps && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Chromium for the recorder and the browser source: Playwright's headless shell (no
-# window system needed) with the libraries it needs, at Playwright's own version.
+# Chromium for the recorder and the browser source, at Playwright's own version, with the
+# libraries it needs: the full browser, run in its new headless mode (browser.CHANNEL), not
+# the headless shell, which sites' bot protection tells from Chrome (about 150 MB more).
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-RUN playwright install --with-deps --only-shell chromium && \
+RUN playwright install --with-deps chromium && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # The unprivileged user the app runs as (start.sh drops to it).

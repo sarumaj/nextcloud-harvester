@@ -113,7 +113,11 @@
 				el('td', {}, ...job.tags.map((tag) => el('span', { class: 'harvester-chip', text: tag }))),
 				el('td', {},
 					el('span', { class: `harvester-status harvester-status-${state}`, text: label }),
-					el('div', { class: 'harvester-muted harvester-message', text: job.last_run ? `${when(job.last_run)} · ${job.last_message || ''}` : '' })),
+					el('div', {
+						class: 'harvester-muted harvester-message',
+						'data-job-message': String(job.id),
+						text: job.running ? 'Starting' : job.last_run ? `${when(job.last_run)} · ${job.last_message || ''}` : '',
+					})),
 				el('td', { class: 'harvester-actions' },
 					state === 'challenge' ? el('button', { class: 'primary', text: 'Continue in the browser', onclick: () => openSession(root, job) }) : '',
 					el('button', { text: 'Run now', onclick: async () => { await api('POST', `/jobs/${job.id}/run`); show(root) } }),
@@ -138,7 +142,65 @@
 				el('button', { class: 'primary', text: 'New job', onclick: () => renderStart(root) })),
 			jobs.length ? table : el('div', { class: 'harvester-empty' },
 				el('p', { text: 'No jobs yet.' }),
-				el('p', { class: 'harvester-muted', text: 'A job fetches the files of one site: record it in the browser, or start from a template.' })))
+				el('p', { class: 'harvester-muted', text: 'A job fetches the files of one site: record it in the browser, or start from a template.' })),
+			jobs.length ? progressPanel(root, jobs) : '')
+	}
+
+	// The jobs' progress log: what the runs do, live while one runs, of all jobs or of one.
+	// Polled; a run that starts or ends redraws the list (its states and messages change).
+	function progressPanel(root, jobs) {
+		const select = el('select', { 'aria-label': 'Job' },
+			el('option', { value: '', text: 'All jobs' }),
+			...jobs.map((job) => el('option', { value: String(job.id), text: job.name })))
+		try {
+			const kept = localStorage.getItem('harvester-log-job') || ''
+			if (jobs.some((job) => String(job.id) === kept)) select.value = kept
+		} catch (e) { /* no storage: all jobs */ }
+		const list = el('ol', { class: 'harvester-log', 'aria-live': 'polite' })
+		const panel = el('section', { class: 'harvester-progress' },
+			el('div', { class: 'harvester-progress-head' }, el('h3', { text: 'Progress' }), select), list)
+		let after = 0
+		let timer = null
+		const running = (jobs.find((job) => job.running) || {}).id ?? null
+		const clock = (at) => {
+			const date = new Date(at * 1000)
+			return date.toDateString() === new Date().toDateString() ? date.toLocaleTimeString() : date.toLocaleString()
+		}
+		const line = (entry) => el('li', { class: `harvester-log-${entry.level}` },
+			el('time', { text: clock(entry.at) }),
+			select.value ? '' : el('span', { class: 'harvester-log-job', text: entry.name }),
+			el('span', { class: 'harvester-log-text', text: entry.message }))
+		async function poll() {
+			if (!document.body.contains(panel)) return
+			try {
+				const data = await api('GET', `/log?after=${after}${select.value ? `&job=${select.value}` : ''}`)
+				if (data.running !== running) {
+					show(root)
+					return
+				}
+				const stick = list.scrollHeight - list.scrollTop - list.clientHeight < 24
+				for (const entry of data.lines) {
+					list.append(line(entry))
+					after = entry.id
+					const message = root.querySelector(`[data-job-message="${entry.job}"]`)
+					if (message && entry.job === running) message.textContent = entry.message
+				}
+				while (list.children.length > 300) list.firstChild.remove()
+				if (!list.children.length) list.append(el('li', { class: 'harvester-muted', text: 'No runs yet.' }))
+				else if (data.lines.length && list.firstChild.classList.contains('harvester-muted')) list.firstChild.remove()
+				if (stick) list.scrollTop = list.scrollHeight
+			} catch (e) { /* tried again below */ }
+			timer = setTimeout(poll, running !== null ? 2000 : 10000)
+		}
+		select.addEventListener('change', () => {
+			try { localStorage.setItem('harvester-log-job', select.value) } catch (e) { /* not kept */ }
+			clearTimeout(timer)
+			after = 0
+			list.replaceChildren()
+			poll()
+		})
+		poll()
+		return panel
 	}
 
 	// A new job: blank (recorded in the browser) or from a template with its parameters.
@@ -268,10 +330,16 @@
 		})
 		const box = el('div', { class: 'harvester-screen-box' }, screen, keys)
 		screen.focusKeys = () => keys.focus({ preventScroll: true })
+		// The remote window's size, as the recorder last confirmed it ({type: viewport}).
+		screen.size = { ...VIEWPORT }
+		screen.resized = (data) => {
+			screen.size = { width: data.width, height: data.height }
+			screen.style.aspectRatio = `${data.width} / ${data.height}`
+		}
 
 		function point(event) {
 			const area = screen.getBoundingClientRect()
-			return { x: (event.clientX - area.left) * VIEWPORT.width / area.width, y: (event.clientY - area.top) * VIEWPORT.height / area.height }
+			return { x: (event.clientX - area.left) * screen.size.width / area.width, y: (event.clientY - area.top) * screen.size.height / area.height }
 		}
 		let lastMove = 0
 		screen.addEventListener('mousemove', (event) => {
@@ -310,6 +378,50 @@
 		return box
 	}
 
+	// The recorder's view over the whole window, with its controls floating over the screen:
+	// the remote browser takes the view's size (pages lay out for it, not scaled), and back
+	// to the usual size on leaving. Returns the switch's button.
+	function fullWindow(container, box, send) {
+		let timer = null
+		const fit = () => {
+			if (!container.classList.contains('harvester-wide')) return
+			send({ type: 'viewport', width: Math.round(box.clientWidth), height: Math.round(box.clientHeight) })
+		}
+		const resized = () => { clearTimeout(timer); timer = setTimeout(fit, 300) }
+		const button = el('button', {
+			class: 'harvester-wide-switch',
+			text: '⛶',
+			title: 'Full window (again: back)',
+			'aria-label': 'Full window',
+			onclick: () => {
+				const wide = container.classList.toggle('harvester-wide')
+				button.setAttribute('aria-pressed', String(wide))
+				if (wide) {
+					window.addEventListener('resize', resized)
+					requestAnimationFrame(fit)
+				} else {
+					window.removeEventListener('resize', resized)
+					send({ type: 'viewport', ...VIEWPORT })
+				}
+			},
+		})
+		return button
+	}
+
+	// The controls over the screen in a full window: the bar collapses to one button.
+	function overlay(...children) {
+		const bar = el('div', { class: 'harvester-overlay' }, ...children)
+		const collapse = el('button', {
+			class: 'harvester-overlay-toggle',
+			text: '▾',
+			title: 'Hide or show the controls',
+			'aria-label': 'Hide or show the controls',
+			onclick: () => bar.classList.toggle('harvester-overlay-hidden'),
+		})
+		bar.prepend(collapse)
+		return bar
+	}
+
 	// A job that met a page asking for a person: the browser opens there with the job's session;
 	// the person answers it, and "Done" keeps the session and runs the job again.
 	function openSession(root, job) {
@@ -332,18 +444,22 @@
 			} else if (data.type === 'url') url.value = data.url
 			else if (data.type === 'error') { message.textContent = data.message; done.disabled = false }
 			else if (data.type === 'session-saved') { socket.close(); show(root) }
+			else if (data.type === 'viewport') screen.resized(data)
 		})
 		socket.addEventListener('close', () => { if (root.contains(screen)) message.textContent ||= 'The browser closed.' })
 		const box = wireScreen(screen, send)
-		root.replaceChildren(el('div', { class: 'harvester-recorder' },
+		const container = el('div', { class: 'harvester-recorder' })
+		container.append(
 			el('div', { class: 'harvester-header' },
 				el('div', {},
 					el('h2', { text: `${job.name}: continue in the browser` }),
-					el('p', { class: 'harvester-muted', text: 'The site asks for a person. Answer it here as you would in your own browser (and sign in, if it asks); then press Done. The job keeps this session and runs again.' })),
-				el('div', {}, done, el('button', { text: 'Cancel', onclick: () => { socket.close(); show(root) } }))),
-			el('div', { class: 'harvester-toolbar' }, url),
-			message,
-			el('div', { class: 'harvester-stage' }, box)))
+					el('p', { class: 'harvester-muted', text: 'The site asks for a person. Answer it here as you would in your own browser (and sign in, if it asks); then press Done. The job keeps this session and runs again.' }))),
+			overlay(
+				el('div', { class: 'harvester-toolbar' }, url, fullWindow(container, box, send), done,
+					el('button', { text: 'Cancel', onclick: () => { socket.close(); show(root) } })),
+				message),
+			el('div', { class: 'harvester-stage' }, box))
+		root.replaceChildren(container)
 		screen.focusKeys()
 	}
 
@@ -355,7 +471,9 @@
 		} catch (e) {}
 		let proposals = {}
 		const suggestions = {}
-		const socket = new WebSocket(RECORDER)
+		// The form's "HTTP/1.1 only", known before the browser starts.
+		const http1 = page.querySelector('[data-option="http1"]')
+		const socket = new WebSocket(http1 && http1.checked ? `${RECORDER}?http1=1` : RECORDER)
 		const send = (message) => socket.readyState === WebSocket.OPEN && socket.send(JSON.stringify(message))
 		const screen = el('img', { class: 'harvester-screen', tabindex: '0', alt: 'The recorder’s browser' })
 		const url = el('input', { class: 'harvester-url', placeholder: 'https://… the site’s first page' })
@@ -406,6 +524,7 @@
 			if (data.type === 'frame') screen.src = `data:image/jpeg;base64,${data.data}`
 			else if (data.type === 'url') url.value = data.url
 			else if (data.type === 'error') message.textContent = data.message
+			else if (data.type === 'viewport') screen.resized(data)
 			else if (data.type === 'recipe') {
 				// What an earlier recording picked stays unless picked again.
 				recipe = {
@@ -424,20 +543,30 @@
 		socket.addEventListener('close', () => { message.textContent ||= 'The recorder’s browser closed.' })
 
 		const box = wireScreen(screen, send)
-
-		root.replaceChildren(el('div', { class: 'harvester-recorder' },
+		const container = el('div', { class: 'harvester-recorder' })
+		const drawer = el('button', {
+			class: 'harvester-drawer-switch',
+			text: 'Recipe',
+			title: 'Show or hide the steps and picks (in a full window)',
+			onclick: () => container.classList.toggle('harvester-drawer-open'),
+		})
+		container.append(
 			el('h2', { text: 'Recorder' }),
 			el('p', { text: 'Sign in and go to the listing as you would (passwords are not recorded: the job uses its account). Then pick the links to follow (if the files are a level deeper) and the file links: their patterns are proposed, the matches outlined.' }),
-			el('div', { class: 'harvester-toolbar' },
-				url,
-				el('button', { text: 'Go', onclick: () => send({ type: 'goto', url: url.value }) }),
-				el('button', { text: 'Back', onclick: () => send({ type: 'back' }) }),
-				el('button', { text: 'Undo step', onclick: () => send({ type: 'undo' }) }),
-				el('button', { text: 'Clear picks', onclick: () => { recipe = { steps: recipe.steps }; send({ type: 'clear' }) } }),
-				el('button', { class: 'primary', text: 'Done', onclick: () => close(true) }),
-				el('button', { text: 'Cancel', onclick: () => close(false) })),
-			modes, modeHelp, message,
-			el('div', { class: 'harvester-stage' }, box, panel)))
+			overlay(
+				el('div', { class: 'harvester-toolbar' },
+					url,
+					el('button', { text: 'Go', onclick: () => send({ type: 'goto', url: url.value }) }),
+					el('button', { text: 'Back', onclick: () => send({ type: 'back' }) }),
+					el('button', { text: 'Undo step', onclick: () => send({ type: 'undo' }) }),
+					el('button', { text: 'Clear picks', onclick: () => { recipe = { steps: recipe.steps }; send({ type: 'clear' }) } }),
+					fullWindow(container, box, send),
+					drawer,
+					el('button', { class: 'primary', text: 'Done', onclick: () => close(true) }),
+					el('button', { text: 'Cancel', onclick: () => close(false) })),
+				modes, modeHelp, message),
+			el('div', { class: 'harvester-stage' }, box, panel))
+		root.replaceChildren(container)
 		renderPanel()
 		url.addEventListener('keydown', (event) => { if (event.key === 'Enter') send({ type: 'goto', url: url.value }) })
 		url.focus()
@@ -570,7 +699,7 @@
 			} else {
 				if (option.kind === 'flag') {
 					// On or off, kept as 1 or 0 (as the jobs saved before the checkbox).
-					const box = el('input', { type: 'checkbox' })
+					const box = el('input', { type: 'checkbox', 'data-option': key })
 					box.checked = Number(current) === 1
 					optionInputs[key] = { get value() { return box.checked ? 1 : 0 } }
 					options.append(el('label', { class: 'harvester-check' }, box,
@@ -682,6 +811,18 @@
 		#harvester .harvester-status { display: inline-block; padding: 0 8px; border-radius: var(--border-radius-pill, 999px); font-size: 0.9em; background: var(--color-background-dark); }
 		#harvester .harvester-status-ok { background: var(--color-success); color: var(--color-success-text, #fff); }
 		#harvester .harvester-status-failed, #harvester .harvester-status-auth { background: var(--color-error); color: var(--color-error-text, #fff); }
+		#harvester .harvester-progress { margin-top: 24px; }
+		#harvester .harvester-progress-head { display: flex; gap: 12px; align-items: center; }
+		#harvester .harvester-progress-head h3 { margin: 0; }
+		#harvester .harvester-log { list-style: none; margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
+			font-family: var(--font-face-monospace, monospace); font-size: 13px;
+			background: var(--color-background-dark); border-radius: var(--border-radius-large); }
+		#harvester .harvester-log li { display: flex; gap: 10px; padding: 1px 0; }
+		#harvester .harvester-log time { color: var(--color-text-maxcontrast); flex: none; }
+		#harvester .harvester-log-job { color: var(--color-primary-element); flex: none; }
+		#harvester .harvester-log-text { overflow-wrap: anywhere; }
+		#harvester .harvester-log-error .harvester-log-text { color: var(--color-error); }
+		#harvester .harvester-log-done .harvester-log-text { color: var(--color-success); font-weight: bold; }
 		#harvester .harvester-status-running { background: var(--color-primary-element); color: var(--color-primary-element-text); }
 		#harvester .harvester-status-challenge { background: var(--color-warning); color: var(--color-warning-text, #000); }
 		#harvester .harvester-field { display: flex; flex-direction: column; gap: 2px; margin: 12px 0; max-width: 700px; }
@@ -724,6 +865,26 @@
 		}
 		#harvester .harvester-keys { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; resize: none; pointer-events: none; border: 0; padding: 0; }
 		#harvester .harvester-screen-box:focus-within .harvester-screen { outline: 2px solid var(--color-primary-element); }
+		#harvester .harvester-drawer-switch { display: none; }
+		#harvester .harvester-overlay-toggle { display: none; }
+		/* A full window: the screen fills it, the controls float over it, the recipe is a drawer. */
+		#harvester .harvester-wide { position: fixed; inset: 0; z-index: 3000; margin: 0; padding: 0; background: var(--color-main-background); }
+		#harvester .harvester-wide > h2, #harvester .harvester-wide > p, #harvester .harvester-wide .harvester-header { display: none; }
+		#harvester .harvester-wide .harvester-stage { position: absolute; inset: 0; margin: 0; }
+		#harvester .harvester-wide .harvester-screen-box { flex: 1; max-width: none; height: 100%; }
+		#harvester .harvester-wide .harvester-screen { width: 100%; height: 100%; aspect-ratio: auto; object-fit: contain; border: 0; border-radius: 0; }
+		#harvester .harvester-wide .harvester-overlay { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 2;
+			width: min(1100px, calc(100% - 32px)); padding: 6px 10px; border-radius: var(--border-radius-large);
+			background: color-mix(in srgb, var(--color-main-background) 88%, transparent); box-shadow: 0 2px 12px var(--color-box-shadow); }
+		#harvester .harvester-wide .harvester-overlay-toggle { display: inline-block; float: inline-end; }
+		#harvester .harvester-wide .harvester-overlay-hidden { width: auto; left: auto; right: 8px; transform: none; }
+		#harvester .harvester-wide .harvester-overlay-hidden > :not(.harvester-overlay-toggle) { display: none; }
+		#harvester .harvester-wide .harvester-drawer-switch { display: inline-block; }
+		#harvester .harvester-wide .harvester-steps { display: none; position: absolute; top: 0; right: 0; bottom: 0; z-index: 1;
+			width: min(380px, 90vw); max-height: none; padding: 72px 12px 12px; background: var(--color-main-background);
+			box-shadow: -2px 0 12px var(--color-box-shadow); }
+		#harvester .harvester-wide.harvester-drawer-open .harvester-steps { display: block; }
+		#harvester .harvester-wide-switch[aria-pressed="true"] { background: var(--color-primary-element-light); }
 		#harvester .harvester-steps { flex: 1; min-width: 300px; max-height: 80vh; overflow: auto; overflow-wrap: anywhere; font-size: 90%; }
 		#harvester .harvester-level { border-inline-start: 3px solid var(--color-primary-element); padding-inline-start: 8px; margin: 8px 0; }
 		#harvester .harvester-value { background: var(--color-primary-element-light); border-radius: 4px; padding: 0 4px; margin-inline-end: 4px; font-family: var(--font-face-monospace, monospace); }

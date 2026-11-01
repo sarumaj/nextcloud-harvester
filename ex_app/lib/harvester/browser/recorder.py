@@ -24,7 +24,7 @@ from playwright.async_api import Browser, BrowserContext, CDPSession, Page, Play
 
 from .. import patterns
 from ..recipe import steps_from_events
-from . import LAUNCH_ARGS, SCRIPT, VIEWPORT, allowed_url, child_env, reachable
+from . import SCRIPT, VIEWPORT, allowed_url, context_options, fitted_viewport, launch_options, reachable
 
 # record: steps; browse: go somewhere unrecorded; follow, links, next: pick links.
 MODES = ("record", "browse", "follow", "links", "next")
@@ -50,6 +50,8 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         # Per picked level ("follow0", "links"): groups, examples, proposed file name and tags.
         self.proposals: dict[str, dict] = {}
         self.mode = "record"
+        # The window's size: the page's, as the person makes the view larger or smaller.
+        self.viewport = dict(VIEWPORT)
         self._playwright: Playwright | None = None
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
@@ -65,13 +67,15 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
             recipe["next"] = self.next
         return recipe
 
-    async def start(self, session: dict | None = None, url: str = "") -> None:
+    async def start(self, session: dict | None = None, url: str = "", http1: bool = False) -> None:
         """Starts the browser with an empty page, or with a job's session at a page of it (the one
-        that asked for a person)."""
+        that asked for a person); http1 for the sites that cut HTTP/2 connections."""
         self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(args=LAUNCH_ARGS, env=child_env())
+        self._browser = await self._playwright.chromium.launch(**launch_options(http1))
         self._context = await self._browser.new_context(
-            viewport=VIEWPORT, accept_downloads=False, storage_state=session or None  # type: ignore[arg-type]
+            **context_options(self._browser.version, self.viewport),
+            accept_downloads=False,
+            storage_state=session or None,  # type: ignore[arg-type]
         )
         await self._context.route("**/*", self._guard)
         await self._context.expose_binding("__harvesterReport", self._report)
@@ -114,12 +118,31 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         self._page = page
         page.on("domcontentloaded", lambda _: asyncio.ensure_future(self._apply_mode()))
         page.on("framenavigated", lambda frame: asyncio.ensure_future(self._navigated(frame)))
+        if page.viewport_size != self.viewport:
+            await page.set_viewport_size(self.viewport)  # type: ignore[arg-type]
         self._cdp = await page.context.new_cdp_session(page)
         self._cdp.on("Page.screencastFrame", lambda frame: asyncio.ensure_future(self._frame(frame)))
+        await self._screencast()
+
+    async def _screencast(self) -> None:
+        """The page's screen as frames, at the window's size."""
+        assert self._cdp is not None
         await self._cdp.send(
             "Page.startScreencast",
-            {"format": "jpeg", "quality": 60, "maxWidth": VIEWPORT["width"], "maxHeight": VIEWPORT["height"]},
+            {"format": "jpeg", "quality": 60, "maxWidth": self.viewport["width"], "maxHeight": self.viewport["height"]},
         )
+
+    async def resize(self, width: object, height: object) -> None:
+        """The window at the size the person's view has (within the limits): the page lays out
+        anew for it, the frames come at it, and the page learns it (for the mouse's positions)."""
+        self.viewport = fitted_viewport(width, height)
+        if self._context:
+            for page in self._context.pages:
+                await page.set_viewport_size(self.viewport)  # type: ignore[arg-type]
+        if self._cdp:
+            await self._cdp.send("Page.stopScreencast")
+            await self._screencast()
+        await self.send({"type": "viewport", **self.viewport})
 
     async def _frame(self, frame: dict) -> None:
         # Acknowledged once sent: Chromium sends the next frame only then, so frames never
@@ -255,6 +278,8 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
             await self._update()
         elif kind == "back":
             await page.go_back(wait_until="domcontentloaded")
+        elif kind == "viewport":
+            await self.resize(message.get("width"), message.get("height"))
         elif kind == "clear":
             self.start_url, self.follow, self.links, self.next, self.proposals = "", [], {}, {}, {}
             await page.evaluate(HIGHLIGHT, ["", ""])

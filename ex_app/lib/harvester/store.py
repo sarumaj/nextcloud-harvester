@@ -29,7 +29,19 @@ CREATE TABLE IF NOT EXISTS seen (
     at REAL NOT NULL,
     PRIMARY KEY (job, key)
 );
+CREATE TABLE IF NOT EXISTS log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    at REAL NOT NULL,
+    level TEXT NOT NULL,
+    message TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS log_job ON log (job, id);
 """
+# The lines of the progress log kept per job (its last runs).
+LOG_KEPT = 500
+# The lines one request of the log returns at most.
+LOG_PAGE = 300
 
 
 @dataclass
@@ -128,6 +140,43 @@ class Store:
         """Deletes a job and what it has downloaded (the files stay in Nextcloud)."""
         with self._lock, self._db:
             self._db.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
+
+    def begin(self, job_id: int) -> None:
+        """A run starts: the last run's message goes, the page shows the run's progress instead."""
+        with self._lock, self._db:
+            self._db.execute("UPDATE jobs SET last_message = NULL WHERE id = ?", (job_id,))
+
+    def log(self, job_id: int, level: str, message: str) -> None:
+        """A line of the job's progress log (info, error, done); the oldest beyond LOG_KEPT go.
+        Nothing for a job deleted meanwhile (its run goes on to its end)."""
+        try:
+            with self._lock, self._db:
+                self._db.execute(
+                    "INSERT INTO log (job, at, level, message) VALUES (?, ?, ?, ?)",
+                    (job_id, time.time(), level, message[:1000]),
+                )
+                self._db.execute(
+                    "DELETE FROM log WHERE job = ? AND id <= (SELECT id FROM log WHERE job = ? ORDER BY id DESC"
+                    " LIMIT 1 OFFSET ?)",
+                    (job_id, job_id, LOG_KEPT),
+                )
+        except sqlite3.IntegrityError:
+            pass
+
+    def log_lines(self, user: str, job_id: int | None = None, after: int = 0) -> list[dict]:
+        """The user's progress log after the line after (its id), oldest first: of one job, or
+        of all theirs; the newest LOG_PAGE when there are more."""
+        query = (
+            "SELECT log.id, log.job, jobs.name, log.at, log.level, log.message FROM log JOIN jobs ON jobs.id = log.job"
+            " WHERE jobs.user = ? AND log.id > ?"
+        )
+        values: list = [user, after]
+        if job_id is not None:
+            query += " AND log.job = ?"
+            values.append(job_id)
+        with self._lock:
+            rows = self._db.execute(query + " ORDER BY log.id DESC LIMIT ?", (*values, LOG_PAGE)).fetchall()
+        return [dict(row) for row in reversed(rows)]
 
     def finish(self, job_id: int, status: str, message: str, challenge_url: str | None = None) -> None:
         """Records the outcome of a run (and the page that asked for a person, if one did)."""

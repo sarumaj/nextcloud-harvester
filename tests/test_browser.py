@@ -25,8 +25,10 @@ def chromium_installed() -> bool:
     try:
         from playwright.sync_api import sync_playwright  # pylint: disable=import-outside-toplevel
 
+        from harvester.browser import launch_options  # pylint: disable=import-outside-toplevel
+
         with sync_playwright() as playwright:
-            playwright.chromium.launch().close()
+            playwright.chromium.launch(**launch_options()).close()
         return True
     except Exception:  # pylint: disable=broad-exception-caught
         return False

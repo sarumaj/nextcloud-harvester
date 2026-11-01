@@ -19,7 +19,19 @@ from urllib.parse import urlparse
 LOCK = threading.Lock()
 SCRIPT = (Path(__file__).parent / "recorder.js").read_text(encoding="utf-8")
 VIEWPORT = {"width": 1280, "height": 800}
+# The sizes a person may give the recorder's window (the page's own size, within these).
+VIEWPORT_MIN = {"width": 640, "height": 480}
+VIEWPORT_MAX = {"width": 2560, "height": 1600}
 LAUNCH_ARGS = ["--disable-dev-shm-usage"]
+# Like a person's browser, not an automated one: sites behind Cloudflare and other bot
+# protection refuse a browser that says it is automated, or cut its connection
+# (ERR_HTTP2_PROTOCOL_ERROR). The person still answers any challenge; this only keeps
+# the browser from giving itself away. Full Chromium in its new headless mode (the
+# headless shell differs from Chrome), without the automation flag, with Chrome's own
+# user agent and one language and time zone for the recorder and the jobs alike.
+CHANNEL = os.environ.get("HARVESTER_BROWSER_CHANNEL", "chromium")
+LOCALE = os.environ.get("HARVESTER_LOCALE", "en-US")
+TIMEZONE = os.environ.get("HARVESTER_TIMEZONE", "Europe/Berlin")
 # What the browser and the helper programs (rclone, gallery-dl) may see of the app's
 # environment: the app's AppAPI secret and HaRP's key stay out (a page that broke out of
 # Chromium, which has no sandbox in a container, would find nothing to take).
@@ -39,6 +51,55 @@ CHILD_ENV_KEYS = (
 def child_env() -> dict[str, str]:
     """The environment of a child process: the few variables it needs, no secret."""
     return {key: os.environ[key] for key in CHILD_ENV_KEYS if key in os.environ}
+
+
+def launch_options(http1: bool = False) -> dict:
+    """How Chromium starts (CHANNEL; HTTP/1.1 only for the sites that cut HTTP/2 connections
+    of browsers they distrust)."""
+    args = [*LAUNCH_ARGS, "--disable-blink-features=AutomationControlled", f"--lang={LOCALE}"]
+    if http1:
+        args.append("--disable-http2")
+    return {"args": args, "env": child_env()} | ({"channel": CHANNEL} if CHANNEL else {})
+
+
+def user_agent(version: str) -> str:
+    """Chrome's user agent for the browser's version (reduced, as Chrome sends it): without
+    the "HeadlessChrome" a headless browser would say."""
+    major = version.split(".", 1)[0] or "0"
+    return f"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{major}.0.0.0 Safari/537.36"
+
+
+def context_options(version: str, viewport: dict | None = None) -> dict:
+    """A browser context's settings: the window's size, the user agent, language and time zone."""
+    return {
+        "viewport": viewport or VIEWPORT,
+        "user_agent": user_agent(version),
+        "locale": LOCALE,
+        "timezone_id": TIMEZONE,
+    }
+
+
+def fitted_viewport(width: object, height: object) -> dict:
+    """The window size asked for, within VIEWPORT_MIN and VIEWPORT_MAX (whole pixels)."""
+    size = {}
+    for key, value in (("width", width), ("height", height)):
+        try:
+            number = int(float(value))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            number = VIEWPORT[key]
+        size[key] = max(VIEWPORT_MIN[key], min(VIEWPORT_MAX[key], number))
+    return size
+
+
+def connection_refused(error: Exception) -> str:
+    """A clearer word for a page the site would not give the browser at all, else ""."""
+    text = str(error)
+    if "ERR_HTTP2_PROTOCOL_ERROR" in text or "ERR_CONNECTION_RESET" in text:
+        return (
+            "the site cut the browser's connection (its bot protection, most likely): try the job's option "
+            "HTTP/1.1 only, or continue in the browser"
+        )
+    return ""
 
 
 def allowed_host(host: str) -> bool:
