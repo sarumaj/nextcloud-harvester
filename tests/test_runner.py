@@ -200,8 +200,9 @@ def test_an_older_database_gets_the_new_column(tmp_path):
 
 class FakeFiles:
     """Nextcloud's files as nc_py_api's async client reaches them: by_path raises for a missing
-    path (404); assigning a tag twice and creating an existing one answer 409 Conflict; "hidden"
-    exists but is not visible to the user."""
+    path, as 0.30.3 does, a plain NextcloudException with status 404 (check_error, not its
+    NextcloudExceptionNotFound); assigning a tag twice and creating an existing one answer 409
+    Conflict; "hidden" exists but is not visible to the user."""
 
     def __init__(self):
         self.stored: dict[str, bytes] = {}
@@ -210,7 +211,7 @@ class FakeFiles:
 
     async def by_path(self, path):
         if path not in self.stored:
-            raise NextcloudExceptionNotFound(f"<list: u, {path}>")
+            raise NextcloudException(404, "Not Found", info=f"list: u, {path}, [...]")
         return type("Node", (), {"info": type("Info", (), {"fileid": list(self.stored).index(path) + 1})()})()
 
     async def makedirs(self, path, exist_ok=False):  # pylint: disable=unused-argument
@@ -249,6 +250,28 @@ def test_the_nextcloud_library_takes_a_missing_file_for_one_to_download():
         "3 downloaded"
     )
     assert library.find("/Zeitschriften/ix/a.txt") == 1 and library.find("/Zeitschriften/ix/missing") is None
+
+
+def test_a_missing_file_is_any_404_and_other_errors_stop_the_run():
+    """The status decides: nc_py_api's NotFound (should a later version raise it) is missing too,
+    and an error that is not 404 stops the run instead of downloading the file again."""
+
+    class Raising(FakeFiles):
+        """by_path always fails with the given error."""
+
+        def __init__(self, error: Exception):
+            super().__init__()
+            self.error = error
+
+        async def by_path(self, path):
+            raise self.error
+
+    nc = FakeNextcloud()
+    nc.files = Raising(NextcloudExceptionNotFound("<list: u, /x>"))
+    assert library_of(nc).find("/x") is None
+    nc.files = Raising(NextcloudException(500, "Internal Server Error"))
+    with pytest.raises(NextcloudException):
+        library_of(nc).find("/x")
 
 
 def test_tagging_survives_tags_already_there_and_hidden_ones():

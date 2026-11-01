@@ -9,7 +9,7 @@ import posixpath
 from collections.abc import Awaitable, Callable
 from typing import Any, BinaryIO
 
-from nc_py_api import AsyncNextcloudApp, NextcloudException, NextcloudExceptionNotFound
+from nc_py_api import AsyncNextcloudApp, NextcloudException
 
 from .runner import Library
 
@@ -25,10 +25,15 @@ class NextcloudLibrary(Library):
         self._tags: dict[str, int] = {}
 
     def find(self, path: str) -> int | None:
-        # by_path raises for a path that does not exist (WebDAV's 404), rather than returning None.
+        # by_path raises for a path that does not exist (WebDAV's 404), rather than returning None:
+        # nc_py_api 0.30.3 raises a plain NextcloudException with status 404 there (its
+        # check_error), not NextcloudExceptionNotFound, so the status decides; any other error
+        # stops the run.
         try:
             node = self.call(self.nc.files.by_path(path))
-        except NextcloudExceptionNotFound:
+        except NextcloudException as error:
+            if error.status_code != 404:
+                raise
             return None
         return node.info.fileid if node else None
 
