@@ -17,7 +17,7 @@ from urllib.parse import urlparse
 from croniter import croniter
 from nc_py_api import AsyncNextcloudApp
 
-from . import runner
+from . import browser, runner
 from .nextcloud import NextcloudLibrary
 from .sources import SOURCES, AuthError, ChallengeError, Stopped
 from .sources.download import guarded_client
@@ -282,8 +282,10 @@ class Executor:
                 for name in source_class.credentials
             }
             started = time.monotonic()
-            with guarded_client() as client:
+            home = bool(int(job.options.get("home", 0) or 0)) and bool(browser.PROXY)
+            with guarded_client(**({"proxy": browser.PROXY} if home else {})) as client:
                 source = source_class(job.options, credentials, client)
+                source.home = home
                 # Every wait of the source ends at once when the run is stopped.
                 if hasattr(source, "sleep"):
                     source.sleep = control.nap

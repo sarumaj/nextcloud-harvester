@@ -20,7 +20,7 @@ from typing import Any, BinaryIO
 
 import yt_dlp
 
-from .. import cookies, patterns
+from .. import browser, cookies, patterns
 from ..browser import allowed_url
 from .base import ACCOUNT_HELP, Item, Option, Source, SourceError
 
@@ -115,7 +115,7 @@ class Media(Source):
 
     def base(self) -> dict:
         """BASE with the account: its cookies' file (written once per run), user name, password."""
-        account = {}
+        account: dict = {"proxy": browser.PROXY} if self.home and browser.PROXY else {}
         if self.cookie_file is None:
             found = self.account_cookies(self.url)
             self.cookie_file = cookies.to_file(found) if found else ""

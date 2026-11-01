@@ -524,7 +524,9 @@
 		const suggestions = {}
 		// The form's "HTTP/1.1 only", known before the browser starts.
 		const http1 = page.querySelector('[data-option="http1"]')
-		const socket = new WebSocket(http1 && http1.checked ? `${RECORDER}?http1=1` : RECORDER)
+		const home = page.querySelector('[data-option="home"]')
+		const query = [http1 && http1.checked ? 'http1=1' : '', home && home.checked ? 'home=1' : ''].filter(Boolean).join('&')
+		const socket = new WebSocket(query ? `${RECORDER}?${query}` : RECORDER)
 		const send = (message) => socket.readyState === WebSocket.OPEN && socket.send(JSON.stringify(message))
 		const screen = el('img', { class: 'harvester-screen', tabindex: '0', alt: 'The recorder’s browser' })
 		const url = el('input', { class: 'harvester-url', placeholder: 'https://… the site’s first page' })

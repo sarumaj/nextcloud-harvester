@@ -158,3 +158,18 @@ def test_the_browsers_are_a_few_slots(monkeypatch):
     finally:
         monkeypatch.delenv("HARVESTER_BROWSERS")
         importlib.reload(browser)
+
+
+def test_the_home_connection_goes_to_the_browser_and_the_downloads(monkeypatch):
+    from harvester import browser  # pylint: disable=import-outside-toplevel
+    from harvester.sources.media import Media  # pylint: disable=import-outside-toplevel
+
+    monkeypatch.setattr(browser, "PROXY", "http://192.168.178.33:3128")
+    assert browser.launch_options(home=True)["proxy"] == {"server": "http://192.168.178.33:3128"}
+    assert "proxy" not in browser.launch_options()
+    media = Media({"url": "https://video.example/c"}, {}, None)
+    assert "proxy" not in media.base()
+    media.home = True
+    assert media.base()["proxy"] == "http://192.168.178.33:3128"
+    monkeypatch.setattr(browser, "PROXY", "")
+    assert "proxy" not in browser.launch_options(home=True), "no home connection set up: none"

@@ -146,7 +146,11 @@ def list_sources() -> list[dict]:
             "description": source.description,
             "credentials": list(source.credentials),
             "credential_help": {name: list(help_) for name, help_ in source.credential_help.items()},
-            "options": {key: vars(option) for key, option in (source.options | COMMON_OPTIONS).items()},
+            "options": {
+                key: vars(option)
+                for key, option in (source.options | COMMON_OPTIONS).items()
+                if key != "home" or browser.PROXY
+            },
         }
         for source in SOURCES.values()
     ]
@@ -308,13 +312,16 @@ async def record(websocket: WebSocket, nc: NC) -> None:
     recorder = Recorder(websocket.send_json)
     # The job's (or the form's) HTTP/1.1 only: known before the browser starts.
     http1 = websocket.query_params.get("http1") == "1" or bool(job and int(job.options.get("http1", 0) or 0))
+    home = websocket.query_params.get("home") == "1" or bool(job and int(job.options.get("home", 0) or 0))
     try:
         try:
             if job:
-                await recorder.start(await load_session(nc, job), job.challenge_url or start_of(job), http1=http1)
+                await recorder.start(
+                    await load_session(nc, job), job.challenge_url or start_of(job), http1=http1, home=home
+                )
                 await recorder.handle({"type": "mode", "mode": "browse"})
             else:
-                await recorder.start(http1=http1)
+                await recorder.start(http1=http1, home=home)
         except Exception as error:  # pylint: disable=broad-exception-caught
             # The page says why instead of a screen that stays empty.
             LOGGER.exception("the recorder's browser did not start")

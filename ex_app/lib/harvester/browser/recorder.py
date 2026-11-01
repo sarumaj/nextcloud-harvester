@@ -74,11 +74,12 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
             recipe["next"] = self.next
         return recipe
 
-    async def start(self, session: dict | None = None, url: str = "", http1: bool = False) -> None:
+    async def start(self, session: dict | None = None, url: str = "", http1: bool = False, home: bool = False) -> None:
         """Starts the browser with an empty page, or with a job's session at a page of it (the one
-        that asked for a person); http1 for the sites that cut HTTP/2 connections."""
+        that asked for a person); http1 for the sites that cut HTTP/2 connections, home through
+        the home connection."""
         self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(**launch_options(http1))
+        self._browser = await self._playwright.chromium.launch(**launch_options(http1, home))
         self._context = await self._browser.new_context(
             **context_options(self._browser.version, self.viewport),
             accept_downloads=False,

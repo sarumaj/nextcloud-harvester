@@ -40,6 +40,10 @@ LAUNCH_ARGS = ["--disable-dev-shm-usage"]
 # user agent and one language and time zone for the recorder and the jobs alike.
 CHANNEL = os.environ.get("HARVESTER_BROWSER_CHANNEL", "chromium")
 LOCALE = os.environ.get("HARVESTER_LOCALE", "en-US")
+# The family's home connection (an HTTP proxy at home, reached through the WireGuard tunnel), for
+# the jobs that choose it: sites that refuse servers' addresses see a home's. Empty: none, and
+# the jobs' option is not offered.
+PROXY = os.environ.get("HARVESTER_PROXY", "").strip()
 TIMEZONE = os.environ.get("HARVESTER_TIMEZONE", "Europe/Berlin")
 # What the browser and the helper programs (rclone, gallery-dl) may see of the app's
 # environment: the app's AppAPI secret and HaRP's key stay out (a page that broke out of
@@ -62,13 +66,16 @@ def child_env() -> dict[str, str]:
     return {key: os.environ[key] for key in CHILD_ENV_KEYS if key in os.environ}
 
 
-def launch_options(http1: bool = False) -> dict:
+def launch_options(http1: bool = False, home: bool = False) -> dict:
     """How Chromium starts (CHANNEL; HTTP/1.1 only for the sites that cut HTTP/2 connections
-    of browsers they distrust)."""
+    of browsers they distrust; home: through PROXY, the family's home connection)."""
     args = [*LAUNCH_ARGS, "--disable-blink-features=AutomationControlled", f"--lang={LOCALE}"]
     if http1:
         args.append("--disable-http2")
-    return {"args": args, "env": child_env()} | ({"channel": CHANNEL} if CHANNEL else {})
+    options = {"args": args, "env": child_env()} | ({"channel": CHANNEL} if CHANNEL else {})
+    if home and PROXY:
+        options["proxy"] = {"server": PROXY}
+    return options
 
 
 def user_agent(version: str) -> str:

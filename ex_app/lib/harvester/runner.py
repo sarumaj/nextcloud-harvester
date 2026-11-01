@@ -25,6 +25,13 @@ COMMON_OPTIONS = {
         "after two hours, and goes on in the next).",
         minimum=-1,
     ),
+    "home": Option(
+        "Through the home connection",
+        0,
+        "The site sees the family's home connection instead of the server's (some sites refuse servers, or ask "
+        "them to prove they are human more often). Slower: the files come through the home's upload.",
+        kind="flag",
+    ),
 }
 
 

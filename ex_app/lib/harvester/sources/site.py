@@ -123,6 +123,7 @@ class BrowserDriver(Driver):
         start: str = "",
         cookies: list[dict] | None = None,
         http1: bool = False,
+        home: bool = False,
     ):
         if not browser.SLOTS.acquire(timeout=LOCK_TIMEOUT):  # pylint: disable=consider-using-with
             raise SourceError("no browser came free (recordings use them all)")
@@ -130,7 +131,7 @@ class BrowserDriver(Driver):
         self._browser = None
         try:
             self._playwright = sync_playwright().start()
-            self._browser = self._playwright.chromium.launch(**browser.launch_options(http1))
+            self._browser = self._playwright.chromium.launch(**browser.launch_options(http1, home))
             self.context = self._browser.new_context(
                 **browser.context_options(self._browser.version),
                 accept_downloads=False,
@@ -377,6 +378,7 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
                     start,
                     cookie_jar.to_playwright(found),
                     http1=bool(int(self.settings["http1"])),
+                    home=self.home,
                 )
             else:
                 # Without recorded steps, the account's user name and password are HTTP Basic's.

@@ -23,7 +23,7 @@ from typing import Any, BinaryIO
 
 import httpx
 
-from .. import cookies, patterns
+from .. import browser, cookies, patterns
 from ..browser import allowed_url, child_env
 from . import download
 from .base import ACCOUNT_HELP, Item, Option, Source, SourceError
@@ -91,6 +91,8 @@ class Gallery(Source):
     def listing(self) -> list:
         """gallery-dl's messages for the page."""
         options, files = self.account_files()
+        if self.home and browser.PROXY:
+            options = [*options, "--proxy", browser.PROXY]
         # The address after "--": never read as an option (it is http(s) in any case).
         command = [sys.executable, "-m", "gallery_dl", "--resolve-json", "--no-download", *options, "--", self.url]
         try:

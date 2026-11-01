@@ -90,7 +90,13 @@ the app's browser or taken from a template, not by code.
   queue a job; a queued job asked for again runs once.
 - **Browsers:** up to `HARVESTER_BROWSERS` Chromiums at once (3 by default; each takes some
   300-600 MB): each running website job takes one, recordings the others, so people record side
-  by side and while jobs run. When all are taken, the recorder's screen says so instead of staying empty.
+  by side and while jobs run. When all are taken, the recorder's screen says so instead of staying
+  empty.
+- **Home connection:** with `HARVESTER_PROXY` (an HTTP proxy at the family's home, e.g.
+  `http://192.168.178.33:3128`, reached through the WireGuard tunnel) a job may go **Through the
+  home connection**: its downloads, its browser, yt-dlp and gallery-dl use the proxy, and sites
+  that refuse servers' addresses see a home's. Slower: the files come through the home's upload.
+  Without `HARVESTER_PROXY` the option is not offered. The recorder follows the form's choice.
 - **Notifications:** a job that needs a person, or fails, notifies its user; the same failure
   again on the next runs does not.
 - **Templates** (`ex_app/lib/harvester/presets/*.json`), jobs with a few parameters, one card

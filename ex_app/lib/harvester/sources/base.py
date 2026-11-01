@@ -125,6 +125,9 @@ class Source(abc.ABC):
         self.settings = {key: options.get(key, option.default) for key, option in self.options.items()}
         self.secrets = credentials
         self.client = client
+        # Through the home connection (the job's option "home", when the app has one): the
+        # executor gives the client the proxy; a browser the source starts takes it too.
+        self.home = False
 
     @abc.abstractmethod
     def items(self, seen: Callable[[str], bool]) -> Iterator[Item]:
