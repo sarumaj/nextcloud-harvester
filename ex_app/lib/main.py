@@ -340,7 +340,7 @@ async def record(websocket: WebSocket, nc: NC) -> None:
     finally:
         # Shielded: even when the handler is cancelled, the browser closes and is released.
         closing = asyncio.ensure_future(recorder.close())
-        closing.add_done_callback(lambda _: browser.LOCK.release())
+        closing.add_done_callback(lambda _: browser.SLOTS.release())
         await asyncio.shield(closing)
 
 
@@ -358,8 +358,8 @@ async def admit(websocket: WebSocket, nc: AsyncNextcloudApp) -> tuple[bool, Job 
             job = await own_job(int(websocket.query_params["job"]), nc)
         except (ValueError, HTTPException):
             refusal = "No such job."
-    if not refusal and not browser.LOCK.acquire(blocking=False):  # pylint: disable=consider-using-with
-        refusal = "The browser is busy (a job or another recording)."
+    if not refusal and not browser.SLOTS.acquire(blocking=False):  # pylint: disable=consider-using-with
+        refusal = "All browsers are in use (other recordings, or a job): try again in a few minutes."
     if refusal:
         await websocket.send_json({"type": "error", "message": refusal})
         await websocket.close(code=1008)

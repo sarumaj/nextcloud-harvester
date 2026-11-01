@@ -336,7 +336,12 @@
 			class: 'harvester-keys', 'aria-label': 'Keyboard of the remote browser',
 			autocomplete: 'off', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false',
 		})
-		const box = el('div', { class: 'harvester-screen-box' }, screen, keys)
+		// Until its first frame (or instead of it, when the browser cannot start or is taken),
+		// the screen says what is going on, not an empty image.
+		const notice = el('div', { class: 'harvester-screen-notice', text: 'Starting the browser…' })
+		const box = el('div', { class: 'harvester-screen-box' }, screen, notice, keys)
+		screen.frame = (data) => { screen.src = `data:image/jpeg;base64,${data}`; notice.hidden = true }
+		screen.say = (text) => { if (!screen.getAttribute('src')) { notice.textContent = text; notice.hidden = false } }
 		screen.focusKeys = () => keys.focus({ preventScroll: true })
 		// The remote window's size, as the recorder last confirmed it ({type: viewport}).
 		screen.size = { ...VIEWPORT }
@@ -468,14 +473,14 @@
 		socket.addEventListener('message', (event) => {
 			const data = JSON.parse(event.data)
 			if (data.type === 'frame') {
-				screen.src = `data:image/jpeg;base64,${data.data}`
+				screen.frame(data.data)
 				if (message.textContent === 'Starting the browser…') message.textContent = ''
 			} else if (data.type === 'url') url.value = data.url
-			else if (data.type === 'error') { message.textContent = data.message; done.disabled = false }
+			else if (data.type === 'error') { message.textContent = data.message; done.disabled = false; screen.say(data.message) }
 			else if (data.type === 'session-saved') { socket.close(); show(root) }
 			else if (data.type === 'viewport') screen.resized(data)
 		})
-		socket.addEventListener('close', () => { if (root.contains(screen)) message.textContent ||= 'The browser closed.' })
+		socket.addEventListener('close', () => { if (root.contains(screen)) { message.textContent ||= 'The browser closed.'; screen.say(message.textContent) } })
 		const box = wireScreen(screen, send)
 		const container = el('div', { class: 'harvester-recorder' })
 		container.append(
@@ -550,9 +555,9 @@
 
 		socket.addEventListener('message', (event) => {
 			const data = JSON.parse(event.data)
-			if (data.type === 'frame') screen.src = `data:image/jpeg;base64,${data.data}`
+			if (data.type === 'frame') screen.frame(data.data)
 			else if (data.type === 'url') url.value = data.url
-			else if (data.type === 'error') message.textContent = data.message
+			else if (data.type === 'error') { message.textContent = data.message; screen.say(data.message) }
 			else if (data.type === 'viewport') screen.resized(data)
 			else if (data.type === 'recipe') {
 				// What an earlier recording picked stays unless picked again.
@@ -569,7 +574,7 @@
 				renderPanel()
 			}
 		})
-		socket.addEventListener('close', () => { message.textContent ||= 'The recorder’s browser closed.' })
+		socket.addEventListener('close', () => { message.textContent ||= 'The recorder’s browser closed.'; screen.say(message.textContent) })
 
 		const box = wireScreen(screen, send)
 		const container = el('div', { class: 'harvester-recorder' })
@@ -894,6 +899,9 @@
 			border: 1px solid var(--color-border); border-radius: var(--border-radius); background: var(--color-background-dark); cursor: crosshair;
 		}
 		#harvester .harvester-keys { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; resize: none; pointer-events: none; border: 0; padding: 0; }
+		#harvester .harvester-screen:not([src]) { visibility: hidden; }
+		#harvester .harvester-screen-notice { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px; text-align: center; color: var(--color-text-maxcontrast); }
+		#harvester .harvester-screen-notice[hidden] { display: none; }
 		#harvester .harvester-screen-box:focus-within .harvester-screen { outline: 2px solid var(--color-primary-element); }
 		#harvester .harvester-drawer-switch { display: none; }
 		#harvester .harvester-overlay-toggle { display: none; }

@@ -11,6 +11,11 @@ import httpx
 from .. import cookies as cookie_jar
 
 
+class Stopped(Exception):
+    """The run was stopped by its user during a wait (the sources' sleep raises it): it ends
+    there, and the file it was at comes next run."""
+
+
 class SourceError(Exception):
     """The site refused or broke: the run stops and the user is told."""
 

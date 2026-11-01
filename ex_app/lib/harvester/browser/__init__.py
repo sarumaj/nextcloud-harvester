@@ -1,7 +1,8 @@
 """The browser: what the recorder and the browser source share.
 
-One Chromium at a time (LOCK): the recorder takes it while a person records, a job of the
-browser source while it runs. The browser may open only http(s) addresses outside the local
+A few Chromiums at a time (SLOTS, HARVESTER_BROWSERS, 3 by default): each recording takes one
+while a person records, and the running job of the browser source one (jobs run one at a time),
+so people record side by side and while a job runs. The browser may open only http(s) addresses outside the local
 and private networks: a file:// page would show the container's files and environment (the
 app's secret among them), and the network rules of the External Apps keep it off the private
 network in any case.
@@ -16,7 +17,15 @@ import time
 from pathlib import Path
 from urllib.parse import urlparse
 
-LOCK = threading.Lock()
+# Each Chromium takes some 300-600 MB: the slots keep their number within what the host has.
+SLOTS = threading.BoundedSemaphore(max(1, int(os.environ.get("HARVESTER_BROWSERS", "3"))))
+
+
+def free_browsers() -> int:
+    """How many browsers may start now (SLOTS not taken)."""
+    return SLOTS._value  # type: ignore[attr-defined]  # pylint: disable=protected-access
+
+
 SCRIPT = (Path(__file__).parent / "recorder.js").read_text(encoding="utf-8")
 VIEWPORT = {"width": 1280, "height": 800}
 # The sizes a person may give the recorder's window (the page's own size, within these).

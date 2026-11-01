@@ -15,7 +15,7 @@ from nc_py_api import AsyncNextcloudApp
 
 from . import runner
 from .nextcloud import NextcloudLibrary
-from .sources import SOURCES, AuthError, ChallengeError
+from .sources import SOURCES, AuthError, ChallengeError, Stopped
 from .sources.download import guarded_client
 from .store import Job, Store
 
@@ -139,6 +139,12 @@ class Executor:
         self._paused.clear()
         return True
 
+    def nap(self, seconds: float) -> None:
+        """The run's waits (between files, retries, what a site asks for): ended at once by a
+        stop, which then ends the run (Stopped)."""
+        if self._stopped.wait(max(0.0, seconds)):
+            raise Stopped("stopped")
+
     def checkpoint(self, report: Callable[[str, str], None]) -> bool:
         """Asked by the run before each file: waits while it is paused (up to PAUSE_LIMIT, then
         it stops), and says whether to stop."""
@@ -214,6 +220,9 @@ class Executor:
             started = time.monotonic()
             with guarded_client() as client:
                 source = source_class(job.options, credentials, client)
+                # Every wait of the source ends at once when the run is stopped.
+                if hasattr(source, "sleep"):
+                    source.sleep = self.nap
                 kept = self.call(load_session(nc, job))
                 if kept:
                     source.restore(kept)
@@ -226,6 +235,7 @@ class Executor:
                         lambda key: self.store.mark_seen(job_id, key),
                         until=lambda: started + RUN_LIMIT + self._paused_for,
                         report=lambda level, text: self.store.log(job_id, level, text),
+                        sleep=self.nap,
                         stopped=lambda: self.checkpoint(lambda level, text: self.store.log(job_id, level, text)),
                     )
                 finally:

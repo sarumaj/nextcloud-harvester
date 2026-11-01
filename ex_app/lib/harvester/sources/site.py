@@ -124,8 +124,8 @@ class BrowserDriver(Driver):
         cookies: list[dict] | None = None,
         http1: bool = False,
     ):
-        if not browser.LOCK.acquire(timeout=LOCK_TIMEOUT):  # pylint: disable=consider-using-with
-            raise SourceError("the browser stayed busy (a recording or another job)")
+        if not browser.SLOTS.acquire(timeout=LOCK_TIMEOUT):  # pylint: disable=consider-using-with
+            raise SourceError("no browser came free (recordings use them all)")
         self._playwright = None
         self._browser = None
         try:
@@ -224,7 +224,7 @@ class BrowserDriver(Driver):
             if self._playwright:
                 self._playwright.stop()
         finally:
-            browser.LOCK.release()
+            browser.SLOTS.release()
 
 
 def guard(route: Route) -> None:

@@ -9,7 +9,7 @@ from collections.abc import Callable
 from typing import BinaryIO
 
 from .patterns import render_tags
-from .sources import FULL_PASS, AuthError, ChallengeError, Option, Source, SourceError
+from .sources import FULL_PASS, AuthError, ChallengeError, Option, Source, SourceError, Stopped
 from .store import Job
 
 # Files that failed on their own before a run without any success gives up (the site, not the
@@ -124,40 +124,47 @@ def run(  # pylint: disable=too-many-arguments,too-many-locals  # the run's part
     complete = True
     halted = False
     report("info", "Looking for new files")
-    for item in source.items(seen):
-        if stopped():
-            report("info", "Stopped: the rest comes next run")
-            halted = True
-            complete = False
-            break
-        # -1: no limit of files (the time limit still holds).
-        if 0 <= limit <= tally.downloaded:
-            report("info", f"{limit} files this run (Files per run): the rest comes next run")
-            complete = False
-            break
-        if until is not None and time.monotonic() > (until() if callable(until) else until):
-            report("info", "The run's time is up: the rest comes next run")
-            complete = False
-            break
-        # A pause between two downloads, not before the first.
-        pause = (lambda: sleep(source.pause)) if tally.downloaded else (lambda: None)
-        try:
-            if place(job, source, library, item, pause, report):
-                tally.downloaded += 1
-            else:
-                tally.adopted += 1
-        except (AuthError, ChallengeError):
-            raise  # the whole site refuses: no point in the next files
-        except SourceError as error:
-            # One file the site will not give (an error page, the wrong type): the others go on,
-            # and it is tried again next run, not marked as seen.
-            tally.failures.append(str(error))
-            report("error", f"{item.path}: {error}")
-            complete = False
-            if len(tally.failures) >= MAX_FAILURES and not tally.downloaded:
+    try:
+        for item in source.items(seen):
+            if stopped():
+                report("info", "Stopped: the rest comes next run")
+                halted = True
+                complete = False
                 break
-            continue
-        mark_seen(item.key)
+            # -1: no limit of files (the time limit still holds).
+            if 0 <= limit <= tally.downloaded:
+                report("info", f"{limit} files this run (Files per run): the rest comes next run")
+                complete = False
+                break
+            if until is not None and time.monotonic() > (until() if callable(until) else until):
+                report("info", "The run's time is up: the rest comes next run")
+                complete = False
+                break
+            # A pause between two downloads, not before the first.
+            pause = (lambda: sleep(source.pause)) if tally.downloaded else (lambda: None)
+            try:
+                if place(job, source, library, item, pause, report):
+                    tally.downloaded += 1
+                else:
+                    tally.adopted += 1
+            except (AuthError, ChallengeError):
+                raise  # the whole site refuses: no point in the next files
+            except SourceError as error:
+                # One file the site will not give (an error page, the wrong type): the others go on,
+                # and it is tried again next run, not marked as seen.
+                tally.failures.append(str(error))
+                report("error", f"{item.path}: {error}")
+                complete = False
+                if len(tally.failures) >= MAX_FAILURES and not tally.downloaded:
+                    break
+                continue
+            mark_seen(item.key)
+    except Stopped:
+        # Stopped during a wait (a listing, a retry, the site asking to wait): the file it was at
+        # is not marked and comes next run.
+        report("info", "Stopped: the rest comes next run")
+        halted = True
+        complete = False
     if tally.failures and not (tally.downloaded or tally.adopted):
         more = f" (and {len(tally.failures) - 1} more)" if len(tally.failures) > 1 else ""
         raise SourceError(tally.failures[0] + more)

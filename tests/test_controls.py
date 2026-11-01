@@ -57,3 +57,46 @@ def test_stopping_a_paused_run_ends_its_wait(tmp_path):
     executor.pause(1)
     threading.Timer(0.5, executor.stop, args=(1,)).start()
     assert executor.checkpoint(lambda level, text: None) is True
+
+
+def test_a_stop_ends_a_wait_at_once_and_the_file_comes_next_run(tmp_path):
+    executor = Executor(Store(str(tmp_path / "db")))
+    executor.running = 1
+
+    class Waiting(FakeSource):
+        """A site that asks to wait an hour before its second file."""
+
+        def fetch(self, item, dest):
+            if item.key == "b":
+                executor.nap(3600)
+            super().fetch(item, dest)
+
+    seen: set[str] = set()
+    lines: list[str] = []
+    threading.Timer(0.5, executor.stop, args=(1,)).start()
+    began = time.monotonic()
+    message = runner.run(
+        job(), Waiting({}, {}, None), FakeLibrary(), seen.__contains__, seen.add, executor.nap,
+        report=lambda level, text: lines.append(text),
+    )  # fmt: skip
+    assert time.monotonic() - began < 10
+    assert seen == {"a"}, "the file it waited for is not marked"
+    assert "Stopped: the rest comes next run" in lines and "stopped" in message
+
+
+def test_the_browsers_are_a_few_slots(monkeypatch):
+    import importlib  # pylint: disable=import-outside-toplevel
+
+    from harvester import browser  # pylint: disable=import-outside-toplevel
+
+    monkeypatch.setenv("HARVESTER_BROWSERS", "2")
+    fresh = importlib.reload(browser)
+    try:
+        assert fresh.SLOTS.acquire(blocking=False) and fresh.SLOTS.acquire(blocking=False)
+        assert not fresh.SLOTS.acquire(blocking=False), "a third waits"
+        fresh.SLOTS.release()
+        fresh.SLOTS.release()
+        assert fresh.free_browsers() == 2
+    finally:
+        monkeypatch.delenv("HARVESTER_BROWSERS")
+        importlib.reload(browser)

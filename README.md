@@ -80,7 +80,11 @@ the app's browser or taken from a template, not by code.
 - **Pause and stop:** while a job runs, **Run now** becomes **Pause** (then **Resume**) and
   **Stop**. Both act before the next file: a paused run waits (its time does not count against
   the two hours; after six hours unresumed it stops), a stopped one ends and keeps what it saved,
-  and its next run goes on from there. A paused website job keeps the browser, so recordings wait.
+  and its next run goes on from there; a stop also ends a wait (a retry, the site asking to wait)
+  at once, and the file it was at comes next run.
+- **Browsers:** up to `HARVESTER_BROWSERS` Chromiums at once (3 by default; each takes some
+  300-600 MB): one for the running job, the others for recordings, so people record side by side
+  and while a job runs. When all are taken, the recorder's screen says so instead of staying empty.
 - **Notifications:** a job that needs a person, or fails, notifies its user; the same failure
   again on the next runs does not.
 - **Templates** (`ex_app/lib/harvester/presets/*.json`), jobs with a few parameters, one card

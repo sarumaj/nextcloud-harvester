@@ -20,6 +20,9 @@ from harvester.recipe import check_recipe, steps_from_events
 from harvester.sources import ChallengeError, SourceError
 from harvester.sources import site as site_module
 
+# All browser slots: free before and after each test.
+FREE = site_module.browser.free_browsers()
+
 
 def chromium_installed() -> bool:
     try:
@@ -241,7 +244,7 @@ def test_heise_template_runs_in_the_browser_against_the_fake_archive(monkeypatch
     assert [item.path for item in items][:3] == ["2026/Mag 2026-02.pdf", "2026/Mag 2026-01.pdf", "2025/Mag 2025-03.pdf"]
     assert len(items) == 8 and items[0].url.endswith("/select/mag/archiv/2026/2/download")
     assert any(url.endswith("/session") for url in site.requests), "signed in"
-    assert not site_module.browser.LOCK.locked()
+    assert site_module.browser.free_browsers() == FREE
 
 
 def site_with_cookies(site: Site):
@@ -309,7 +312,7 @@ def test_a_page_asking_for_a_person_stops_the_run(monkeypatch):
     finally:
         source.close()
     assert caught.value.url.endswith("/select/mag/archiv/2025") and caught.value.kind == "reCAPTCHA"
-    assert not site_module.browser.LOCK.locked()
+    assert site_module.browser.free_browsers() == FREE
 
 
 @needs_chromium
@@ -325,7 +328,7 @@ def test_a_failed_sign_in_releases_the_browser(monkeypatch):
     with pytest.raises(SourceError, match="step 2"):
         list(source.items(lambda key: False))
     source.close()
-    assert not site_module.browser.LOCK.locked(), "the browser's lock is free for the next job"
+    assert site_module.browser.free_browsers() == FREE, "the job's browser is free for the next one"
 
 
 @needs_chromium
