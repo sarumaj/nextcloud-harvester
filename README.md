@@ -6,7 +6,9 @@ drives, and release pages. It is generic: a website is described by a **recipe**
 the app's browser or taken from a template, not by code.
 
 - **Jobs:** a source and its settings, a folder, a cron schedule (UTC), tags and an account.
-  *Harvester* in Nextcloud's top menu lists your jobs, runs one now and edits them.
+  *Harvester* in Nextcloud's top menu lists your jobs, runs one now and edits them. The form
+  explains the schedule in words as it is typed, with its next runs, and shows sizes in KB, MB
+  or GB.
 - **Sources** (`ex_app/lib/harvester/sources/`), one card each on the *New job* page:
   - `site`: files linked from a website's pages, by a recipe (below).
   - `mail`: attachments of the messages in an IMAP mailbox (TLS), filtered by sender, subject,
@@ -25,7 +27,8 @@ the app's browser or taken from a template, not by code.
     rclone configuration with one remote (OAuth tokens from `rclone authorize` on a computer).
     Only remotes of other machines: no local files, wrappers, commands or private hosts.
     Refreshed tokens are kept as the job's session.
-  - `releases`: the files attached to a repository's releases on GitHub or a Forgejo or Gitea
+  - `releases`: the files attached to a repository's releases on GitHub, GitLab (gitlab.com or
+    a server of its own, projects in groups of groups), Codeberg or another Forgejo or Gitea
     server, newest first (prereleases if asked, drafts never), filtered by a pattern on the
     file's name; values `tag`, `version`, `name`, `repo`, `year`. A token (the job's account)
     for private repositories and GitHub's request limit.
@@ -34,9 +37,9 @@ the app's browser or taken from a template, not by code.
   follow (a year, then its issues), the file links, and the next page's link. Each level has
   a CSS selector and a pattern: a regular expression on the link's URL whose named groups
   (`(?P<year>\d{4})`) become values.
-- **Values:** the download URL (`{url}/download`), the file's name (`{year}/iX {year}-{issue:02d}`)
-  and the tags (`{year}`) are templates of the link's values: the pattern's groups and `url`,
-  `text`, `page`, `host`, `filename`, `stem`, `ext`.
+- **Values:** the download URL (`{url}/download`), the file's name
+  (`{year}/iX {year}-{issue:02d}`) and the tags (`{year}`) are templates of the link's values:
+  the pattern's groups and `url`, `text`, `page`, `host`, `filename`, `stem`, `ext`.
 - **Recorder** (`ex_app/lib/harvester/browser/`): a headless Chromium in the app, shown on the
   page and driven from it over a WebSocket. Sign in and go to the listing (recorded as steps),
   browse without recording, then pick the links to follow and the file links: the app proposes
@@ -52,13 +55,26 @@ the app's browser or taken from a template, not by code.
   session at that page: the person answers it, **Done** keeps the session and runs the job.
   Harvester never answers a challenge itself.
 - **Downloads:** a pause between files; waits when the site asks (429 or 503 with
-  `Retry-After`, or a wait pattern on the URL it redirects to, like heise's `wait_sec=`); never a
-  web page instead of a file; an expected file type (`pdf`, `zip`, `image`, ...) and size.
+  `Retry-After`, or a wait pattern on the URL it redirects to, like heise's `wait_sec=`) and
+  three retries of a broken transfer; never a web page instead of a file; expected file types
+  (`pdf`, `zip`, `image`, ..., several separated by commas), a smallest and a largest size.
 - **Repeat runs:** a job remembers what it downloaded; a file already in the folder is tagged
-  and not downloaded again. At most `max_items` files per run, the rest comes next time. Once a
-  run went through the whole site, a listing of known files ends the next runs.
-- **Templates** (`ex_app/lib/harvester/presets/*.json`): jobs for known sites with a few
-  parameters, e.g. `heise.json`: heise's magazines (iX, c't, ...) as PDF for a subscription.
+  and not downloaded again. At most `max_items` files per run (`-1`: no limit), the rest comes
+  next time; a run ends after two hours in any case. One file that fails does not stop the
+  others (it is tried again next run), five failures without a success do. Once a run went
+  through the whole site, a listing of known files ends the next runs.
+- **Notifications:** a job that needs a person, or fails, notifies its user; the same failure
+  again on the next runs does not.
+- **Templates** (`ex_app/lib/harvester/presets/*.json`), jobs with a few parameters, one card
+  each on the *New job* page:
+  - `heise`: heise's magazines (iX, c't, ...) as PDF for a subscription;
+  - `pdfs-on-a-page`: the PDFs linked from a page;
+  - `mail-invoices`: invoices (PDF attachments) from a sender;
+  - `podcast`: a podcast's episodes;
+  - `video-channel` and `channel-audio`: a channel's newest videos, or their audio;
+  - `gallery`: a gallery or album's images;
+  - `nextcloud-share`: the folder of another Nextcloud's public link;
+  - `app-releases`: an application's release downloads.
 - **Accounts:** a job's username and password, token or rclone configuration are your sensitive
   preferences in Nextcloud (encrypted); the page only shows whether they are set. Besides a
   password, a job signs in with:
@@ -72,7 +88,11 @@ the app's browser or taken from a template, not by code.
   - **OAuth2** for mail (Gmail, Outlook or any provider's token endpoint): a client ID and secret
     and a refresh token sign in with XOAUTH2; a refresh token the provider replaces is kept.
 - **Safety:** the browser and the downloads reach only http(s) addresses outside local and
-  private networks (a `file://` page would show the app's secret).
+  private networks, checked on the addresses a name resolves to and on every redirect (a
+  `file://` page would show the app's secret). Chromium, rclone and gallery-dl run without the
+  app's secrets in their environment. The app runs as the user `harvester` without a way back
+  to root (`setpriv --no-new-privs`, `start.sh`). The recorder's WebSocket takes only Nextcloud's
+  origin (`NEXTCLOUD_URL`, more in `HARVESTER_ORIGINS`).
 
 ## Development
 

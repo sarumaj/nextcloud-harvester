@@ -1,0 +1,6 @@
+# Lines wrap at 100 characters, as in the homelab's documentation; long commands in code blocks
+# and tables may run over.
+MD013:
+  line_length: 100
+  code_blocks: false
+  tables: false
