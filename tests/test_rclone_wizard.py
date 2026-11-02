@@ -294,3 +294,9 @@ def test_the_real_rclone_configures_a_webdav_remote(monkeypatch):
         assert revealed.stdout.strip() == "se cret"
     finally:
         wizards.close()
+
+
+def test_credentials_from_the_apps_machine_are_never_asked():
+    from harvester import rclone_wizard  # pylint: disable=import-outside-toplevel
+
+    assert rclone_wizard.AUTOMATIC["env_auth"] == "false" and rclone_wizard.AUTOMATIC["use_msi"] == "false"

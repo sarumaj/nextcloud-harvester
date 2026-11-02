@@ -56,6 +56,9 @@ ALLOWED_TYPES = frozenset(
 FORBIDDEN_KEY = re.compile(
     r"(_file|_files|_command|_path)$|^(ssh|ca_cert|client_cert|client_key|config_dir|cache_dir|temp_dir)$"
 )
+# Keys that, set, have rclone take credentials from where it runs instead of the configuration:
+# the app's environment, or the cloud's metadata service (S3's, Azure's and Swift's env_auth).
+AMBIENT_KEYS = ("env_auth", "use_msi", "use_emulator")
 # Keys that name the remote's server: a URL or a host.
 SERVER_KEYS = ("url", "endpoint", "host", "auth", "auth_url", "server", "token_url", "storage_url")
 TIMEOUT = 900
@@ -89,6 +92,8 @@ def parse_config(text: str) -> tuple[str, dict[str, str]]:
             raise SourceError(f"the remote's setting {key} spans several lines")
         if FORBIDDEN_KEY.search(key):
             raise SourceError(f"the remote's setting {key} is not allowed (a file or a command of the app)")
+        if key in AMBIENT_KEYS and value.strip().lower() not in ("", "false", "0", "no"):
+            raise SourceError(f"the remote's setting {key} is not allowed (credentials from the app's machine)")
         if key in SERVER_KEYS and value:
             reachable = allowed_url(value) if "://" in value else allowed_host(value.split(":")[0])
             if not reachable:

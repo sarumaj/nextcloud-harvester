@@ -148,11 +148,17 @@ def test_refreshed_tokens_are_kept_for_the_next_run():
         ("[x]\ntype = webdav\nurl = http://localhost:8080/dav\n", "may not be reached"),
         ("[x]\ntype = s3\nendpoint = http://169.254.169.254\n", "may not be reached"),
         ("not a configuration", "cannot be read"),
+        ("[x]\ntype = s3\nenv_auth = true\n", "env_auth"),
+        ("[x]\ntype = azureblob\nuse_msi = True\n", "use_msi"),
     ],
 )
 def test_configurations_that_reach_the_container_or_private_hosts_are_refused(config, problem):
     with pytest.raises(SourceError, match=problem):
         parse_config(config)
+
+
+def test_credentials_switched_off_from_the_machine_are_fine():
+    assert parse_config("[x]\ntype = s3\nenv_auth = false\naccess_key_id = a\n")[1]["env_auth"] == "false"
 
 
 def test_saving_without_an_account_and_running_without_one():

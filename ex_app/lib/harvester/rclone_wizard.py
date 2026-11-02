@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 
 from .browser import child_env
 from .sources.base import SourceError
-from .sources.remote import ALLOWED_TYPES, FORBIDDEN_KEY, last_line, parse_config
+from .sources.remote import ALLOWED_TYPES, AMBIENT_KEYS, FORBIDDEN_KEY, last_line, parse_config
 
 # The remote's name: fixed, so that nothing the person types names a section of the configuration.
 NAME = "remote"
@@ -42,8 +42,9 @@ PER_USER = 2
 TOTAL = 20
 # Questions answered without asking: no advanced settings (they are where most of the files and
 # commands are, and a job does not need them), and no browser here for rclone's sign-in (the
-# token comes from `rclone authorize` on the person's computer).
-AUTOMATIC = {"config_fs_advanced": "false", "config_is_local": "false"}
+# token comes from `rclone authorize` on the person's computer), and the credentials from the
+# configuration, never from the app's machine (remote.AMBIENT_KEYS).
+AUTOMATIC = {"config_fs_advanced": "false", "config_is_local": "false"} | dict.fromkeys(AMBIENT_KEYS, "false")
 # rclone asks this many questions at most; more means it asks the same one again and again.
 MAX_STEPS = 200
 
