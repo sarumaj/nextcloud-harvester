@@ -84,6 +84,7 @@ class Feed(Source):
         **download.DOWNLOAD_OPTIONS,
     }
     pause = 2.0
+    listing_options = ("url", "take", "link_pattern")
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -159,9 +160,10 @@ class Feed(Source):
             "day": stamp.tm_mday,
         }
         try:
-            path = patterns.render_path(str(self.settings["path"]), values)
+            path = patterns.render_path(str(self.settings["path"]), values, "the feed's entry")
         except (KeyError, ValueError) as error:
-            raise SourceError(f"the file name: {str(error).strip(chr(39))}") from error
+            problem = SourceError(f"the file name: {str(error).strip(chr(39))}")
+            return Item(key=key, path="", url=url, values=values, problem=problem)
         # A name without an extension gets the job's file type's (a link to a page, say).
         path = download.with_extension(path, self.settings)
         return Item(key=key, path=path, url=url, values=values)

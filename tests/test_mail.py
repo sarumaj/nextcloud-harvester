@@ -9,6 +9,7 @@ from email.message import EmailMessage
 import pytest
 
 from harvester.sources import AuthError, SourceError
+from harvester.sources import mail as mail_source
 from harvester.sources.mail import Mail
 
 PDF = b"%PDF-1.7\n" + b"x" * 500
@@ -55,12 +56,40 @@ class FakeIMAP:
     def uid(self, command, *args):
         self.commands.append(("UID", command, *args))
         if command == "SEARCH":
-            return "OK", [b" ".join(sorted(self.messages))]
-        uid, what = args
-        raw = self.messages[uid]
-        if what == "(BODY.PEEK[HEADER])":
-            raw = raw.split(b"\n\n", 1)[0] + b"\n\n"
-        return "OK", [(b"1 (UID " + uid + b" " + what.encode() + b" {%d}" % len(raw), raw), b")"]
+            # FROM: a substring of the From header, regardless of case, as servers search.
+            sender = args[args.index("FROM") + 1].strip('"').lower().encode() if "FROM" in args else b""
+            found = [uid for uid, raw in sorted(self.messages.items()) if sender in self.header(raw, b"From").lower()]
+            return "OK", [b" ".join(found)]
+        uids, what = args
+        if what == "(BODY.PEEK[])":
+            raw = self.messages[uids]
+            return "OK", [(b"1 (UID " + uids + b" BODY[] {%d}" % len(raw), raw), b")"]
+        # The headers of a set of messages (1:3,5), the size and UID after the header's literal
+        # in every other answer, as some servers put them.
+        data: list = []
+        for uid in self.uid_set(uids.decode() if isinstance(uids, bytes) else uids):
+            raw = self.messages[uid]
+            header = raw.split(b"\n\n", 1)[0] + b"\n\n"
+            meta = b"UID " + uid + b" RFC822.SIZE %d" % len(raw)
+            if int(uid) % 2:
+                data += [(b"1 (" + meta + b" BODY[HEADER.FIELDS (FROM)] {%d}" % len(header), header), b")"]
+            else:
+                data += [(b"1 (BODY[HEADER.FIELDS (FROM)] {%d}" % len(header), header), b" " + meta + b")"]
+        return "OK", data
+
+    def uid_set(self, text: str) -> list[bytes]:
+        uids = []
+        for part in text.split(","):
+            first, _, last = part.partition(":")
+            uids += [str(n).encode() for n in range(int(first), int(last or first) + 1)]
+        return [uid for uid in uids if uid in self.messages]
+
+    @staticmethod
+    def header(raw: bytes, name: bytes) -> bytes:
+        for line in raw.split(b"\n\n", 1)[0].splitlines():
+            if line.lower().startswith(name.lower() + b":"):
+                return line
+        return b""
 
     def logout(self):
         self.logged_out = True
@@ -96,20 +125,28 @@ def mailbox() -> FakeIMAP:
 def test_attachments_of_the_sender_newest_first_read_only():
     server = mailbox()
     made = source(server, from_pattern="billing@shop", file_type="pdf")
-    items = list(made.items(lambda key: False))
+    # Each attachment is fetched while the listing is at it, as a run does: only it is held.
+    items, contents = [], []
+    for item in made.items(lambda key: False):
+        dest = io.BytesIO()
+        made.fetch(item, dest)
+        items.append(item)
+        contents.append(dest.getvalue())
     assert [item.values["filename"] for item in items] == ["Rechnung November.pdf", "Rechnung Oktober.pdf"]
     first, second = items[1], items[0]
+    with pytest.raises(SourceError, match="not read"):
+        made.fetch(first, io.BytesIO())
     assert first.key == "mail:<a1@shop.example>#1:Rechnung Oktober.pdf"
     assert second.key == "mail:1700000000:3#1:Rechnung November.pdf", "without a Message-ID: UIDVALIDITY and UID"
     assert first.path == "2025/2025-10-14 Rechnung Oktober.pdf"
     assert first.values["subject"] == "Rechnung für Oktober" and first.values["from"] == "billing@shop.example"
     assert (first.values["year"], first.values["month"], first.values["day"]) == (2025, 10, 14)
-    dest = io.BytesIO()
-    made.fetch(first, dest)
-    assert dest.getvalue() == PDF
+    assert contents == [PDF, PDF]
     assert ("SELECT", '"INBOX"', True) in server.commands
     fetched = [command[3] for command in server.commands if command[:2] == ("UID", "FETCH")]
-    assert fetched and all(what.startswith("(BODY.PEEK[") for what in fetched), "nothing is marked as read"
+    assert fetched and all("BODY.PEEK[" in what and "BODY[" not in what for what in fetched), "nothing marked read"
+    assert ("UID", "SEARCH", None, "FROM", '"billing@shop"') in server.commands, "the server finds the sender"
+    assert ("UID", "FETCH", "1,3", mail_source.HEADERS) in server.commands, "the headers at once"
     assert ("UID", "FETCH", b"2", "(BODY.PEEK[])") not in server.commands, "other senders' messages are not fetched"
     made.close()
     assert server.logged_out
@@ -208,3 +245,85 @@ def test_a_refused_refresh_token_is_an_auth_error():
         list(made.items(lambda key: False))
     with pytest.raises(SourceError, match="token endpoint"):
         Mail({"host": "imap.example.org", "auth": "oauth2", "token_url": "http://10.0.0.1/token"}, {}, None)
+
+
+def test_a_sender_pattern_is_searched_for_by_the_server_only_when_it_is_plain():
+    for pattern, searched in (
+        (r"billing@shop\.example", "billing@shop.example"),
+        ("@shop.example", "@shop.example"),
+        ("billing|invoice", ""),
+        (".*", ""),
+        ("", ""),
+    ):
+        assert source(mailbox(), from_pattern=pattern).plain_sender() == searched, pattern
+    server = mailbox()
+    list(source(server, from_pattern="Shop|Friend").items(lambda key: False))
+    assert ("UID", "SEARCH", None, "ALL") in server.commands
+
+
+def test_uid_sets_and_headers_wherever_the_server_puts_uid_and_size():
+    assert mail_source.uid_set([b"7", b"1", b"2", b"3", b"9", b"10"]) == "1:3,7,9:10"
+    data = mailbox().uid("FETCH", "1:2", mail_source.HEADERS)[1]
+    headers = mail_source.fetched_headers(data)
+    assert set(headers) == {b"1", b"2"} and all(size > 100 for size, _ in headers.values())
+
+
+class Run:  # pylint: disable=too-few-public-methods
+    """The runner's record of a job's keys, and its run of the mail source (fake Nextcloud)."""
+
+    def __init__(self):
+        self.seen: set[str] = set()
+
+    def __call__(self, server, **options):
+        from harvester import runner  # pylint: disable=import-outside-toplevel
+        from harvester.store import Job  # pylint: disable=import-outside-toplevel
+        from test_runner import FakeLibrary  # pylint: disable=import-outside-toplevel
+
+        job = Job(user="u", name="n", source="mail", target="/In", schedule="", options={"max_items": -1})
+        log: list = []
+        outcome = runner.run(
+            job,
+            source(server, **options),
+            FakeLibrary(),
+            self.seen.__contains__,
+            self.seen.add,
+            lambda seconds: None,
+            report=lambda level, text: log.append(text),
+        )
+        return outcome, log
+
+
+def test_messages_done_with_are_not_read_again():
+    run = Run()
+    first = mailbox()
+    outcome, _ = run(first, file_type="pdf")
+    assert outcome == "2 downloaded"
+    assert {key for key in run.seen if key.startswith(mail_source.DONE)} == {
+        f"{mail_source.DONE}INBOX:1700000000:{uid}" for uid in (1, 2, 3)
+    }, "the friend's photo is no pdf: its message is done with too"
+    again = mailbox()
+    outcome, _ = run(again, file_type="pdf")
+    assert outcome == "0 downloaded"
+    assert not [command for command in again.commands if command[:2] == ("UID", "FETCH")], "nothing fetched"
+
+
+def test_a_message_with_an_attachment_left_for_later_is_read_again():
+    run = Run()
+    run.seen.add("mail:<a1@shop.example>#1:Rechnung Oktober.pdf")
+    server = mailbox()
+    made = source(server, file_type="pdf")
+    made.remember = run.seen.add
+    items = made.items(run.seen.__contains__)
+    assert next(items).key.endswith("Rechnung November.pdf")  # message 3's, never taken: the run ended
+    items.close()
+    assert f"{mail_source.DONE}INBOX:1700000000:3" not in run.seen, "its attachment was not taken: read again"
+
+
+def test_a_message_larger_than_the_largest_file_is_skipped_unread():
+    run = Run()
+    server = mailbox()
+    server.messages[b"3"] += b"z" * 1_100_000
+    outcome, log = run(server, file_type="pdf", max_size=1)
+    assert outcome == "1 downloaded, 1 skipped (not of the job's file types, or too large)"
+    assert any(line.startswith("Skipped imap://") and "more than the largest file" in line for line in log)
+    assert ("UID", "FETCH", b"3", "(BODY.PEEK[])") not in server.commands

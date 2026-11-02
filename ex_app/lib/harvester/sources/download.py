@@ -14,7 +14,7 @@ from typing import BinaryIO
 import httpx
 
 from ..browser import allowed_url, challenge_in_html, reachable
-from .base import AuthError, ChallengeError, Option, SourceError, check_stop
+from .base import ChallengeError, Denied, Option, Refused, SourceError, check_stop
 
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) Nextcloud-Harvester"
 # Waits a site asks for, per file; and the longest one honoured.
@@ -23,6 +23,9 @@ MAX_WAIT = 900
 # Network failures (a dropped connection, a timeout) tried again per file, after growing pauses.
 RETRIES = 3
 RETRY_PAUSE = 10
+# The sizes' megabyte: 1000 × 1000 bytes, as the job's form and the progress log show sizes, so
+# that "4096 MB" is the 4.1 GB they show (not 4.3 GB of 1024 × 1024).
+MB = 1000 * 1000
 # What a file must start with, and its extension when the name has none. Audio and video are
 # told by their content type instead (their containers do not start alike).
 FILE_TYPES: dict[str, tuple[tuple[bytes, ...], str]] = {
@@ -49,7 +52,7 @@ DOWNLOAD_OPTIONS = {
         "Smaller answers are refused (an error page, say).",
         unit="bytes",
         minimum=0,
-        suggestions=("0", "10240", "102400", "1048576"),
+        suggestions=("0", "10000", "100000", "1000000"),
     ),
     "max_size": Option(
         "Largest file (MB)",
@@ -97,6 +100,11 @@ def problems(settings: dict) -> list[str]:
     except re.error as error:
         found.append(f"the wait pattern is not a regular expression ({error})")
     return found
+
+
+def largest(settings: dict) -> int:
+    """The job's largest file (max_size, in MB), in bytes."""
+    return int(settings.get("max_size", 4096) or 4096) * MB
 
 
 def extension(settings: dict) -> str:
@@ -171,8 +179,8 @@ def pause(response: Response, wait_pattern: str) -> float | None:
 def fetch(
     opener: Opener, url: str, dest: BinaryIO, settings: dict, sleep: Callable[[float], None]
 ) -> None:  # pylint: disable=too-many-arguments,too-many-positional-arguments
-    """Writes the file at url to dest, after the checks; raises SourceError (or AuthError,
-    ChallengeError) when the answer is not the file."""
+    """Writes the file at url to dest, after the checks; raises SourceError (or Denied,
+    Refused, ChallengeError) when the answer is not the file."""
     if not allowed_url(url):
         raise SourceError(f"{url} may not be opened")
     failures = 0
@@ -204,8 +212,10 @@ def _attempt(
         if wait is not None:
             sleep(wait)
             return False
+        # One file refused is that file's trouble (taken away, kept private): the run decides
+        # whether all of them are, which is the account's.
         if response.status in (401, 403):
-            raise AuthError(f"{url} answered {response.status}: the account may not download it")
+            raise Denied(f"{url} answered {response.status}: the account may not download it")
         if response.status >= 400:
             raise SourceError(f"{url} answered {response.status}")
         content_type = response.headers.get("content-type", "")
@@ -214,19 +224,19 @@ def _attempt(
             if kind:
                 raise ChallengeError(response.url, kind)
             raise SourceError(f"got a web page instead of a file for {url} (signed out?)")
-        largest = int(settings.get("max_size", 4096) or 4096) * 1024 * 1024
+        most = largest(settings)
         announced = response.headers.get("content-length", "")
-        if announced.isdigit() and int(announced) > largest:
-            raise SourceError(f"{url} is {int(announced) // 1048576} MB, more than the job's largest file")
+        if announced.isdigit() and int(announced) > most:
+            raise Refused(f"{url} is {int(announced) // MB} MB, more than the job's largest file")
         size = 0
         for chunk in response.chunks:
             # A stop ends the download at once; what was written is dropped with the run's file.
             check_stop()
             if size == 0 and not accepts(types, content_type, chunk):
-                raise SourceError(f"{url} is not of the job's file types ({', '.join(types)})")
+                raise Refused(f"{url} is not of the job's file types ({', '.join(types)})")
             size += len(chunk)
-            if size > largest:
-                raise SourceError(f"{url} is larger than the job's largest file")
+            if size > most:
+                raise Refused(f"{url} is larger than the job's largest file")
             dest.write(chunk)
         if size < int(settings.get("min_size", 0) or 0):
             raise SourceError(f"{url} gave only {size} bytes")

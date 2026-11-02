@@ -205,8 +205,11 @@ def test_an_older_database_gets_the_new_column(tmp_path):
     )
     old.commit()
     old.close()
-    job = Store(path).job(1)
+    store = Store(path)
+    job = store.job(1)
     assert job is not None and job.challenge_url is None
+    assert job.timezone == "UTC", "a job from before time zones keeps its schedule in UTC"
+    assert store.retag_from(1) is None
 
 
 class FakeFiles:
@@ -466,8 +469,7 @@ def test_the_store_keeps_the_files_and_the_executor_the_first_previous_tags(tmp_
     executor = executor_module.Executor(store)
     executor.retag(job.id or 0, ["first"])
     executor.retag(job.id or 0, ["second"])
-    pending = executor._retags  # pylint: disable=protected-access
-    assert pending == {job.id: ["first"]}, "the tags the files have are the first change's"
+    assert store.retag_from(job.id or 0) == ["first"], "the tags the files have are the first change's"
     store.delete(job.id or 0)
     assert not store.placed(job.id or 0), "deleted with its job"
 

@@ -343,11 +343,15 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
         "stop_at_seen": Option(
             "Stop at known files",
             1,
-            "Once the site went through completely, a listing of known files ends the run.",
+            "Once the site went through completely, a listing of known files ends the run. It assumes the "
+            "newest come first, or last: of the links to follow, the first and last are looked at, the new ones "
+            "taken from the end that has them. A listing over several pages is taken to start with its newest "
+            "page: for one whose first page is its oldest, turn this off.",
             kind="flag",
         ),
     }
     pause = 2.0
+    listing_options = ("recipe", "browser", "max_pages")
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -428,6 +432,34 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
                 yield self.item(link, text, number, values | groups)
             return not found or bool(stop_at_seen and not new)
 
+        # A followed link's listing; True when it holds files, all known.
+        def known(link: str, level: int, values: dict, outcome: dict) -> Generator[Item, None, bool]:
+            child = {"found": False, "new": False}
+            yield from walk(link, level + 1, values, child)
+            outcome["found"] |= child["found"]
+            outcome["new"] |= child["new"]
+            return child["found"] and not child["new"]
+
+        # The links to follow of a page; True when the listing ends there. While known files end
+        # the run, the first known one ends it only if the page's last is known too (the newest
+        # come first); else the page lists the newest last, and its links are followed from the
+        # end back to a known one, and on to the next page.
+        def children(links: list, level: int, values: dict, outcome: dict) -> Generator[Item, None, bool]:
+            for index, (link, _, groups) in enumerate(links):
+                if not (yield from known(link, level, values | groups, outcome)) or not stop_at_seen:
+                    continue
+                rest = links[index + 1 :]
+                if not rest:
+                    return True
+                last, _, last_groups = rest[-1]
+                if (yield from known(last, level, values | last_groups, outcome)):
+                    return True
+                for link_, _, groups_ in reversed(rest[:-1]):
+                    if (yield from known(link_, level, values | groups_, outcome)):
+                        break
+                return False
+            return False
+
         # Each listing reports whether it found files and whether any was new.
         def walk(url: str | None, level: int, values: dict, outcome: dict) -> Iterator[Item]:
             page = driver.open(url)
@@ -437,13 +469,8 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
                         links = matching(page, follow[level])
                         if not links:
                             blocked(page, level, number)
-                        for link, _, groups in links:
-                            child = {"found": False, "new": False}
-                            yield from walk(link, level + 1, values | groups, child)
-                            outcome["found"] |= child["found"]
-                            outcome["new"] |= child["new"]
-                            if stop_at_seen and child["found"] and not child["new"]:
-                                return
+                        if (yield from children(links, level, values, outcome)):
+                            return
                     elif (yield from files(page, number, values, outcome, level)):
                         return
                     after = self.recipe.get("next") or {}
@@ -459,13 +486,15 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
         yield from walk(self.recipe.get("start") or None, 0, {}, {"found": False, "new": False})
 
     def item(self, link: str, text: str, page: int, groups: dict) -> Item:
-        """The file of a link: its download URL and path from the link's values."""
+        """The file of a link: its download URL and path from the link's values (an item that
+        fails alone when they cannot be made)."""
         values = patterns.link_values(link, text, page) | groups
         try:
             url = patterns.render(str(self.settings["download_url"]), values)
             path = patterns.render_path(str(self.settings["path"]), values)
         except (KeyError, ValueError) as error:
-            raise SourceError(str(error).strip("'\"")) from error
+            problem = SourceError(str(error).strip("'\""))
+            return Item(key=link, path="", url=link, values=values, problem=problem)
         path = download.with_extension(path, self.settings)
         return Item(key=link, path=path, url=url, values=values)
 

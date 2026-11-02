@@ -9,12 +9,25 @@ from collections.abc import Callable
 from typing import BinaryIO
 
 from .patterns import render_tags
-from .sources import FULL_PASS, AuthError, ChallengeError, Option, Source, SourceError, Stopped
+from .sources import (
+    FULL_PASS,
+    REFUSED,
+    AuthError,
+    ChallengeError,
+    Denied,
+    Option,
+    Refused,
+    Source,
+    SourceError,
+    Stopped,
+)
 from .store import Job
 
 # Files that failed on their own before a run without any success gives up (the site, not the
 # files, is the trouble then).
 MAX_FAILURES = 5
+# Files of other items at the path an item's name gives: it takes the name with " (2)", " (3)", ...
+MAX_TWINS = 100
 
 # Options every job has, whatever its source.
 COMMON_OPTIONS = {
@@ -89,6 +102,30 @@ def size_text(size: int) -> str:
     return f"{value:.1f} GB"
 
 
+def numbered(path: str, number: int) -> str:
+    """The path with " (number)" before the file name's extension: a/Rechnung (2).pdf."""
+    folder, name = posixpath.split(path)
+    stem, extension = posixpath.splitext(name)
+    return posixpath.join(folder, f"{stem} ({number}){extension}")
+
+
+def free_path(job: Job, library: Library, item, owners: dict[int, str]) -> tuple[str, int | None]:
+    """Where the item's file goes, and the ID of the file there already (None: none). A file the
+    job saved for another item (two invoices of one day, links all called "Download") is not
+    this one's: it takes the next free name with " (2)", " (3)", ...; a file the job has no
+    record of (put there by hand, or before the job recorded its files) is adopted."""
+    path = posixpath.join(job.target, item.path)
+    file_id = library.find(path)
+    number = 1
+    while file_id is not None and owners.get(file_id, item.key) != item.key:
+        number += 1
+        if number > MAX_TWINS:
+            raise SourceError(f"{path} and {MAX_TWINS - 1} numbered names are taken by other files of the job")
+        path = numbered(posixpath.join(job.target, item.path), number)
+        file_id = library.find(path)
+    return path, file_id
+
+
 def place(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     job: Job,
     source: Source,
@@ -97,14 +134,17 @@ def place(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     pause: Callable[[], None],
     report: Report,
     record: Callable[[Placed], None] = lambda placed: None,
+    owners: dict[int, str] | None = None,
 ) -> bool:
     """Puts the item's file into the job's folder (after the pause) and tags it; False when it
     was there already (downloaded by hand or by an earlier job: kept, tagged and not downloaded
-    again). record keeps which file it is and its tags, for a later change of the job's tags."""
+    again). record keeps which file it is and its tags, for a later change of the job's tags;
+    owners are the files the job saved, by ID, with their items' keys (free_path)."""
+    if item.problem is not None:
+        raise item.problem
     if not item.path.strip("/"):
         raise SourceError(f"the file name for {item.url} came out empty (check the job's File name)")
-    path = posixpath.join(job.target, item.path)
-    file_id = library.find(path)
+    path, file_id = free_path(job, library, item, owners or {})
     fetched = file_id is None
     if file_id is None:
         pause()
@@ -170,7 +210,8 @@ def retag_earlier(  # pylint: disable=too-many-arguments
         for item in source.items(lambda key: False):
             if stopped():
                 return tagged, False
-            if not is_earlier(item.key):
+            # An item whose name cannot be made was never saved.
+            if item.problem is not None or not is_earlier(item.key):
                 continue
             file_id = library.find(posixpath.join(job.target, item.path))
             if file_id is None:
@@ -196,23 +237,28 @@ def retag_earlier(  # pylint: disable=too-many-arguments
 
 @dataclasses.dataclass
 class Tally:
-    """What a run did: files downloaded, found already there, and the errors of those that failed."""
+    """What a run did: files downloaded, found already there, skipped (refused by type or size),
+    and the errors of those that failed (denied: how many of them the site refused, 401 or 403)."""
 
     downloaded: int = 0
     adopted: int = 0
+    skipped: int = 0
     failures: list[str] = dataclasses.field(default_factory=list)
+    denied: int = 0
 
     def sentence(self) -> str:
         """The run's outcome, as the jobs' list shows it."""
         message = f"{self.downloaded} downloaded"
         if self.adopted:
             message += f", {self.adopted} already there"
+        if self.skipped:
+            message += f", {self.skipped} skipped (not of the job's file types, or too large)"
         if self.failures:
             message += f", {len(self.failures)} failed (tried again next run): {self.failures[0]}"
         return message
 
 
-def run(  # pylint: disable=too-many-arguments,too-many-locals  # the run's parts, each given by the executor
+def run(  # pylint: disable=too-many-arguments,too-many-locals,too-many-branches,too-many-statements  # the run's parts, each given by the executor
     job: Job,
     source: Source,
     library: Library,
@@ -224,15 +270,27 @@ def run(  # pylint: disable=too-many-arguments,too-many-locals  # the run's part
     report: Report = lambda level, text: None,
     stopped: Callable[[], bool] = lambda: False,
     record: Callable[[Placed], None] = lambda placed: None,
+    owners: dict[int, str] | None = None,
 ) -> str:
     """Downloads up to max_items new items (and stops at until, a time.monotonic(), or a
     function giving it) and returns what was done, in a sentence; report hears of each step
     (the page's progress log). stopped is asked before each file: it may wait while the run is
-    paused, and True ends the run there (the rest comes next run, as at the limits)."""
+    paused, and True ends the run there (the rest comes next run, as at the limits). owners are
+    the files the job saved before, by ID, with their items' keys."""
     limit = int(job.options.get("max_items", COMMON_OPTIONS["max_items"].default))
     tally = Tally()
     complete = True
     halted = False
+    # The files of this run count too: two items of one name in a run get two files.
+    owners = dict(owners or {})
+
+    def keep(placed: Placed) -> None:
+        if placed.file_id is not None:
+            owners[placed.file_id] = placed.key
+        record(placed)
+
+    source.report = report
+    source.remember = mark_seen
     report("info", "Looking for new files")
     try:
         for item in source.items(seen):
@@ -253,17 +311,27 @@ def run(  # pylint: disable=too-many-arguments,too-many-locals  # the run's part
             # A pause between two downloads, not before the first.
             pause = (lambda: sleep(source.pause)) if tally.downloaded else (lambda: None)
             try:
-                if place(job, source, library, item, pause, report, record):
+                if place(job, source, library, item, pause, report, keep, owners):
                     tally.downloaded += 1
                 else:
                     tally.adopted += 1
             except (AuthError, ChallengeError):
                 raise  # the whole site refuses: no point in the next files
+            except Refused as error:
+                # Not of the job's types or too large: the same next run, so it is not tried again
+                # (until the job's types or sizes change: REFUSED marks it for that).
+                tally.skipped += 1
+                report("info", f"Skipped {item.path or item.url}: {error}")
+                mark_seen(item.key)
+                mark_seen(REFUSED + item.key)
+                continue
             except SourceError as error:
-                # One file the site will not give (an error page, the wrong type): the others go on,
-                # and it is tried again next run, not marked as seen.
+                # One file the site will not give (an error page, a network failure, a name that
+                # cannot be made): the others go on, and it is tried again next run, not marked
+                # as seen.
                 tally.failures.append(str(error))
-                report("error", f"{item.path}: {error}")
+                tally.denied += isinstance(error, Denied)
+                report("error", f"{item.path or item.url}: {error}")
                 complete = False
                 if len(tally.failures) >= MAX_FAILURES and not tally.downloaded:
                     break
@@ -275,8 +343,12 @@ def run(  # pylint: disable=too-many-arguments,too-many-locals  # the run's part
         report("info", "Stopped: the rest comes next run")
         halted = True
         complete = False
-    if tally.failures and not (tally.downloaded or tally.adopted):
+    if tally.failures and not (tally.downloaded or tally.adopted or tally.skipped):
         more = f" (and {len(tally.failures) - 1} more)" if len(tally.failures) > 1 else ""
+        # Every file refused (two at least: one alone may be a file taken away): the account's
+        # sign-in, not the files.
+        if tally.denied == len(tally.failures) >= 2:
+            raise AuthError(tally.failures[0] + more)
         raise SourceError(tally.failures[0] + more)
     if complete:
         # The whole site is known now: later runs may stop at known files (stop_at_seen).

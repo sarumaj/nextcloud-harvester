@@ -49,7 +49,7 @@
       "title": "Schedule",
       "default": "30 4 * * *",
       "check": "^[0-9*/,-]+( [0-9A-Za-z*/,-]+){4}$",
-      "description": "When it runs (cron, UTC): minute, hour, day, month, weekday. The job's form says it in words.",
+      "description": "When it runs (cron, in your time zone): minute, hour, day, month, weekday. The job's form says it in words.",
       "suggestions": [
         {
           "value": "30 4 * * *",

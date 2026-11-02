@@ -13,6 +13,12 @@ import httpx
 
 from .. import cookies as cookie_jar
 
+# The beginning of the keys a job records that are no items: a complete pass, a source's own marks
+# (forgotten when the job's listing changes) and refused files (forgotten when its types or sizes
+# do).
+MARK = "harvester:"
+REFUSED = MARK + "refused:"
+
 
 class Stopped(Exception):
     """The run was stopped by its user during a wait (the sources' sleep raises it): it ends
@@ -93,6 +99,17 @@ class AuthError(SourceError):
     """The credentials were refused: running again will not help until they change."""
 
 
+class Denied(SourceError):
+    """One file's download was refused (401, 403): a file the site took away or keeps to itself
+    (an episode removed from its storage), tried again next run. Only when every file of a run
+    is refused is it the account's trouble (the runner's AuthError then)."""
+
+
+class Refused(SourceError):
+    """The file is not of the job's types, or larger than its largest file: the same next run, so
+    it is skipped for good (until the job's types or sizes change), not tried again."""
+
+
 # What the account's sign-ins without a browser are: HTTP Basic and cookies, the page's words.
 ACCOUNT_HELP = {
     "username": ("User name", "For sites that ask with the browser's own sign-in box (HTTP Basic)."),
@@ -143,6 +160,9 @@ class Item:
     url: str
     # What the link gives (its pattern's groups, its text, ...): the job's tags are made of them.
     values: dict = field(default_factory=dict, hash=False)
+    # Why the item cannot be had (its file name cannot be made, it is too large): raised in its
+    # place, so that it fails or is skipped alone, not the whole listing.
+    problem: SourceError | None = field(default=None, hash=False, compare=False)
 
 
 @dataclass(frozen=True)
@@ -189,6 +209,10 @@ class Source(abc.ABC):
     options: ClassVar[dict[str, Option]] = {}
     # Seconds between two downloads, so as not to hammer the site.
     pause: ClassVar[float] = 0.0
+    # The options that change what is listed: a change of one forgets the job's marks of a
+    # complete pass (and the source's own, MARK), its other options (file names, files per
+    # run) do not.
+    listing_options: ClassVar[tuple[str, ...]] = ()
 
     def __init__(self, options: dict, credentials: dict[str, str], client: httpx.Client | None):
         self.settings = {key: options.get(key, option.default) for key, option in self.options.items()}
@@ -197,6 +221,10 @@ class Source(abc.ABC):
         # Through the home connection (the job's option "home", when the app has one): the
         # executor gives the client the proxy; a browser the source starts takes it too.
         self.home = False
+        # The run's progress log (level, text) and its record of what is done (a key a later
+        # listing asks seen() about, e.g. a whole message handled); the runner sets both.
+        self.report: Callable[[str, str], None] = lambda level, text: None
+        self.remember: Callable[[str], None] = lambda key: None
 
     @abc.abstractmethod
     def items(self, seen: Callable[[str], bool]) -> Iterator[Item]:
