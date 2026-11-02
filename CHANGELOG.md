@@ -22,6 +22,14 @@
   into the job's *Cookies* field (saved with the form, or stored after a confirmation in the
   job's browser); *Use for this job* keeps the session for the job without ending the browser.
   A cookies.txt keeps the HttpOnly mark when read and written.
+- **The site changed:** a website job's runs keep what each level of the recipe found; a level
+  that found links before and finds none, or whose links no longer match its pattern, ends the
+  run *Changed* with the level, its selector and a picture of its page, and its person is told
+  once. *Test the recipe* from a changed job's row runs the recipe's test as a job's turn
+  (nothing downloaded), and the option *Test the recipe weekly* does so on Sundays.
+- **Recipes as files:** *Export recipe* in a job's form downloads its recipe and settings
+  (without the account, session or folder); *Import a recipe* on the *New job* page checks such a
+  file and opens the form filled in; *Save as template* keeps it as a template of one's own.
 
 ## 0.10.0 - 2026-11-02
 

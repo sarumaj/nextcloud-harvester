@@ -189,6 +189,35 @@ the app's browser or taken from a template, not by code.
   with the job's Save; in the job's browser after the person confirms (a new account forgets
   the kept session). **Use for this job** (the job's browser) keeps the browser's session for
   the job's next run, as Done does, but the browser stays open and no run starts.
+- **The site changed** (`ex_app/lib/harvester/watch.py`): each run of a website job counts, per
+  level of its recipe (the listing, each level of links to follow, the file links), the pages read,
+  the links its selector found and those its pattern matched, and keeps that summary (the last
+  five good runs', and five of the others). When a level that found links in the good runs before
+  (with the same selector) finds none now, or its links no longer match its pattern, the run ends
+  **Changed** (neither OK nor failed): the job list says which level and how many it found before
+  (*level 1 found nothing (it found 12 before)*), the progress log adds its selector and the first
+  page without a match, with **Show what the browser saw** of that page, and the person is told
+  once, until a run is OK again. A listing that never found anything is no change, nor are a page
+  asking for a person, a refused sign-in or an on-demand job's fetch (another page). Another
+  recipe forgets the summaries. A changed job's row offers **Test the recipe**
+  (`POST /api/jobs/<id>/test`): the recipe's test (`Site.survey`, nothing downloaded) as a job's
+  turn, in the queue as a run (a runner, its site, a browser), its pages and problems in the
+  progress log, judged as a run; a test that finds the site as before ends the warning. A test
+  is no run: the schedule counts from the last run. **Test the recipe weekly** (a website job's
+  option, off by default) tests it so on Sundays, at an hour of the job's own (counted from when
+  it is turned on); a run asked for meanwhile takes the test's place.
+- **Recipes as files** (`ex_app/lib/harvester/recipe_file.py`): **Export recipe** in a job's form
+  downloads `<name>.harvester.json`: `{"format": "harvester-recipe", "version": 1}` with the
+  job's name, source, schedule (`""`: on demand), one-time, tag templates and options (a website's
+  recipe as an object), checked as *Save* checks the form. Never in it: the account (passwords,
+  tokens, cookies, rclone's configuration; a step that fills in the account loses any value), the
+  kept session, the folder and the time zone. **Import a recipe** on the *New job* page reads such
+  a file (256 KB at most): its schema (every field known and of its kind and size, the format's
+  version, a known source, only the source's options), then the checks a saved job passes; the
+  form opens filled in, without a folder, to choose the folder and the account; nothing is saved
+  until *Save*. Nothing in a file runs. **Save as template** keeps the form's job as such a file,
+  the person's own (50 at most, in the app's database): *Your templates* on the *New job* page
+  lists them, each to use (checked as an import) or **Remove**.
 - **Sessions and challenges:** a job keeps its browser session (cookies, local storage;
   encrypted in Nextcloud, like its account) and replays the sign-in only when the listing shows
   a login form. When a site asks for a person instead (reCAPTCHA, hCaptcha, Cloudflare, "verify
@@ -290,8 +319,9 @@ the app's browser or taken from a template, not by code.
   through the proxy starts its log with it. Both ask Cloudflare's `cdn-cgi/trace` through the
   same connection the pages and downloads use, so it is the proxy's address only when the proxy
   is really used.
-- **Notifications:** a job that needs a person, or fails, notifies its user; the same failure
-  again on the next runs does not. A one-time job tells what it did as it is deleted.
+- **Notifications:** a job that needs a person, fails, or finds its site changed notifies its
+  user; the same failure (or change) again on the next runs does not. A one-time job tells what
+  it did as it is deleted.
 - **Templates** (`ex_app/lib/harvester/presets/*.json`), jobs with a few parameters, one card
   each on the *New job* page. A parameter may suggest values (`suggestions`: values, or
   `{value, label}` shown by the label, each passing its `check`), offered as buttons on the card:
