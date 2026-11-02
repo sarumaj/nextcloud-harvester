@@ -284,6 +284,17 @@
 					autocomplete: name === 'username' ? 'username' : 'off',
 				})
 			container.append(field(title, inputs[name], help))
+			if (source.name === 'remote' && name === 'config') {
+				// rclone's own questions instead of a configuration written elsewhere and pasted.
+				const button = el('button', {
+					type: 'button',
+					text: 'Set up with rclone',
+					onclick: () => {
+						if (!button.nextElementSibling || !button.nextElementSibling.classList.contains('harvester-wizard')) button.after(rcloneWizard(inputs[name]))
+					},
+				})
+				container.append(button)
+			}
 		}
 		container.append(el('button', {
 			text: 'Save account',
@@ -294,6 +305,133 @@
 				renderCredentials(container, job, source)
 			},
 		}))
+	}
+
+	// The rclone wizard: the app runs `rclone config` with a configuration of its own and shows
+	// rclone's questions one at a time (no terminal). The finished remote, checked as a run checks
+	// it, goes into the account's field to be reviewed and saved with Save account.
+	let wizardLists = 0
+	function rcloneWizard(textarea) {
+		const panel = el('div', { class: 'harvester-card harvester-wizard', 'aria-live': 'polite' })
+		let session = null
+		const error = el('p', { class: 'harvester-error' })
+		const close = () => {
+			if (session) api('DELETE', `/rclone/wizard/${session}`).catch(() => {})
+			session = null
+			panel.remove()
+		}
+		const cancel = el('button', { type: 'button', text: 'Cancel', onclick: close })
+		async function step(method, path, body) {
+			error.textContent = ''
+			try {
+				const view = await api(method, path, body)
+				session = view.session
+				if (view.done) showDone(view)
+				else showQuestion(view)
+			} catch (e) {
+				error.textContent = e.message
+			}
+		}
+
+		async function chooseType() {
+			const select = el('select', {})
+			panel.replaceChildren(el('h3', { text: 'Set up with rclone' }),
+				el('p', { class: 'harvester-muted', text: 'rclone asks for the remote’s settings one at a time, as “rclone config” does.' }),
+				field('Kind of remote', select), error,
+				el('button', { type: 'button', class: 'primary', text: 'Start', onclick: () => step('POST', '/rclone/wizard', { type: select.value }) }),
+				cancel)
+			try {
+				for (const kind of await api('GET', '/rclone/types')) {
+					select.append(el('option', { value: kind.name, text: kind.description === kind.name ? kind.name : `${kind.description} (${kind.name})` }))
+				}
+				select.value = 'webdav'
+			} catch (e) {
+				error.textContent = e.message
+			}
+		}
+
+		function showQuestion(view) {
+			const question = view.question
+			let input
+			let suggestions = ''
+			if (question.exclusive && question.examples.length) {
+				input = el('select', {}, ...question.examples.map((example) =>
+					el('option', { value: example.value, text: example.help ? `${example.value || '(empty)'}: ${example.help.split('\n')[0]}` : example.value })))
+			} else if (question.type === 'bool') {
+				input = el('select', {}, el('option', { value: 'true', text: 'Yes' }), el('option', { value: 'false', text: 'No' }))
+			} else if (question.name === 'config_token') {
+				input = el('textarea', { rows: '4', class: 'harvester-recipe', autocomplete: 'off', spellcheck: 'false' })
+			} else {
+				input = el('input', { type: question.password ? 'password' : 'text', autocomplete: question.password ? 'new-password' : 'off', spellcheck: 'false' })
+				if (question.examples.length) {
+					// Suggestions rclone knows; any other value may be typed.
+					wizardLists += 1
+					suggestions = el('datalist', { id: `harvester-wizard-list-${wizardLists}` },
+						...question.examples.map((example) => el('option', { value: example.value, label: example.help.split('\n')[0] })))
+					input.setAttribute('list', suggestions.id)
+				}
+			}
+			input.value = view.value
+			error.textContent = view.error || ''
+			const back = el('button', {
+				type: 'button',
+				text: 'Back',
+				// Before the first question: the choice of the remote's kind, with a new wizard.
+				onclick: () => {
+					if (!view.first) step('POST', `/rclone/wizard/${session}/back`)
+					else {
+						api('DELETE', `/rclone/wizard/${session}`).catch(() => {})
+						session = null
+						chooseType()
+					}
+				},
+			})
+			const form = el('form', {
+				onsubmit: (event) => {
+					event.preventDefault()
+					step('POST', `/rclone/wizard/${session}/answer`, { state: view.state, result: input.value })
+				},
+			},
+			field(question.name + (question.required ? ' (required)' : ''), input),
+			suggestions,
+			el('p', { class: 'harvester-wizard-help', text: question.help }),
+			view.authorize
+				? el('div', { class: 'harvester-wizard-authorize' },
+					el('p', { text: 'Sign-in happens in a browser, which the app does not open for you. On a computer with a web browser and rclone (the same version is best), run this, sign in, and paste everything it prints here:' }),
+					el('pre', { class: 'harvester-code', text: view.authorize }))
+				: '',
+			error,
+			el('button', { type: 'submit', class: 'primary', text: 'Next' }), back, cancel)
+			panel.replaceChildren(el('h3', { text: `Set up with rclone: ${view.type}` }), form)
+			input.focus()
+		}
+
+		function showDone(view) {
+			const back = el('button', { type: 'button', text: 'Back', onclick: () => step('POST', `/rclone/wizard/${session}/back`) })
+			if (view.error) {
+				panel.replaceChildren(el('h3', { text: 'Set up with rclone' }),
+					el('p', { class: 'harvester-error', text: view.error }), error, back, cancel)
+				return
+			}
+			panel.replaceChildren(el('h3', { text: 'Set up with rclone: done' }),
+				el('p', { text: 'The configuration rclone wrote (passwords obscured, as rclone keeps them). Use it, then save it with Save account.' }),
+				el('pre', { class: 'harvester-code harvester-wizard-result', text: view.config }),
+				error,
+				el('button', {
+					type: 'button',
+					class: 'primary',
+					text: 'Use this configuration',
+					onclick: () => {
+						textarea.value = view.config
+						close()
+						textarea.focus()
+					},
+				}),
+				back, cancel)
+		}
+
+		chooseType()
+		return panel
 	}
 
 	// One picked level in the recorder's panel: its pattern (editable), what it matches on the
@@ -959,6 +1097,10 @@
 		#harvester form > button, #harvester .harvester-card button { margin: 8px 8px 0 0; }
 		#harvester .harvester-error { color: var(--color-error-text, var(--color-error)); }
 		#harvester .harvester-credentials { margin-top: 24px; max-width: 760px; }
+		#harvester .harvester-wizard h3 { margin-top: 0; }
+		#harvester .harvester-wizard-help { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--color-text-maxcontrast); }
+		#harvester .harvester-wizard pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px 12px; background: var(--color-background-dark); border-radius: var(--border-radius); }
+		#harvester .harvester-wizard button { margin: 8px 8px 0 0; }
 		#harvester .harvester-kinds { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-bottom: 8px; }
 		#harvester .harvester-kinds .harvester-card { margin: 0; max-width: none; display: flex; flex-direction: column; }
 		#harvester .harvester-kinds .harvester-card p { flex: 1; }

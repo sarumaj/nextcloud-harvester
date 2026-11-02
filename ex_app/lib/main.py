@@ -7,7 +7,7 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlparse
-from typing import Annotated
+from typing import Annotated, Any
 
 from croniter import croniter
 from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
@@ -16,6 +16,7 @@ from nc_py_api.ex_app import AppAPIAuthMiddleware, anc_app, persistent_storage, 
 from pydantic import BaseModel, Field, field_validator
 
 from harvester import browser, schedule, settings
+from harvester.rclone_wizard import WizardError, Wizards, remote_types
 from harvester.browser.recorder import Recorder
 from harvester.executor import RUNNERS, Executor, credential_key, load_session, save_session, session_key
 from harvester.presets import PRESETS, make_job
@@ -26,6 +27,8 @@ from harvester.store import Job, Store
 LOGGER = logging.getLogger("harvester")
 
 STATE: dict = {}
+# The job form's rclone wizards (rclone_wizard.py), in memory: one ends with the app.
+WIZARDS = Wizards()
 # A recording ends after this many seconds without a message from the page.
 RECORDER_IDLE = 900
 
@@ -38,6 +41,7 @@ async def lifespan(app: FastAPI):
     STATE["executor"].start()
     set_handlers(app, enabled_handler)
     yield
+    WIZARDS.close()
 
 
 APP = FastAPI(lifespan=lifespan)
@@ -295,6 +299,58 @@ async def set_credentials(
     for name in SOURCES[job.source].credentials:
         if body.get(name):
             await nc.preferences_ex.set_value(credential_key(job, name), body[name], sensitive=True)
+    return {}
+
+
+class WizardStart(BaseModel):
+    """The remote's type the wizard configures."""
+
+    type: str = Field(max_length=40)
+
+
+class WizardAnswer(BaseModel):
+    """The answer to the question the page shows (its state, as rclone gave it)."""
+
+    state: str = Field(max_length=400)
+    result: str = Field("", max_length=65_536)
+
+
+async def wizard_step(action, *arguments) -> Any:
+    """A wizard's step in a thread (rclone takes a moment), its refusal as the HTTP error it is."""
+    try:
+        return await asyncio.to_thread(action, *arguments)
+    except WizardError as error:
+        raise HTTPException(error.status, str(error)) from error
+
+
+@APP.get("/api/rclone/types")
+async def rclone_types(_nc: NC) -> list[dict]:
+    """The remote types the rclone wizard offers (those the remote source allows)."""
+    return await wizard_step(remote_types)
+
+
+@APP.post("/api/rclone/wizard")
+async def start_wizard(body: WizardStart, nc: NC) -> dict:
+    """Starts the user's rclone wizard for a remote of the type: its first question."""
+    return await wizard_step(WIZARDS.start, await nc.user, body.type)
+
+
+@APP.post("/api/rclone/wizard/{session}/answer")
+async def answer_wizard(session: str, body: WizardAnswer, nc: NC) -> dict:
+    """Answers the user's wizard's question: the next one, or the finished configuration."""
+    return await wizard_step(WIZARDS.answer, await nc.user, session, body.state, body.result)
+
+
+@APP.post("/api/rclone/wizard/{session}/back")
+async def back_wizard(session: str, nc: NC) -> dict:
+    """Takes the user's wizard one question back."""
+    return await wizard_step(WIZARDS.back, await nc.user, session)
+
+
+@APP.delete("/api/rclone/wizard/{session}")
+async def cancel_wizard(session: str, nc: NC) -> dict:
+    """Ends the user's wizard and removes its configuration."""
+    WIZARDS.cancel(await nc.user, session)
     return {}
 
 
