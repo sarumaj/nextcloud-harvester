@@ -169,21 +169,21 @@ the app's browser or taken from a template, not by code.
   through: one stopped, failed or cut short by a restart of the app comes again (queued when
   the app starts, else at the job's next turn, before its run). A **Run now** asked for before
   the tags changed still runs, after the pass.
-- **Repeat runs:** a job remembers what it downloaded; a file already in the folder is tagged
-  and not downloaded again. At most `max_items` files per run (`-1`: no limit), the rest comes
-  next time; a run ends after two hours in any case. One file that fails does not stop the
-  others (it is tried again next run), five failures without a success do; a file whose name
-  cannot be made (`{year}` of a release without a date) fails alone, naming the missing value.
-  Two files of one name (two invoices of one day, links all called "Download") get two names:
-  a name taken by a file the job saved for another item gets "(2)", "(3)", ... after a space
-  before the extension (`Rechnung (2).pdf`); a file the job has no record of (put there by hand) is adopted. Once a run went
-  through the whole site, a listing of known files ends the next runs (*Stop at known files*):
-  of a level's links to follow, the first known one ends it when the level's last is known too;
-  when the last has new files the level lists its newest last, and is followed from the end back
-  to a known one. A listing over several pages is taken to start with its newest page: for one
-  whose first page is its oldest, turn the option off. Only a change of what is listed (the
-  source, a recipe, an address, a folder, patterns, the pages or entries read) starts over with
-  a complete pass; files per run, file names, tags or the schedule do not.
+- **Repeat runs:** a job remembers what it downloaded; a file already in the folder is tagged and
+  not downloaded again. At most `max_items` files per run (`-1`: no limit), the rest comes next
+  time; a run ends after two hours in any case. One file that fails does not stop the others (it is
+  tried again next run), five failures without a success do; a file whose name cannot be made
+  (`{year}` of a release without a date) fails alone, naming the missing value. Two files of one
+  name (two invoices of one day, links all called "Download") get two names: a name taken by a file
+  the job saved for another item gets "(2)", "(3)", ... after a space before the extension
+  (`Rechnung (2).pdf`); a file the job has no record of (put there by hand) is adopted. Once a run
+  went through the whole site, a listing of known files ends the next runs (*Stop at known files*):
+  of a level's links to follow, the first known one ends it when the level's last is known too; when
+  the last has new files the level lists its newest last, and is followed from the end back to a
+  known one. A listing over several pages is taken to start with its newest page: for one whose
+  first page is its oldest, turn the option off. Only a change of what is listed (the source, a
+  recipe, an address, a folder, patterns, the pages or entries read) starts over with a complete
+  pass; files per run, file names, tags or the schedule do not.
 - **Pause and stop:** while a job runs, **Run now** becomes **Pause** (then **Resume**) and
   **Stop**. Both act before the next file: a paused run waits (its time does not count against
   the two hours; after six hours unresumed it stops), a stopped one ends and keeps what it saved,
