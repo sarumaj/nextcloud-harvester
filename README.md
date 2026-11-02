@@ -141,6 +141,32 @@ the app's browser or taken from a template, not by code.
   its switch **optional**; a click whose text reads like a consent button (*Accept*, *OK*,
   *Alle akzeptieren*, *Zgadzam się*, …) gets the hint **make optional?**, never more.
   **Test the recipe** lists the steps it went on without apart from the problems.
+- **What the recorder records:** clicks, fills (one per field: a field Enter submitted is not
+  filled again, and the click on the submit button the browser makes for Enter is none), a
+  list's choice (`{"action": "select", "value": …, "label": …}`, replayed by its value, else by
+  the text it shows), a checkbox's label as one click (not also the click the browser passes on
+  to the box), text edited in place (`contenteditable`, a fill), and the keys that work a list of
+  suggestions in a combobox or autocomplete (↑, ↓, Escape, Tab, Enter: steps "press"); Enter in a
+  field is a step too, other keys are what they type. A file to upload is refused with a message
+  (a job has none). A click on an element that showed only under the mouse (a menu opened by
+  `:hover` or by a script) comes after a step `{"action": "hover"}` over the menu. Elements in
+  open shadow roots are recorded with a selector through their host (`#box #user`, which
+  Playwright follows into the root); a click in a closed one is recorded on its host, and the
+  recorder says so. A password is never recorded: a field that was ever of type password, or has
+  `autocomplete="current-password"` or `new-password`, stays one when a "show password" switch
+  makes it text, and its step fills in the account's. A one-time code is recognised by its name
+  or `autocomplete="one-time-code"`, and after a password also as a field named `code`, `otc`
+  (Microsoft's) or `challenge` (Nextcloud's), or one for 6 to 8 digits.
+- **Popups:** a tab the page opens while recording (a "Sign in with …" window) is shown, and is a
+  step `{"action": "popup"}`: the steps after it act in that tab. When it closes itself, the page
+  that opened it is shown again, a step `{"action": "opener"}`. A job waits for the popup (the
+  step's time) and acts in it, and goes back once it closed.
+- **Waits:** a click or a press after which the page went to another address keeps it as a
+  pattern, numbers and tokens left open and any query
+  (`"wait": {"url": "^https://shop\\.example/orders/\\d+(?:[?#].*)?$", "selector": "#next"}`),
+  and the next step's element. The replay waits for both (the step's time), then a short while
+  for the network, instead of up to 15 seconds for a page that never goes quiet. A step without
+  `wait` waits for the network as before.
 - **Values:** the download URL (`{url}/download`), the file's name
   (`{year}/iX {year}-{issue:02d}`) and the tags (`{year}`) are templates of the link's values:
   the pattern's groups and `url`, `text`, `page`, `host`, `filename`, `stem`, `ext`.
@@ -150,8 +176,17 @@ the app's browser or taken from a template, not by code.
   a pattern with named groups for each (`patterns.propose`), outlines what it matches in the
   page (solid) and what it leaves out (dashed), lists examples with their values, and proposes
   a file name and tags. Edit a pattern and the outlines follow. Passwords are never recorded:
-  the job fills in its account. **Back**, **Forward**, **Reload** and the address field's
-  **Go** are buttons (Tab and Enter reach them), here and in **Continue in the browser**. They
+  the job fills in its account. The **Steps** list edits the steps: **↑** and **↓** move one,
+  **✕** removes one, a fill fills in a value of its own (edited there), the account's user name,
+  password or the current one-time code, a list's choice can be edited, and a step's wait dropped
+  (**wait for the network instead**). A recipe with steps opens in **Browse**; **Record steps**
+  then asks where the new ones go: after a step (the last, unless chosen), keeping the later ones
+  (**Append**), instead of them (**Replace from there**), or instead of all (**Replace all**).
+  A fill with a value of its own in what looks like a password's field (`#pw`, `[type=password]`,
+  a name with `pass` or `pwd`), from an earlier recording, is pointed out in the job's form, in
+  the recorder and in the app's log when the job is saved, by its step and field, never its
+  value. **Back**, **Forward**, **Reload** and the address field's **Go** are buttons (Tab and
+  Enter reach them), here and in **Continue in the browser**. They
   are steps only while recording: an address typed, Back and Forward become a step "goto" to the
   page arrived at (a job's browser has no history to go back in), Reload none; browsing and
   picking record nothing. Every pick (each level of links to follow, the file links, the next
@@ -183,8 +218,10 @@ the app's browser or taken from a template, not by code.
   A change is the browser's at once. The app checks each: a name and value without control
   characters (nor `;`, `,`; a name without `=` or spaces), name and value 4 kB at most, a path
   from `/`, an expiry at most 400 days ahead, SameSite None only with Secure, and a domain of the
-  sites the browser is at or has cookies of (one of them, a parent short of a top-level domain,
-  or a subdomain): no cookies for other sites. **Into the account** writes the shown cookies as a
+  sites the browser is at or has cookies of (one of them, a parent that is no public suffix, or a
+  subdomain): no cookies for other sites. The public suffixes (`com`, `co.uk`, `github.io`) are
+  the list of the `publicsuffixlist` package, pinned in `requirements.txt` and never fetched.
+  **Into the account** writes the shown cookies as a
   cookies.txt into the job's *Cookies* account field: in the recorder the form's field, stored
   with the job's Save; in the job's browser after the person confirms (a new account forgets
   the kept session). **Use for this job** (the job's browser) keeps the browser's session for

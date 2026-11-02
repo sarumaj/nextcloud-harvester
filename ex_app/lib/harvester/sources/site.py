@@ -39,8 +39,12 @@ STEP_TIMEOUT = 30_000
 # How long an optional step waits for its frame and element together (ms): a banner that shows
 # comes at once with its page, and the run should not wait half a minute for one that does not.
 OPTIONAL_TIMEOUT = 5_000
-# How often a step looks again for the frame it acts in while the page builds it (ms).
+# How often a step looks again for the frame it acts in while the page builds it (ms), or for
+# the popup it goes on in.
 FRAME_POLL = 250
+# How long the network may take to go quiet after a step that waited for its address and element
+# (ms): they are there already, the rest is what a script still loads.
+SHORT_IDLE = 2_000
 LOCK_TIMEOUT = 1800
 # What the browser showed when a step failed or a page asked for a person: a JPEG of the window
 # at this quality, again at the lower one when larger than SHOT_BYTES (else none is kept).
@@ -237,13 +241,17 @@ class BrowserDriver(Driver):
             if not self.main.query_selector("input[type=password]:visible"):
                 last = max((number for number, step in todo if step.get("action") != "scroll"), default=0)
                 todo = todo[last:]
-        for number, step in todo:
+        tabs = Tabs(self.main)
+        for index, (number, step) in enumerate(todo):
             try:
-                replay(self.main, step, secrets)
+                # A popup comes from the step before the one that goes on in it: the tabs open then.
+                if index + 1 < len(todo) and todo[index + 1][1].get("action") == "popup":
+                    tabs.opening()
+                tabs.act(step, secrets)
             except Stopped:
                 # The run or the recipe's test was stopped during the step: no failure of it.
                 raise
-            except (PlaywrightError, FrameMissing) as error:
+            except (PlaywrightError, FrameMissing, PopupMissing) as error:
                 if not step.get("optional"):
                     self._failed(number, step, error)
                 # Best effort: no picture, no failure; the run says what it went on without.
@@ -423,11 +431,12 @@ def scroll_to_load(page, rounds: int) -> None:
             return
 
 
-def settle(page) -> None:
-    """Waits for what a step started: a new page, or the requests of a script."""
+def settle(page, idle: float = 15_000) -> None:
+    """Waits for what a step started: a new page, or the requests of a script (the network quiet,
+    idle ms at most)."""
     page.wait_for_timeout(500)
     try:
-        page.wait_for_load_state("networkidle", timeout=15_000)
+        page.wait_for_load_state("networkidle", timeout=idle)
     except Exception:  # pylint: disable=broad-exception-caught
         pass  # a page that never goes quiet (ads, polling) is used as it is
 
@@ -448,6 +457,10 @@ def filled(step: dict, secrets: dict[str, str]) -> str:
 
 class FrameMissing(SourceError):
     """The frame a step acts in is not on the page."""
+
+
+class PopupMissing(SourceError):
+    """The popup a step goes on in did not open, or the one it goes back from did not close."""
 
 
 def short_error(error: Exception) -> str:
@@ -508,6 +521,13 @@ def replay(page, step: dict, secrets: dict[str, str]) -> None:
     elif action == "fill":
         target.fill(step["selector"], filled(step, secrets), **wait)
         return
+    elif action == "select":
+        # By its value, else by the text it shows (whichever the list has first).
+        chosen = {key: str(step[key]) for key in ("value", "label") if step.get(key) not in (None, "")}
+        target.select_option(step["selector"], **chosen, **wait)
+    elif action == "hover":
+        target.hover(step["selector"], **wait)
+        return
     elif action == "click":
         target.click(step["selector"], **wait)
     elif action == "press":
@@ -515,7 +535,65 @@ def replay(page, step: dict, secrets: dict[str, str]) -> None:
     elif action == "scroll":
         scroll_to_load(page, int(step.get("rounds") or recipes.SCROLL_ROUNDS))
         return
-    settle(page)
+    arrived(page, step, max(1.0, budget - (time.monotonic() - started) * 1000))
+
+
+def arrived(page, step: dict, timeout: float) -> None:
+    """Waits for where the step leads: the address and the element it recorded (recipe: "wait"),
+    then a short settle; without them, for the network to go quiet (as recipes always did)."""
+    wait = step.get("wait") if isinstance(step.get("wait"), dict) else {}
+    try:
+        if not wait.get("url") and not wait.get("selector"):
+            settle(page)
+            return
+        if wait.get("url"):
+            page.wait_for_url(re.compile(wait["url"]), wait_until="domcontentloaded", timeout=timeout)
+        if wait.get("selector"):
+            page.wait_for_selector(wait["selector"], state="visible", timeout=timeout)
+        settle(page, SHORT_IDLE)
+    except PlaywrightError:
+        # A step that closed its own page (a popup's last click) has nothing to wait for there.
+        if not page.is_closed():
+            raise
+
+
+class Tabs:
+    """The tabs the steps act in: the first, and each popup a step went on in (the newest acts),
+    back to the one that opened it after a step "opener"."""
+
+    def __init__(self, page):
+        self.pages = [page]
+        self.known = 0
+
+    def opening(self) -> None:
+        """Before the step that opens a popup: the tabs open until then."""
+        self.known = len(self.pages[-1].context.pages)
+
+    def act(self, step: dict, secrets: dict[str, str]) -> None:
+        """Does the step in the tab that acts now, or switches the tab (popup, opener), within the
+        step's time (an optional one's OPTIONAL_TIMEOUT)."""
+        page = self.pages[-1]
+        timeout = OPTIONAL_TIMEOUT if step.get("optional") else STEP_TIMEOUT
+        deadline = time.monotonic() + timeout / 1000
+        if step.get("action") == "popup":
+            while len(opened := page.context.pages) <= self.known:
+                if time.monotonic() >= deadline:
+                    raise PopupMissing("no popup opened")
+                page.wait_for_timeout(FRAME_POLL)
+            popup = opened[-1]
+            popup.wait_for_load_state("domcontentloaded")
+            self.pages.append(popup)
+        elif step.get("action") == "opener":
+            # The popup closes itself (a sign-in's, once done): the page that opened it goes on.
+            while len(self.pages) > 1 and not page.is_closed():
+                if time.monotonic() >= deadline:
+                    raise PopupMissing("the popup did not close")
+                self.pages[-2].wait_for_timeout(FRAME_POLL)
+            if len(self.pages) > 1:
+                self.pages.pop()
+            settle(self.pages[-1])
+        else:
+            replay(page, step, secrets)
 
 
 class Site(Source):  # pylint: disable=too-many-instance-attributes
