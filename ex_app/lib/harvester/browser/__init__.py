@@ -176,15 +176,17 @@ def driver_env(environment: dict[str, str]) -> dict[str, str]:
     return {key: value for key, value in environment.items() if key in CHILD_ENV_KEYS or key.startswith("PW_")}
 
 
-def _quiet_driver() -> None:
+def quiet_driver(transport=None) -> None:
     """Playwright starts its driver with the app's whole environment (the AppAPI secret, HaRP's
     key), as the same user as the browsers: a page that broke out of Chromium could read it from
     /proc. The driver gets driver_env instead. Playwright's own function, replaced where its
-    transport looks it up (tests check that it still does)."""
-    # pylint: disable-next=import-outside-toplevel
-    from playwright._impl import _transport  # type: ignore[import-not-found]
+    transport looks it up (tests check that it still does); Patchright's transport is given
+    (engine.py)."""
+    if transport is None:
+        # pylint: disable-next=import-outside-toplevel
+        from playwright._impl import _transport as transport  # type: ignore[import-not-found]
 
-    original = _transport.get_driver_env
+    original = transport.get_driver_env
     if getattr(original, "quiet", False):
         return
 
@@ -192,10 +194,10 @@ def _quiet_driver() -> None:
         return driver_env(original())
 
     quiet.quiet = True  # type: ignore[attr-defined]
-    _transport.get_driver_env = quiet
+    transport.get_driver_env = quiet
 
 
-_quiet_driver()
+quiet_driver()
 
 
 def http_address(url: str) -> str:

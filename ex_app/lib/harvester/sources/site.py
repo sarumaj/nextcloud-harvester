@@ -14,6 +14,7 @@ the job's cookies (the browser's, when it has one) and walked page by page.
 
 import abc
 import contextlib
+import functools
 import json
 import re
 import time
@@ -24,15 +25,16 @@ from urllib.parse import urljoin
 import httpx
 from bs4 import BeautifulSoup
 from playwright.sync_api import Error as PlaywrightError
-from playwright.sync_api import Route, WebSocketRoute, sync_playwright
+from playwright.sync_api import Route, WebSocketRoute
 
 from .. import browser
 from .. import cookies as cookie_jar
 from .. import jsonlist, otp, pagination, patterns, selectors
 from .. import recipe as recipes
+from ..browser import engine
 from ..browser.guard import Guard
 from . import download, near
-from .base import AuthError, ChallengeError, Item, Option, Source, SourceError, Stopped, pattern_search
+from .base import STEALTH, AuthError, ChallengeError, Item, Option, Source, SourceError, Stopped, pattern_search
 from .download import Response
 
 # The seen key a run records once it has gone through the whole site (not stopped by
@@ -218,6 +220,7 @@ class BrowserDriver(Driver):
         home: bool = False,
         saw: Callable[[dict], None] | None = None,
         viewport: dict | None = None,
+        stealth: bool = False,
     ):
         self.saw = saw
         if not browser.SLOTS.acquire(timeout=LOCK_TIMEOUT, kind="job"):  # pylint: disable=consider-using-with
@@ -235,7 +238,7 @@ class BrowserDriver(Driver):
             if browser.GUARD:
                 self._guard = Guard(self.proxy)
                 port = self._guard.start()
-            self._playwright = sync_playwright().start()
+            self._playwright = engine.start(stealth, port)  # Playwright, or Patchright disguised
             credentials = self._guard.credentials if self._guard else None
             self._browser = self._playwright.chromium.launch(**browser.launch_options(port, http1, home, credentials))
             self.user_agent = browser.user_agent(self._browser.version)
@@ -245,8 +248,10 @@ class BrowserDriver(Driver):
                 accept_downloads=False,
                 storage_state=session or None,  # type: ignore[arg-type]
             )
-            self.context.route("**/*", guard)
-            self.context.route_web_socket(re.compile(".*"), socket_guard)
+            # Handlers of its own (engine.py); Patchright applies no WebSocket route: its guard checks them.
+            self.context.route("**/*", functools.partial(guard))
+            if not stealth:
+                self.context.route_web_socket(re.compile(".*"), functools.partial(socket_guard))
             # The account's cookies over the kept session's: the user gave them for this job.
             if cookies:
                 self.context.add_cookies(cookies)  # type: ignore[arg-type]
@@ -622,6 +627,7 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
             "speaks the older HTTP/1.1 with them, also in the recorder.",
             kind="flag",
         ),
+        "stealth": STEALTH,
         "download_url": Option(
             "Download URL",
             "{url}",
@@ -728,6 +734,7 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
                     home=self.home,
                     saw=self._saw,
                     viewport=self.recipe.get("viewport"),
+                    stealth=bool(int(self.settings["stealth"])),
                 )
                 for skipped in self.driver.skipped:
                     self.report("info", skipped_line(skipped))

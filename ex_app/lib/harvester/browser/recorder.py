@@ -73,7 +73,6 @@ from playwright.async_api import (
     Playwright,
     Route,
     WebSocketRoute,
-    async_playwright,
 )
 
 from .. import browser, pagination, patterns
@@ -82,6 +81,7 @@ from ..sources import site
 from ..sources.base import SourceError
 from . import jar, trial
 from .datapicks import DATA_MESSAGES, DataPicks, search_all
+from .engine import disguised, main_world, start_async
 from . import (
     SCRIPT,
     TRACE_URL,
@@ -160,7 +160,7 @@ async def frame_path(frame) -> list[dict]:
         selector = ""
         try:
             owner = await frame.frame_element()
-            selector = await owner.evaluate(FRAME_SELECTOR) or ""
+            selector = await owner.evaluate(FRAME_SELECTOR, **main_world(owner)) or ""
         except Exception:  # pylint: disable=broad-exception-caught
             pass  # gone or navigating: its address finds it
         entry = {"selector": selector, "url": frame_address(frame.url)}
@@ -277,10 +277,13 @@ class Recorder(DataPicks):  # pylint: disable=too-many-instance-attributes
             recipe["viewport"] = dict(self.viewport)
         return recipe
 
-    async def start(self, session: dict | None = None, url: str = "", http1: bool = False, home: bool = False) -> None:
+    async def start(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self, session: dict | None = None, url: str = "", http1: bool = False, home: bool = False, stealth: bool = False
+    ) -> None:
         """Starts the browser with an empty page, or with a job's session at a page of it (the one
         that asked for a person); http1 for the sites that cut HTTP/2 connections, home through
-        the home connection."""
+        the home connection, stealth disguised (engine.py: as the job's runs, so that a challenge
+        answered here holds for them)."""
         self._home = home
         # The guard (unless the admin switched it off) with the home connection, if chosen, and
         # this browser's local exception; without one, the routes alone let that address through.
@@ -289,7 +292,7 @@ class Recorder(DataPicks):  # pylint: disable=too-many-instance-attributes
             self._gate = Guard(browser.PROXY if home else "")
             self._gate.allow(self.loopback)
             port = await asyncio.to_thread(self._gate.start)
-        self._playwright = await async_playwright().start()
+        self._playwright = await start_async(stealth, port)
         credentials = self._gate.credentials if self._gate else None
         options = launch_options(port, http1, home, credentials)
         # The browser's way out (its guard, the home connection, or none), for asking which address
@@ -316,7 +319,10 @@ class Recorder(DataPicks):  # pylint: disable=too-many-instance-attributes
             storage_state=session or None,  # type: ignore[arg-type]
         )
         await context.route("**/*", self._guard)
-        await context.route_web_socket(re.compile(".*"), self._socket_guard)
+        # Patchright does not apply a WebSocket route (and would show the page its stand-in's
+        # global): a disguised browser starts only behind its guard, which checks them.
+        if not disguised(context):
+            await context.route_web_socket(re.compile(".*"), self._socket_guard)
         return context
 
     async def _tell_address(self, proxied: bool) -> None:
@@ -474,14 +480,16 @@ class Recorder(DataPicks):  # pylint: disable=too-many-instance-attributes
         # later asks recorder.js's "mode" itself).
         for frame in self._page.frames if self._page else []:
             try:
-                await frame.evaluate(SET_MODE, self.mode)
+                await frame.evaluate(SET_MODE, self.mode, **main_world(frame))
             except Exception:  # pylint: disable=broad-exception-caught
                 pass  # navigated meanwhile
         if self._page and self.mode == "value":
             # The page's own links only: picks in frames are refused.
             with contextlib.suppress(Exception):
                 await self._page.evaluate(
-                    SET_VALUE_LINKS, self._spec(*self.value_for).get("selector", "") if self.value_for else ""
+                    SET_VALUE_LINKS,
+                    self._spec(*self.value_for).get("selector", "") if self.value_for else "",
+                    **main_world(self._page),
                 )
 
     def _record(self, event: dict) -> None:
@@ -613,7 +621,7 @@ class Recorder(DataPicks):  # pylint: disable=too-many-instance-attributes
             "current": current,
             "following": following[0] if following else None,
         }
-        await self._page.evaluate(HIGHLIGHT, [container, None, None])
+        await self._page.evaluate(HIGHLIGHT, [container, None, None], **main_world(self._page))
         await self._update()
 
     def _remember(self) -> None:
@@ -714,10 +722,13 @@ class Recorder(DataPicks):  # pylint: disable=too-many-instance-attributes
         if kind == "reload":
             await page.reload(wait_until="domcontentloaded")
             return
+        # A disguised page (Patchright's) never tells the loads of a page restored from the
+        # back-forward cache: there, the page arriving is enough.
+        arrived = "commit" if disguised(page) else "domcontentloaded"
         if kind == "back":
-            await page.go_back(wait_until="domcontentloaded")
+            await page.go_back(wait_until=arrived)
         else:
-            await page.go_forward(wait_until="domcontentloaded")
+            await page.go_forward(wait_until=arrived)
         if self.mode == "record" and page.url != before and allowed_url(page.url):
             self._record({"action": "goto", "url": page.url})
             await self._update()
@@ -853,7 +864,9 @@ class Recorder(DataPicks):  # pylint: disable=too-many-instance-attributes
         # matches (a page that changed meanwhile may then be outlined slightly off).
         hits = [bool(match) for match in matches]
         try:
-            await page.evaluate(HIGHLIGHT, [spec["selector"], patterns.js_regex(pattern.pattern), hits])
+            await page.evaluate(
+                HIGHLIGHT, [spec["selector"], patterns.js_regex(pattern.pattern), hits], **main_world(page)
+            )
         except Exception:  # pylint: disable=broad-exception-caught
             pass  # the page navigated meanwhile
         await self._update()
@@ -950,7 +963,7 @@ class Recorder(DataPicks):  # pylint: disable=too-many-instance-attributes
         elif kind == "clear":
             self._remember()
             self.start_url, self.follow, self.links, self.next, self.proposals = "", [], {}, {}, {}
-            await page.evaluate(HIGHLIGHT, ["", None, None])
+            await page.evaluate(HIGHLIGHT, ["", None, None], **main_world(page))
             await self._update()
 
     def _forget_undone(self) -> None:

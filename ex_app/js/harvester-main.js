@@ -1509,10 +1509,10 @@
 		// The page's answers in JSON (the Network panel).
 		let requests = []
 		const suggestions = {}
-		// The form's "HTTP/1.1 only", known before the browser starts.
-		const http1 = page.querySelector('[data-option="http1"]')
-		const home = page.querySelector('[data-option="home"]')
-		const query = [http1 && http1.checked ? 'http1=1' : '', home && home.checked ? 'home=1' : ''].filter(Boolean).join('&')
+		// The form's "HTTP/1.1 only", "Through the proxy" and "Disguise the browser", known before
+		// the browser starts (a saved job's own options win for its recordings).
+		const flags = ['http1', 'home', 'stealth'].map((name) => page.querySelector(`[data-option="${name}"]`))
+		const query = flags.filter((box) => box && box.checked).map((box) => `${box.dataset.option}=1`).join('&')
 		const socket = new WebSocket(query ? `${RECORDER}?${query}` : RECORDER)
 		const send = (message) => socket.readyState === WebSocket.OPEN && socket.send(JSON.stringify(message))
 		const screen = el('img', { class: 'harvester-screen', tabindex: '0', alt: 'The recorder’s browser' })

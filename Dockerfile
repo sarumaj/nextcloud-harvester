@@ -14,6 +14,15 @@ COPY requirements.txt /
 RUN --mount=type=cache,target=/root/.cache/pip \
     python3 -m pip install --root-user-action=ignore -r requirements.txt && rm requirements.txt
 
+# Patchright (the disguised browser, harvester/browser/engine.py) starts Playwright's Chromium:
+# the build fails when their versions want different ones. Its own copy of Node.js (some 120 MB)
+# gives way to Playwright's, which runs its driver alike (Node.js 24 both).
+RUN set -ex; \
+    SITE=$(python3 -c "import sysconfig; print(sysconfig.get_paths()['purelib'])"); \
+    python3 -c "import json, sys; revision = lambda package: [b['revision'] for b in json.load(open(f'{sys.argv[1]}/{package}/driver/package/browsers.json'))['browsers'] if b['name'] == 'chromium']; sys.exit(revision('playwright') != revision('patchright'))" "$SITE"; \
+    ln -sf "$SITE/playwright/driver/node" "$SITE/patchright/driver/node"; \
+    python3 -m patchright --version
+
 # Download and install FRP client with checksum verification
 # FRP version and checksums - update these when upgrading
 ARG FRP_VERSION=0.71.1

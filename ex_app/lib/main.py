@@ -650,15 +650,18 @@ async def record(websocket: WebSocket, nc: NC) -> None:
         # try: whatever goes wrong from here on, the browser's slot is released.
         http1 = websocket.query_params.get("http1") == "1" or (job is not None and switched_on(job, "http1"))
         home = websocket.query_params.get("home") == "1" or (job is not None and switched_on(job, "home"))
+        # Disguised as the job's runs are (its challenge answered under their fingerprint), or as
+        # the form says for a recording without a job.
+        stealth = switched_on(job, "stealth") if job is not None else websocket.query_params.get("stealth") == "1"
         try:
             if job:
                 at = job.challenge_url or start_of(job)
                 if websocket.query_params.get("at") == "shot":
                     at = (store().shot(job.id or 0) or {}).get("url") or at
-                await recorder.start(await load_session(nc, job), at, http1=http1, home=home)
+                await recorder.start(await load_session(nc, job), at, http1=http1, home=home, stealth=stealth)
                 await recorder.handle({"type": "mode", "mode": "browse"})
             else:
-                await recorder.start(http1=http1, home=home)
+                await recorder.start(http1=http1, home=home, stealth=stealth)
         except Exception as error:  # pylint: disable=broad-exception-caught
             # The page says why instead of a screen that stays empty.
             LOGGER.exception("the recorder's browser did not start")

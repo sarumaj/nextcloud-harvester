@@ -218,13 +218,26 @@ class Option:
 # A job's choice to have its HTTP clients present themselves as a browser does (headers and TLS
 # fingerprint), with the established libraries that do it: yt-dlp's impersonation (curl_cffi),
 # gallery-dl's browser emulation, curl_cffi for the downloads. For sites behind Cloudflare and
-# similar checks that refuse plain HTTP clients (403). Harvester's own browser is not disguised.
+# similar checks that refuse plain HTTP clients (403). Harvester's own browser: STEALTH.
 IMPERSONATE = Option(
     "Impersonate a browser",
     0,
     "The job's downloads present themselves as a browser does (headers and TLS, with yt-dlp's, gallery-dl's "
     "and curl_cffi's impersonation), for sites behind Cloudflare and similar checks that answer plain "
     "downloads with 403. Only where a site refuses them otherwise.",
+    kind="flag",
+)
+
+# A job's choice to have its browser disguised as a person's (browser/engine.py: Patchright, a
+# fork of Playwright that leaves out what gives an automated browser away), for sites whose bot
+# check refuses Harvester's browser otherwise. Off by default: it only fetches what the family
+# has access to, and never answers a challenge (a person does, in "Continue in the browser").
+STEALTH = Option(
+    "Disguise the browser",
+    0,
+    "Disguises the browser as a person's, for sites whose bot check refuses it otherwise (the job's "
+    "browser, its test in the recorder and Continue in the browser alike). It answers no challenge: you "
+    "still do, in the browser. From a server's address a site may refuse it all the same.",
     kind="flag",
 )
 
