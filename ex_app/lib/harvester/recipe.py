@@ -264,7 +264,7 @@ def _rounds_ok(rounds: object) -> bool:
     return isinstance(rounds, int) and not isinstance(rounds, bool) and 1 <= rounds <= SCROLL_ROUNDS_MAX
 
 
-def _check_next(after: object, levels: int) -> list[str]:
+def _check_next(after: object, depth: int) -> list[str]:
     # A next without its element has always meant none (the walk ends after the first page).
     if not isinstance(after, dict) or not after.get("selector"):
         return [] if not after or isinstance(after, dict) else ["next page: not an object"]
@@ -273,8 +273,8 @@ def _check_next(after: object, levels: int) -> list[str]:
     if after.get("kind", "link") not in NEXT_KINDS:
         return [f"next page: unknown kind {after.get('kind')}"]
     level = after.get("level", 0)
-    if not isinstance(level, int) or isinstance(level, bool) or not 0 <= level <= levels:
-        return [f"next page: the level is a number from 0 (the listing) to {levels} (the file links' pages)"]
+    if not isinstance(level, int) or isinstance(level, bool) or not 0 <= level <= depth:
+        return [f"next page: the level is a number from 0 (the listing) to {depth} (the file links' pages)"]
     if not isinstance(after.get("buttons", False), bool):
         return ["next page: buttons is true or false"]
     return []

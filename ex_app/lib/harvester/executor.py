@@ -477,6 +477,7 @@ class Executor:
                     self.store.log(job_id, "info", through_proxy(client))
                 source = source_class(job.options, credentials, client)
                 source.home = home
+                source.timezone = job.timezone
                 # Every wait of the source ends at once when the run is stopped.
                 if hasattr(source, "sleep"):
                     source.sleep = control.nap
@@ -490,12 +491,8 @@ class Executor:
                     if wanted:
                         message = self._work(job, source, library, control, started, None, fetch)
                 finally:
-                    # Kept also after a failure: cookies set before it (a sign-in) still count;
-                    # not for a job deleted while it ran (its session went with it), nor when its
-                    # account changed meanwhile (the session is the old account's).
                     try:
-                        if self.store.job(job_id) and self._credentials(nc, job) == credentials:
-                            self.call(save_session(nc, job, source.session()))
+                        self._keep_session(nc, job, credentials, source)
                     finally:
                         source.close()
             self._succeeded(job_id, control, wanted, f"{fetch['url']}: {message}" if fetch else message, nc)
@@ -507,6 +504,19 @@ class Executor:
                 self.store.drop_fetch(fetch["id"])
             with self._lock:
                 self.controls.pop(job_id, None)
+
+    def _keep_session(self, nc: AsyncNextcloudApp, job: Job, credentials: dict[str, str], source: Source) -> None:
+        """Keeps the source's session for the job's next run, also after a failure: cookies set
+        before it (a sign-in) still count; not for a job deleted while it ran (its session went
+        with it), nor when its account changed meanwhile (the session is the old account's). One
+        the source gave up (stale: it no longer signed in) goes, unless a new one came."""
+        if not self.store.job(job.id or 0) or self._credentials(nc, job) != credentials:
+            return
+        session = source.session()
+        if session:
+            self.call(save_session(nc, job, session))
+        elif source.stale:
+            self.call(nc.preferences_ex.delete(session_key(job)))
 
     def _succeeded(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self, job_id: int, control: Control, wanted: bool, message: str, nc: AsyncNextcloudApp

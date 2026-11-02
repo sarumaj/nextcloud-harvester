@@ -23,6 +23,40 @@
   job's browser); *Use for this job* keeps the session for the job without ending the browser.
   A cookies.txt keeps the HttpOnly mark when read and written.
 
+### Added (runs and replay)
+
+- **Kept sessions:** a kept session skips the sign-in only (the steps up to the last credential
+  and what sends it); the steps from there to the listing always run. A session that no longer
+  reaches the listing is given up for a sign-in anew, in a browser of its own, and forgotten if
+  that fails too; a recipe with other steps or another site forgets it when saved. A session
+  that ends in the middle of a run signs in anew once, and the file is asked for again; ten
+  failures in a row end a run.
+- **Recipes:** dates in a fill step's value (`{today-30d:%d.%m.%Y}`, `{year}`, `{month:02d}`, in
+  the job's time zone); a key template for the file links (`"key": "{year}-{issue}"`); file
+  links that are clicked to download (`"click": true`: scripts, forms, blobs), checked as any
+  download; levels that load more of their pages (`"scroll"`, `"load_more"`). A recipe is
+  checked when saved: the kinds of its parts, actions, credentials, keys, dates, the next page's
+  level and the key's values, with readable messages.
+- **Downloads:** `{disposition}`, the name the site gives the file (Content-Disposition, RFC
+  6266 and 5987), made safe; the listing as `Referer`; a page standing in for the file (a meta
+  refresh, one download link) followed once.
+
+### Fixed
+
+- Steps after the sign-in that lead to the listing (a tab, *Show all*, a filter) were skipped
+  with a kept session, and a username-first or single sign-on page was taken for the listing.
+- A listing page that was gone (404), failed (500) or asked to wait (429, 503) failed the whole
+  run with httpx's error; now a page below the listing is empty (logged), the listing's own
+  error is readable, and pauses are waited for. Listing pages are paced, `<base href>` is
+  honoured, the browser's language is sent.
+- A run whose deeper pages showed a sign-in, an error or another page counted as a complete
+  pass, so known files ended the next runs before those files came.
+- Addresses with a session or a signature in them (`;jsessionid=`, `sid`, `X-Amz-Signature`,
+  `utm_*`) were new files every run, saved again as "x (2).pdf".
+- A next page that loops was read again silently; a next page that is a button ended an HTTP
+  job after page one without a word; a link shown on several listings took the first one's
+  values; a web page instead of a file always said "signed out?".
+
 ## 0.10.0 - 2026-11-02
 
 ### Added

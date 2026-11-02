@@ -7,7 +7,7 @@ import subprocess
 import threading
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from typing import BinaryIO, ClassVar
+from typing import Any, BinaryIO, ClassVar
 from urllib.parse import urlparse
 
 import httpx
@@ -132,6 +132,15 @@ class Refused(SourceError):
     it is skipped for good (until the job's types or sizes change), not tried again."""
 
 
+class WebPage(SourceError):
+    """A web page came instead of the file: a sign-in page (login: the session ended), or a
+    page the download URL gives (a level of links short, or a wrong Download URL)."""
+
+    def __init__(self, message: str, login: bool = False):
+        super().__init__(message)
+        self.login = login
+
+
 # What the account's sign-ins without a browser are: HTTP Basic and cookies, the page's words.
 ACCOUNT_HELP = {
     "username": ("User name", "For sites that ask with the browser's own sign-in box (HTTP Basic)."),
@@ -185,6 +194,14 @@ class Item:
     # Why the item cannot be had (its file name cannot be made, it is too large): raised in its
     # place, so that it fails or is skipped alone, not the whole listing.
     problem: SourceError | None = field(default=None, hash=False, compare=False)
+    # The page that lists it, sent as Referer with the download (sites that refuse downloads
+    # from elsewhere).
+    referer: str = field(default="", compare=False)
+    # Its name comes with the file (the answer's own, {disposition}): path is a stand-in until
+    # the source's fetch returns the item as named then.
+    pending: bool = field(default=False, compare=False)
+    # What starts its download when it has no address (an element the browser clicks).
+    trigger: Any = field(default=None, hash=False, compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -251,6 +268,14 @@ class Source(abc.ABC):
         # listing asks seen() about, e.g. a whole message handled); the runner sets both.
         self.report: Callable[[str, str], None] = lambda level, text: None
         self.remember: Callable[[str], None] = lambda key: None
+        # The job's time zone (the executor's; dates a recipe fills in are its days).
+        self.timezone = "UTC"
+        # Listing pages that gave nothing they should have (a sign-in, an error, a redirect): a
+        # run with any is no complete pass, however it ends.
+        self.gaps = 0
+        # The kept session was given up (it no longer signed in): forgotten unless the run keeps
+        # a new one.
+        self.stale = False
 
     @classmethod
     def address_of(cls, options: dict) -> str:
@@ -267,8 +292,14 @@ class Source(abc.ABC):
         """Yields the items not seen yet, in the order they should be downloaded."""
 
     @abc.abstractmethod
-    def fetch(self, item: Item, dest: BinaryIO) -> None:
-        """Writes the item's content to dest."""
+    def fetch(self, item: Item, dest: BinaryIO) -> Item | None:
+        """Writes the item's content to dest; returns the item as named now when its name came
+        with the file (pending), else None."""
+
+    def sign_in_again(self) -> bool:
+        """Signs in anew in the middle of a run (the session ended); False when the source has no
+        sign-in to repeat."""
+        return False
 
     def account_cookies(self, url: str) -> list[cookie_jar.Cookie]:
         """The account's cookies (pairs of a Cookie header for url's host); AuthError when the

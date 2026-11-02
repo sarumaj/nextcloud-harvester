@@ -344,6 +344,8 @@ async def update_job(job_id: int, body: JobIn, nc: NC) -> dict:
     job = await own_job(job_id, nc)
     saved = store().save(Job(id=job.id, user=job.user, created=job.created, **checked(body).model_dump()))
     forget_changed(job, saved)
+    if sign_in_changed(job, saved):
+        await nc.preferences_ex.delete(session_key(saved))
     # On a schedule now: the addresses sent to it are not fetched (the one running ends as it is).
     if not ondemand.on_demand(saved):
         for fetch in store().fetches([saved.id or 0]):
@@ -357,6 +359,25 @@ async def update_job(job_id: int, body: JobIn, nc: NC) -> dict:
 
 # The options whose change makes a file refused by type or size worth trying again.
 REFUSING = tuple(DOWNLOAD_OPTIONS)
+
+
+def sign_in_changed(job: Job, saved: Job) -> bool:
+    """Whether the job's kept session is no longer the one its runs should start from: another
+    source, or a recipe with other steps or another site to start at. Other changes of the recipe
+    (its levels, patterns, pages) keep it: it may be a person's answer to a challenge."""
+    if saved.source != job.source:
+        return True
+
+    def signing(options: dict) -> tuple:
+        try:
+            recipe = json.loads(str(options.get("recipe") or "{}"))
+        except ValueError:
+            return (str(options.get("recipe")),)
+        if not isinstance(recipe, dict):
+            return (str(options.get("recipe")),)
+        return recipe.get("steps") or [], urlparse(str(recipe.get("start") or "")).netloc.lower()
+
+    return "recipe" in SOURCES[saved.source].options and signing(saved.options) != signing(job.options)
 
 
 def forget_changed(job: Job, saved: Job) -> None:

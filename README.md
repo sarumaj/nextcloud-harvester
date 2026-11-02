@@ -118,7 +118,7 @@ the app's browser or taken from a template, not by code.
   default) scrolls the page to its end until it stops growing (no new links, elements or
   height two rounds in a row, or after a minute), for a listing that loads more as it is
   scrolled. The listing the steps end on is read in their tab, as they left it; with a kept
-  session the sign-in is skipped but the scroll steps at the steps' end still run. Ordinary
+  session the sign-in is skipped but the steps after it still run. Ordinary
   scrolling is never recorded: a position depends on the window's size and the page's state,
   and replays wrongly in a job's window; a **Load more** button is a click, recorded as one.
 - **Steps in frames:** recorder.js runs in every frame of the page, cross-origin ones (a consent
@@ -143,7 +143,29 @@ the app's browser or taken from a template, not by code.
   **Test the recipe** lists the steps it went on without apart from the problems.
 - **Values:** the download URL (`{url}/download`), the file's name
   (`{year}/iX {year}-{issue:02d}`) and the tags (`{year}`) are templates of the link's values:
-  the pattern's groups and `url`, `text`, `page`, `host`, `filename`, `stem`, `ext`.
+  the pattern's groups and `url`, `text`, `page`, `host`, `filename`, `stem`, `ext`, and in the
+  file's name and tags `{disposition}`: the name the site gives the file as it sends it
+  (`Content-Disposition`, `filename*` before `filename`; else the last part of the address it
+  came from), without folders, control characters or leading dots, 200 characters at most. Such a
+  file is downloaded first and then put where its name says; what tells it apart from the next
+  run's files is still its link.
+- **More of a recipe:** a fill step's value may hold dates, filled in at each run in the job's
+  time zone: `{today}` (`2026-11-02`), `{today-30d:%d.%m.%Y}`, `{today+1w}`, `{today-1m}`,
+  `{year}`, `{year-1}`, `{month:02d}`, `{day}`; other braces are typed as they are. The file
+  links may have `"key": "{year}-{issue}"`, a template of their values that tells files apart
+  instead of their address (for addresses that change), and `"click": true` for elements that
+  start a download when clicked (a button, a form, a script, a blob; no address): the job clicks
+  each in the browser, its pattern searched in the element's text, and keeps the file the browser
+  downloads, checked as any download (its types, its smallest and largest size, before anything
+  is copied); `{disposition}` is the name the browser was given, and such a file is told apart
+  by its listing and its text unless the recipe has a key. Each level (an entry of `follow`, or
+  `links`) may load more of its pages before they are read: `"scroll": 20` (rounds, as the
+  scroll step) and `"load_more": "button.more"`, clicked until it is gone or the page stops
+  growing (50 times or a minute at most). These need the browser, as does a next page that is a
+  button (`"buttons": true`): over HTTP such a page says so instead of ending after page one.
+  A recipe is checked when the job is saved: the kinds of its parts (text, numbers, lists), the
+  actions, credentials (`username`, `password`, `totp`) and keys of its steps (`Enter`, `Tab`,
+  `Control+A`, one character, ...), its dates, the next page's level, the key's values.
 - **Recorder** (`ex_app/lib/harvester/browser/`): a headless Chromium in the app, shown on the
   page and driven from it over a WebSocket. Sign in and go to the listing (recorded as steps),
   browse without recording, then pick the links to follow and the file links: the app proposes
@@ -189,30 +211,45 @@ the app's browser or taken from a template, not by code.
   with the job's Save; in the job's browser after the person confirms (a new account forgets
   the kept session). **Use for this job** (the job's browser) keeps the browser's session for
   the job's next run, as Done does, but the browser stays open and no run starts.
-- **Sessions and challenges:** a job keeps its browser session (cookies, local storage;
-  encrypted in Nextcloud, like its account) and replays the sign-in only when the listing shows
-  a login form. When a site asks for a person instead (reCAPTCHA, hCaptcha, Cloudflare, "verify
-  you are human") the run stops, the job shows **Needs you** and its user gets a notification;
-  scheduled runs wait. **Continue in the browser** opens the recorder's browser with the job's
-  session at that page: the person answers it, **Done** keeps the session and runs the job.
-  Harvester never answers a challenge itself. When a step fails or a page asks for a person,
+- **Sessions and challenges:** a job keeps its browser session (cookies, local storage; encrypted in
+  Nextcloud, like its account) and replays the sign-in only when the listing shows a sign-in (a
+  password or user name field, or a sign-in's address). The sign-in is the steps up to the last fill
+  of a credential and the click or key that sends it; the steps after it (a tab, *Show all*, a
+  filter, scrolling) lead to the listing and run every time. When the kept session does not reach
+  the listing (a step after the sign-in fails, or the start page has none of the recipe's links: a
+  username-first or single sign-on page taken for the listing), the run signs in once anew from no
+  session, in a browser of its own, and keeps the new session; if that fails too, the old one is
+  forgotten. A recipe with other steps or another site to start at forgets it when saved (other
+  links or patterns do not: it may be a person's answer to a challenge). A web page that comes
+  instead of a file after files came (the session ended in the middle of the run) signs in anew
+  once, and the file is asked for again. When a site asks for a person instead (reCAPTCHA, hCaptcha,
+  Cloudflare, "verify you are human") the run stops, the job shows **Needs you** and its user gets a
+  notification; scheduled runs wait. **Continue in the browser** opens the recorder's browser with
+  the job's session at that page: the person answers it, **Done** keeps the session and runs the
+  job. Harvester never answers a challenge itself. When a step fails or a page asks for a person,
   the job keeps what its browser showed (a JPEG of the window, at most 400 KB, with the page's
-  address and title; in the app's database, the newest per job, deleted with the job): its
-  line in the progress log gets **Show what the browser saw** (`GET /api/jobs/<id>/shot`, the
-  job's owner only), and from there **Open in the browser** opens the job's browser with its
-  session at that page. A failed step's line names its element when it has no text
-  (`step 2 (click a.overlay-b:nth-of-type(6)) failed`). A new value for any of the job's account
-  forgets its kept session (the cookies, a refresh token the provider replaced): those are the old
-  account's, and would be used instead.
+  address and title; in the app's database, the newest per job, deleted with the job): its line in
+  the progress log gets **Show what the browser saw** (`GET /api/jobs/<id>/shot`, the job's owner
+  only), and from there **Open in the browser** opens the job's browser with its session at that
+  page. A failed step's line names its element when it has no text (`step 2 (click
+  a.overlay-b:nth-of-type(6)) failed`). A new value for any of the job's account forgets its kept
+  session (the cookies, a refresh token the provider replaced): those are the old account's, and
+  would be used instead.
 - **A person's browser:** sites' bot protection (Cloudflare, ...) refuses a browser that says it is
   automated, or cuts its connection (`ERR_HTTP2_PROTOCOL_ERROR`). Chromium runs as the full browser
   in its new headless mode (not the headless shell), without the automation flag, with Chrome's
   user agent and one language and time zone for recordings and runs (`HARVESTER_LOCALE`,
   `HARVESTER_TIMEZONE`, default `en-US`, `Europe/Berlin`). A website job's **HTTP/1.1 only**
   serves the sites that cut HTTP/2 connections, in the recorder too.
-- **Downloads:** a pause between files; waits when the site asks (429 or 503 with
-  `Retry-After`, or a wait pattern on the URL it redirects to, like heise's `wait_sec=`) and
-  three retries of a broken transfer; never a web page instead of a file; expected file types
+- **Downloads:** a pause between files, and one of a second between listing pages; waits when
+  the site asks (429 or 503 with `Retry-After`, for listing pages too, or a wait pattern on the
+  URL it redirects to, like heise's `wait_sec=`) and three retries of a broken transfer; the
+  listing a file is linked from as `Referer`, and the browser's language (`Accept-Language`). A
+  web page instead of a file is a sign-in (*signed out?*), or else a page standing in for the
+  file (*Your download starts...*), whose meta refresh, or its one link that reads like the
+  download (its text, a `download` attribute, a file's extension), is followed once; any other
+  page says that the download URL gives a page (a level of links short, or another Download
+  URL). Expected file types
   (`pdf`, `zip`, `image`, ..., several separated by commas), a smallest and a largest size. A
   megabyte is 1000 × 1000 bytes everywhere (the largest file's MB, the form, the progress log),
   so 4096 MB is the 4.1 GB the form shows. A file of another type or over the largest size is
@@ -248,6 +285,19 @@ the app's browser or taken from a template, not by code.
   first page is its oldest, turn the option off. Only a change of what is listed (the source, a
   recipe, an address, a folder, patterns, the pages or entries read) starts over with a complete
   pass; files per run, file names, tags or the schedule do not.
+- **Runs that meet trouble:** a link's address is known without what changes from visit to
+  visit (`patterns.VOLATILE`: a session in the path or query, `;jsessionid=`, `sid`, `PHPSESSID`;
+  a presigned address's signature and expiry, S3's `X-Amz-*`, Google's `X-Goog-*`, CloudFront's
+  `Expires`, `Signature`, `Key-Pair-Id`; trackers, `utm_*`, `fbclid`, `gclid`; the fragment), so
+  those make no new files; a key recorded before still counts. A page below the listing that is
+  gone or refused (404, 500, 403) is read as empty, the listing itself failing the run (401 and
+  403: *Sign-in refused*). Such a page, or one that shows a sign-in or ended up at another
+  address, is a line in the log, and the run does not count as a complete pass (known files do
+  not end the next runs before it went through). A next page read already at its level (a last
+  page linking to itself, or back to the first) ends its listing, with a line in the log. A link
+  shown on another listing's page whose values disagree with the levels above it (each year's
+  page showing the newest issue) is taken on its own listing, with its own values. After files
+  came, ten failures in a row end the run; the rest comes next run.
 - **Pause and stop:** while a job runs, **Run now** becomes **Pause** (then **Resume**) and
   **Stop**. Both act before the next file: a paused run waits (its time does not count against
   the two hours; after six hours unresumed it stops), a stopped one ends and keeps what it saved,
