@@ -26,7 +26,8 @@ threads (Playwright's sync API), and either starts and stops its guard with its 
 process gets the children's environment (child_env), the home connection's address over its
 pipe (never in its arguments or environment), and is undumpable; it ends when the app does
 (its pipe closes), and a guard that ends early closes its port: the browser's connections fail,
-they never go around it.
+they never go around it. Each guard asks for its browser's own credentials (Proxy-Authorization,
+launch_options): another guard that took a crashed one's port refuses that browser.
 """
 
 import asyncio
@@ -34,12 +35,14 @@ import base64
 import collections
 import concurrent.futures
 import functools
+import hmac
 import ipaddress
 import itertools
 import json
 import logging
 import math
 import os
+import secrets
 import signal
 import socket
 import ssl
@@ -102,7 +105,13 @@ BOOT = "import sys; sys.path.insert(0, sys.argv[1]); from harvester.browser.guar
 # A request's headers that concern the proxy (or this hop) alone, never sent on.
 HOP_HEADERS = frozenset({"proxy-connection", "proxy-authorization", "keep-alive", "connection"})
 T = TypeVar("T")
-PHRASES = {400: "Bad Request", 403: "Forbidden", 502: "Bad Gateway", 503: "Service Unavailable"}
+PHRASES = {
+    400: "Bad Request",
+    403: "Forbidden",
+    407: "Proxy Authentication Required",
+    502: "Bad Gateway",
+    503: "Service Unavailable",
+}
 
 
 class Refused(Exception):
@@ -164,11 +173,27 @@ def sent_headers(lines: list[str]) -> str:
 def refusal(status: int, reason: str) -> bytes:
     """The answer to a refused request: the status, and why in a line."""
     body = f"{reason}\n".encode()
+    challenge = 'Proxy-Authenticate: Basic realm="harvester"\r\n' if status == 407 else ""
     head = (
         f"HTTP/1.1 {status} {PHRASES.get(status, 'Error')}\r\nContent-Type: text/plain; charset=utf-8\r\n"
-        f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n"
+        f"{challenge}Content-Length: {len(body)}\r\nConnection: close\r\n\r\n"
     )
     return head.encode() + body
+
+
+def basic(credentials: tuple[str, str]) -> str:
+    """The Basic authorization's token for a username and password."""
+    return base64.b64encode(f"{credentials[0]}:{credentials[1]}".encode()).decode()
+
+
+def authorized(lines: list[str], token: str) -> bool:
+    """Whether a request's header lines carry the proxy's Basic credentials (its token)."""
+    for line in lines:
+        name, _, value = line.partition(":")
+        scheme, _, given = value.strip().partition(" ")
+        if name.strip().lower() == "proxy-authorization" and scheme.lower() == "basic":
+            return hmac.compare_digest(given.strip().encode(), token.encode())
+    return False
 
 
 class Guard:  # pylint: disable=too-many-instance-attributes
@@ -181,6 +206,10 @@ class Guard:  # pylint: disable=too-many-instance-attributes
         self.upstream = Upstream(upstream) if upstream else None
         self._upstream = upstream
         self.port = 0
+        # The browser's own credentials for its guard (launch_options): a browser that reaches
+        # another guard's port (one that took a crashed guard's port, say) is refused there.
+        # Never logged.
+        self.credentials = (secrets.token_urlsafe(12), secrets.token_urlsafe(24))
         # Why the guard refused, latest last ("host:port: reason").
         self.refused: collections.deque[str] = collections.deque(maxlen=REFUSALS)
         self._loopback: tuple[str, int] | None = None
@@ -223,7 +252,7 @@ class Guard:  # pylint: disable=too-many-instance-attributes
         self._reader = threading.Thread(target=self._read, args=(process,), name=f"guard-{process.pid}", daemon=True)
         self._reader.start()
         try:
-            self._send(process, {"upstream": self._upstream, "allow": self._origin})
+            self._send(process, {"upstream": self._upstream, "allow": self._origin, "credentials": self.credentials})
             self.port = ready.result(START_TIMEOUT)
         except BaseException:
             self.stop()
@@ -346,7 +375,8 @@ def serve() -> None:
     if not first:
         return
     settings = json.loads(first)
-    relay = Relay(settings.get("upstream", ""), refused=lambda line: send({"refused": line}))
+    credentials = tuple(settings.get("credentials") or ()) or None
+    relay = Relay(settings.get("upstream", ""), refused=lambda line: send({"refused": line}), credentials=credentials)
     relay.allow(settings.get("allow", ""))
     try:
         send({"port": relay.start()})
@@ -368,9 +398,16 @@ class Relay:  # pylint: disable=too-many-instance-attributes
     own event loop, which checks and relays the browser's connections. start() gives its port,
     stop() ends it and every connection it holds (also as a context manager)."""
 
-    def __init__(self, upstream: str = "", refused: Callable[[str], None] | None = None):
+    def __init__(
+        self,
+        upstream: str = "",
+        refused: Callable[[str], None] | None = None,
+        credentials: tuple[str, str] | None = None,
+    ):
         self.upstream = Upstream(upstream) if upstream else None
         self.port = 0
+        # The Basic token every request must carry (Proxy-Authorization), if any: 407 otherwise.
+        self._token = basic(credentials) if credentials else ""
         # Why the guard refused, latest last ("host:port: reason"), and who else learns it.
         self.refused: collections.deque[str] = collections.deque(maxlen=REFUSALS)
         self._on_refused = refused
@@ -395,10 +432,10 @@ class Relay:  # pylint: disable=too-many-instance-attributes
         """How many connections the guard holds now."""
         return len(self._connections)
 
-    def start(self) -> int:
-        """Starts the guard on 127.0.0.1 and gives its port."""
+    def start(self, port: int = 0) -> int:
+        """Starts the guard on 127.0.0.1 (on the port, or any free one) and gives its port."""
         ready = concurrent.futures.Future()  # type: ignore[var-annotated]
-        self._thread = threading.Thread(target=self._run, args=(ready,), name=f"guard-{id(self):x}", daemon=True)
+        self._thread = threading.Thread(target=self._run, args=(ready, port), name=f"guard-{id(self):x}", daemon=True)
         self._thread.start()
         self.port = ready.result(timeout=STOP_TIMEOUT)
         return self.port
@@ -423,13 +460,13 @@ class Relay:  # pylint: disable=too-many-instance-attributes
     def __exit__(self, *_exc) -> None:
         self.stop()
 
-    def _run(self, ready: concurrent.futures.Future) -> None:
+    def _run(self, ready: concurrent.futures.Future, port: int) -> None:
         loop = self._loop = asyncio.new_event_loop()
         # The lookups in threads of the guard's own, a few at a time (getaddrinfo blocks).
         self._lookups = concurrent.futures.ThreadPoolExecutor(LOOKUPS, thread_name_prefix="guard-lookup")
         loop.set_default_executor(self._lookups)
         try:
-            self._server = loop.run_until_complete(asyncio.start_server(self._handle, "127.0.0.1", 0, limit=LIMIT))
+            self._server = loop.run_until_complete(asyncio.start_server(self._handle, "127.0.0.1", port, limit=LIMIT))
         except OSError as error:
             ready.set_exception(error)
             loop.close()
@@ -495,6 +532,8 @@ class Relay:  # pylint: disable=too-many-instance-attributes
         parts = lines[0].split(" ")
         if len(parts) != 3:
             raise Refused(400, "not a request")
+        if self._token and not authorized(lines[1:], self._token):
+            raise Refused(407, "this guard is another browser's")
         if parts[0] != "CONNECT":
             return await self._plain(parts, lines[1:])
         server = await self._connect(*split_target(parts[1]))

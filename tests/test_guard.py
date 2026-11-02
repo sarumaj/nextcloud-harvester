@@ -88,8 +88,12 @@ async def ask(port: int, head: str) -> tuple[asyncio.StreamReader, asyncio.Strea
     return reader, writer, answer.decode()
 
 
-async def tunnel(port: int, target: str) -> tuple[asyncio.StreamReader, asyncio.StreamWriter, str]:
-    return await ask(port, f"CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n\r\n")
+async def tunnel(
+    port: int, target: str, credentials: tuple[str, str] | None = None
+) -> tuple[asyncio.StreamReader, asyncio.StreamWriter, str]:
+    """A CONNECT to the guard (with a browser's credentials for it, if given)."""
+    login = f"Proxy-Authorization: Basic {guard.basic(credentials)}\r\n" if credentials else ""
+    return await ask(port, f"CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n{login}\r\n")
 
 
 async def echoes(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> bool:
@@ -780,9 +784,9 @@ def test_the_jobs_browser_stops_its_guard_on_every_path(monkeypatch):
     ports: list[int] = []
     real = browser.launch_options
 
-    def failing(guard_port: int, http1: bool = False, home: bool = False):
+    def failing(guard_port: int, *args):
         ports.append(guard_port)
-        raise RuntimeError(f"no browser ({real(guard_port, http1, home)['proxy']['server']})")
+        raise RuntimeError(f"no browser ({real(guard_port, *args)['proxy']['server']})")
 
     monkeypatch.setattr(browser, "launch_options", failing)
     with pytest.raises(RuntimeError):

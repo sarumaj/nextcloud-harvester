@@ -194,7 +194,8 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
             self._gate.allow(self.loopback)
             port = await asyncio.to_thread(self._gate.start)
         self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(**launch_options(port, http1, home))
+        credentials = self._gate.credentials if self._gate else None
+        self._browser = await self._playwright.chromium.launch(**launch_options(port, http1, home, credentials))
         self._context = await self._new_context(session)
         await self._context.expose_binding("__harvesterReport", self._report)
         await self._context.add_init_script(SCRIPT)

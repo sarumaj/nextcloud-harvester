@@ -21,6 +21,9 @@
   family that did not connect (IPv6 without a route) second for a while. Under load, a download
   through the guard went from about 2 MB/s to some 1.4 GB/s, and a page from 50 sites from 10 s
   to a quarter of a second.
+- **Each browser's guard serves that browser alone:** it asks for credentials of the browser's
+  own (Proxy-Authorization, which Playwright answers), so a browser that reaches another
+  browser's guard, one that took the port of a guard that crashed, say, is refused there.
 
 ## 0.10.0 - 2026-11-02
 

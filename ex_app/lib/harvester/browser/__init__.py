@@ -205,10 +205,13 @@ def http_address(url: str) -> str:
     return {"ws": "http", "wss": "https"}.get(scheme.lower(), scheme) + separator + rest
 
 
-def launch_options(guard: int, http1: bool = False, home: bool = False) -> dict:
+def launch_options(
+    guard: int, http1: bool = False, home: bool = False, credentials: tuple[str, str] | None = None
+) -> dict:
     """How Chromium starts (CHANNEL; HTTP/1.1 only for the sites that cut HTTP/2 connections
     of browsers they distrust), with every connection through its guard on 127.0.0.1 (the
-    guard's port; guard.Guard, which takes the home connection, PROXY, from there on). Without
+    guard's port and its credentials for this browser; guard.Guard, which takes the home
+    connection, PROXY, from there on). Without
     a guard (0: GUARD off), Chromium connects by itself, home through PROXY, its credentials
     given apart as Chromium wants them."""
     args = [*LAUNCH_ARGS, "--disable-blink-features=AutomationControlled", f"--lang={LOCALE}"]
@@ -220,6 +223,9 @@ def launch_options(guard: int, http1: bool = False, home: bool = False) -> dict:
         # by itself ("<-loopback>" removes that implicit exception). Playwright's own requests of
         # the context (context.request) take the same proxy.
         options["proxy"] = {"server": f"http://127.0.0.1:{guard}", "bypass": "<-loopback>"}
+        if credentials:
+            # Playwright answers the guard's 407 with them, for the pages and context.request.
+            options["proxy"] |= {"username": credentials[0], "password": credentials[1]}
     elif home and PROXY:
         address = urlparse(PROXY)
         # Chromium knows socks5 only, and looks up the names at a SOCKS proxy anyway.

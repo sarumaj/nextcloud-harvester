@@ -201,7 +201,8 @@ class BrowserDriver(Driver):
                 self._guard = Guard(self.proxy)
                 port = self._guard.start()
             self._playwright = sync_playwright().start()
-            self._browser = self._playwright.chromium.launch(**browser.launch_options(port, http1, home))
+            credentials = self._guard.credentials if self._guard else None
+            self._browser = self._playwright.chromium.launch(**browser.launch_options(port, http1, home, credentials))
             self.user_agent = browser.user_agent(self._browser.version)
             self.context = self._browser.new_context(
                 **browser.context_options(self._browser.version),
