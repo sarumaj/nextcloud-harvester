@@ -4,6 +4,14 @@
 
 ### Added
 
+- **On-demand jobs:** a job of a website, feed, video or gallery source may run on demand
+  instead of on a schedule: *Fetch a URL…* (or `POST /api/jobs/<id>/fetch`) sends it an address,
+  fetched in place of its own for that run alone, its options unchanged. The addresses wait in
+  the database, in order and each once, listed with the job and cancelled there; files fetched
+  before are not fetched again. A **one-time** job is deleted after a run that went through, its
+  files staying. **Send to Harvester**, a bookmarklet, opens Harvester with the page one is on
+  (`?fetch=`) to fetch it with an on-demand job or to make one from it. A template, *Video on
+  demand*.
 - **The queue for everyone:** a line above the jobs says how many runners and browsers are busy
   (browsers by jobs and by recordings) and how many jobs wait, and a waiting job says its place
   and why (a runner, its site, a browser), without naming anyone else's jobs or sites

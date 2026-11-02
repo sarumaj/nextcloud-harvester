@@ -1,0 +1,49 @@
+{
+  "title": "Video on demand",
+  "source": "media",
+  "description": "No schedule: the videos you send it (Fetch a URL…, or Send to Harvester from the video's page), from YouTube, Vimeo or another site yt-dlp supports, into one folder, tagged.",
+  "parameters": {
+    "name": {
+      "title": "Name",
+      "default": "Videos",
+      "check": "^[^/{}$]{1,80}$",
+      "description": "For the folder and the tag."
+    },
+    "quality": {
+      "title": "Quality",
+      "default": "bv*[height<=1080]+ba/b[height<=1080]",
+      "check": "^[A-Za-z0-9*+/\\[\\]()<>=!?:._,-]{1,200}$",
+      "description": "yt-dlp's format: the best video (up to a height) joined with the best audio, into mp4 where the codecs allow, mkv otherwise.",
+      "suggestions": [
+        {
+          "value": "bv*[height<=1080]+ba/b[height<=1080]",
+          "label": "Up to 1080p"
+        },
+        {
+          "value": "bv*+ba/b",
+          "label": "Best"
+        },
+        {
+          "value": "ba[ext=m4a]/ba/b",
+          "label": "Audio only"
+        }
+      ]
+    }
+  },
+  "job": {
+    "name": "${name}",
+    "source": "media",
+    "target": "/Videos/${name}",
+    "schedule": "",
+    "tags": [
+      "${name}"
+    ],
+    "options": {
+      "url": "",
+      "format": "${quality}",
+      "max_entries": 1,
+      "path": "{uploader}/{title} [{id}].{ext}",
+      "max_items": 1
+    }
+  }
+}

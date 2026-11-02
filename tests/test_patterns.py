@@ -7,6 +7,7 @@ import re
 
 import pytest
 
+from harvester import ondemand
 from harvester.patterns import group_values, propose, render_path, render_tags
 from harvester.presets import PRESETS, make_job
 from harvester.sources.site import Site
@@ -63,6 +64,12 @@ SAMPLES = {
 }
 
 
+def accepted(job: dict) -> dict:
+    """The options a template's job is checked by, as the app checks it: an on-demand job's
+    without an address of its own with a stand-in (each fetch brings one)."""
+    return ondemand.checked_options(job["source"], job["options"]) if not job["schedule"] else job["options"]
+
+
 @pytest.mark.parametrize("preset_id", sorted(PRESETS))
 def test_every_template_makes_a_job_its_source_accepts(preset_id):
     from harvester.sources import SOURCES  # pylint: disable=import-outside-toplevel
@@ -70,7 +77,7 @@ def test_every_template_makes_a_job_its_source_accepts(preset_id):
     preset = PRESETS[preset_id]
     job = make_job(preset_id, {key: value for key, value in SAMPLES.items() if key in preset.get("parameters", {})})
     assert job["source"] in SOURCES and (preset.get("source") or job["source"]) == job["source"]
-    SOURCES[job["source"]](job["options"], {}, None).close()
+    SOURCES[job["source"]](accepted(job), {}, None).close()
     for parameter in preset.get("parameters", {}).values():
         assert parameter["title"] and "description" in parameter
 
@@ -108,7 +115,7 @@ def test_a_templates_suggestions_pass_its_check_and_make_a_job(preset_id, name, 
     assert re.fullmatch(parameter.get("check", ".*"), value), f"{preset_id}: {name} suggests {value}"
     given = {key: sample for key, sample in SAMPLES.items() if key in PRESETS[preset_id]["parameters"]}
     job = make_job(preset_id, given | {name: value})
-    SOURCES[job["source"]](job["options"], {}, None).close()
+    SOURCES[job["source"]](accepted(job), {}, None).close()
 
 
 def test_a_templates_suggestions_are_several_and_labelled_ones_have_a_label():

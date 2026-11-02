@@ -20,6 +20,34 @@ the app's browser or taken from a template, not by code.
   the jobs, a **progress log** of what the runs do (searching, each file downloaded, saved or
   found already there, errors, the outcome), live while one runs, of all jobs or of one; a new
   run clears its job's last message.
+- **On-demand jobs** (`ex_app/lib/harvester/ondemand.py`): a job of a source with an address
+  (`site`: its recipe's listing; `feed`, `media`, `gallery`: their page or feed) may be **On
+  demand**: no schedule (it is never due; the list says *On demand*), and it runs when you send it
+  an address.
+  *Fetch a URL…* beside the job asks for one (`POST /api/jobs/<id>/fetch` with `{"url": ...}`);
+  the run fetches that address in place of the job's own, for that run alone, with everything
+  else the job's (folder, file names, tags, account, files per run, the home connection). The
+  job's own address may stay empty (each fetch brings one; *Run now* then is not offered). The
+  address is checked first as the source checks its own (http(s), not a local or private host);
+  a job with an account and an address of its own fetches only that site's addresses (the same
+  host, with or without `www.`, or a subdomain), since its user name and password are for that
+  site. `mail`, `remote` and `releases` have no address a page could send: no on-demand jobs.
+  The addresses wait in the database (a restart loses none), one after another per job, each
+  once (sent again while it waits, it keeps its place); a job's next address goes back to the
+  queue's end, behind other jobs. The job's row lists them, the one being fetched (*Stop* ends
+  it) and the others with *Cancel* (`DELETE /api/jobs/<id>/fetch/<fetch id>`); its waiting reason
+  counts them. The log names each address (*Fetching https://...*, and the outcome after it); the
+  files a job fetched before are not fetched again, from any address, and the log says how many
+  were skipped so. A job put back on a schedule drops the addresses still waiting.
+  **One-time:** an on-demand job may be deleted after a run that went through (once the
+  addresses waiting for it are fetched; not after a stop), with its account and session; its
+  files stay, and a notification says what it did. One that failed is kept, to show why.
+  **Send to Harvester:** below the jobs, a bookmarklet to drag to the bookmarks bar opens
+  Harvester's page (`/index.php/apps/app_api/embedded/harvester/harvester?fetch=<the page>`),
+  which asks which on-demand job fetches the page, or makes a new one from it: one button per
+  source with an address, its form filled with the page as the job's address, *On demand* on;
+  saved, it fetches the page at once. The page takes `fetch` out of its own address, so a reload
+  shows the jobs.
 - **Sources** (`ex_app/lib/harvester/sources/`), one card each on the *New job* page:
   - `site`: files linked from a website's pages, by a recipe (below).
   - `mail`: attachments of the messages in an IMAP mailbox (TLS), filtered by sender, subject,
@@ -227,7 +255,7 @@ the app's browser or taken from a template, not by code.
   same connection the pages and downloads use, so it is the proxy's address only when the proxy
   is really used.
 - **Notifications:** a job that needs a person, or fails, notifies its user; the same failure
-  again on the next runs does not.
+  again on the next runs does not. A one-time job tells what it did as it is deleted.
 - **Templates** (`ex_app/lib/harvester/presets/*.json`), jobs with a few parameters, one card
   each on the *New job* page. A parameter may suggest values (`suggestions`: values, or
   `{value, label}` shown by the label, each passing its `check`), offered as buttons on the card:
@@ -239,6 +267,7 @@ the app's browser or taken from a template, not by code.
   - `mail-invoices`: invoices (PDF attachments) from a sender;
   - `podcast`: a podcast's episodes;
   - `video-channel` and `channel-audio`: a channel's newest videos, or their audio;
+  - `video-on-demand`: an on-demand job for the videos you send it, into one folder;
   - `gallery`: a gallery or album's images;
   - `nextcloud-share`: the folder of another Nextcloud's public link;
   - `app-releases`: an application's release downloads, of its newest release.
