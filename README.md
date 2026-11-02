@@ -323,6 +323,26 @@ the app's browser or taken from a template, not by code.
   user agent and one language and time zone for recordings and runs (`HARVESTER_LOCALE`,
   `HARVESTER_TIMEZONE`, default `en-US`, `Europe/Berlin`). A website job's **HTTP/1.1 only**
   serves the sites that cut HTTP/2 connections, in the recorder too.
+- **Disguise the browser** (`browser/engine.py`; a website job's option, off by default): for
+  sites whose bot check refuses the browser otherwise, the job's browser starts with
+  [Patchright](https://github.com/Kaliiiiiiiiii-Vinyzu/patchright-python), a fork of Playwright
+  patched where Playwright gives an automated browser away, instead of Playwright: the page sees
+  none of Playwright's globals (`__playwright__binding__`, `__pwWebSocketDispatch`), its scripts
+  run in isolated worlds, and Chromium starts without the automation's switches. Everything else
+  is the same: the Chromium, the guard with the browser's credentials, the routes, the language,
+  time zone and window. The job's runs, its **Test the recipe** and **Continue in the browser**
+  take the job's flag (a challenge answered there is answered under the fingerprint the runs
+  have, so Cloudflare's `cf_clearance` fits them), a new recording the form's. What it does not
+  do: it answers no challenge (a person still does, in the browser), it does not change the
+  address sites see (from a server's address Cloudflare may refuse it all the same: **Through
+  the proxy** with a home connection helps most), and it does not make the downloads over HTTP
+  look like the browser. It hides what a page reads of the automation, not the server: in tests
+  from a server's address, bot.sannysoft.com found the same with and without it (only the WebGL
+  renderer, a software one, failed), and Cloudflare's managed challenge on a test page stayed
+  until a person answers it, either way. Patchright applies no WebSocket route, so a disguised
+  page's WebSockets are checked by its guard alone: while the admin has the guard off, a
+  disguised browser does not start (the job fails, saying so). In **Continue in the browser**
+  and the recorder, recorder.js and its binding are in the page, disguised or not.
 - **Downloads:** a pause between files; waits when the site asks (429 or 503 with
   `Retry-After`, or a wait pattern on the URL it redirects to, like heise's `wait_sec=`) and
   three retries of a broken transfer; never a web page instead of a file; expected file types

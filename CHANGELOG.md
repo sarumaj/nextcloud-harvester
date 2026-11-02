@@ -4,6 +4,14 @@
 
 ### Added
 
+- **Disguise the browser** (website jobs, off by default): the job's browser, its *Test the
+  recipe* and **Continue in the browser** start with Patchright (Playwright patched against bot
+  checks: none of Playwright's globals in the page, its scripts in isolated worlds, no
+  automation switches) instead of Playwright, with the same Chromium, guard and options; a new
+  recording takes the form's flag. For sites whose bot check refuses the browser otherwise; it
+  answers no challenge. A page's WebSockets are checked by the guard alone (Patchright applies
+  no WebSocket route), so no disguised browser starts while the guard is off. The image gains
+  some 20 MB (Patchright shares Playwright's Chromium and Node.js).
 - **Impersonate a browser** (videos and galleries): yt-dlp's own impersonation (`curl_cffi`,
   now in the image: extractors that need it, Dailymotion's say, use it by themselves) for all of
   a job's requests and the generic extractor (`generic:impersonate`), for sites behind
