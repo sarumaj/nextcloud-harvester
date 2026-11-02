@@ -553,8 +553,11 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
         self.driver: Driver | None = None
         self.kept: dict | None = None
         self.sleep: Callable[[float], None] = time.sleep
-        # Told of each listing page the walk reads (survey(): the recipe's test).
-        self.observe: Callable[[dict], None] = lambda event: None
+        # Told of each listing page the walk reads (survey(): the recipe's test; a job's run:
+        # what each level found, watch.Watch). It may answer what went wrong there: the walk then
+        # keeps a picture of the page (noticed), apart from a failure's (shot).
+        self.observe: Callable[[dict], str | None] = lambda event: None
+        self.noticed: dict | None = None
         self._shot: dict | None = None
 
     def _saw(self, shot: dict) -> None:
@@ -611,7 +614,9 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
                     found.append((url, text, patterns.group_values(match)))
             kind = "follow" if spec is not self.recipe["links"] else "links"
             where = {"level": level, "page": number, "url": driver.address(page), "kind": kind}
-            self.observe(where | {"selector": spec["selector"], "found": len(links), "matching": len(found)})
+            what = self.observe(where | {"selector": spec["selector"], "found": len(links), "matching": len(found)})
+            if what:
+                self.noticed = snapshot(page, what)
             return found
 
         # A page without the links it should have may be asking for a person instead; the start
@@ -717,8 +722,10 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
         pattern matched, the first file links with their file names, and the problems met. It
         ends after that many files or pages, or when stopped (Stopped)."""
         result: dict = {"pages": [], "problems": [], "files": 0, "ended": "complete", "shot": None}
+        # An observer set before (a job's weekly test) hears of the pages too.
+        outer = self.observe
 
-        def observe(event: dict) -> None:
+        def observe(event: dict) -> str | None:
             if len(result["pages"]) >= pages:
                 raise Stopped("pages")
             where = "the listing" if event["level"] == 0 else f"a level {event['level']} page"
@@ -728,6 +735,7 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
             elif not event["matching"]:
                 result["problems"].append(f"{where}: none of its {event['found']} links matched the pattern")
             result["pages"].append(event | {"files": []})
+            return outer(event)
 
         self.observe = observe
         items = self.items(lambda key: False)
@@ -745,13 +753,15 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
             result["ended"] = str(stop) if str(stop) in ("pages", "time") else "stopped"
         except (SourceError, PlaywrightError) as error:
             result["ended"] = "failed"
+            # Its kind: a page that asks for a person, or a refused sign-in, is no changed site.
+            result["error"] = type(error).__name__
             result["problems"].append((str(error) or type(error).__name__).splitlines()[0])
         finally:
             # The walk's pages close; a test stopped meanwhile cannot close them (its browser
             # context goes as a whole).
             with contextlib.suppress(Exception):
                 items.close()
-            self.observe = lambda event: None
+            self.observe = outer
         result["shot"] = self.shot
         return result
 

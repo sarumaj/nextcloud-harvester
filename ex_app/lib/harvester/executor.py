@@ -21,8 +21,9 @@ from nc_py_api import AsyncNextcloudApp
 
 from . import browser, ondemand, runner, settings
 from .schedule import zone
+from .watch import Watch, test_due
 from .nextcloud import NextcloudLibrary
-from .sources import MARK, SOURCES, AuthError, ChallengeError, Source, Stopped
+from .sources import MARK, SOURCES, AuthError, ChallengeError, Source, SourceError, Stopped
 from .sources.base import watch_stop
 from .sources.download import guarded_client
 from .store import Job, Store
@@ -190,6 +191,9 @@ class Executor:
         # to their files: a job's tags before a change are the database's (Store.retag_from),
         # and its next turn brings the files' tags up to date first.
         self._wanted: set[int] = set()
+        # The queued jobs whose recipe is to be tested (watch.py), unless a run comes first (it
+        # judges what it finds the same way).
+        self._tests: set[int] = set()
         self._lock = threading.Lock()
         self._events: asyncio.AbstractEventLoop | None = None
         self._events_lock = threading.Lock()
@@ -300,6 +304,13 @@ class Executor:
             self._queued[job_id] = None
         self.requests.put(job_id)
 
+    def request_test(self, job_id: int) -> None:
+        """Tests the website job's recipe as soon as a runner and its site are free (its weekly
+        test, or Test the recipe from its row): nothing is downloaded."""
+        with self._lock:
+            self._tests.add(job_id)
+        self.request(job_id, run=False)
+
     def fetch(self, job_id: int, url: str) -> tuple[dict, bool]:
         """Queues the address for the on-demand job (checked by ondemand.fetch_problem): its run
         comes after the addresses sent before. Returns the fetch, and whether it is new (an
@@ -373,12 +384,23 @@ class Executor:
             # Whatever goes wrong here (the database, a bug), the thread goes on: else no job
             # would run again until the app restarts, and nobody would be told.
             try:
-                for job in self.store.jobs():
-                    if job.id is not None and job.id not in self.controls and is_due(job, time.time()):
-                        self.request(job.id)
+                self.schedule_turn(time.time())
             except Exception:  # pylint: disable=broad-exception-caught
                 LOG.exception("the schedule's turn failed")
             time.sleep(60)
+
+    def schedule_turn(self, now: float) -> None:
+        """Queues the jobs that are due (unless running or queued), and the recipe tests that are
+        (watch.test_due)."""
+        for job in self.store.jobs():
+            if job.id is None or job.id in self.controls:
+                continue
+            if is_due(job, now):
+                self.request(job.id)
+            elif test_due(job, self.store.tested(job.id), now):
+                # Counted from now: a test that waits for its turn is not asked for again.
+                self.store.set_tested(job.id, now)
+                self.request_test(job.id)
 
     def _runner(self, number: int = 0) -> None:  # pylint: disable=too-many-branches
         """Takes the queued jobs one after another; one whose site is busy waits its turn. A
@@ -416,13 +438,21 @@ class Executor:
                     with self._lock:
                         wanted = job_id in self._wanted
                         self._wanted.discard(job_id)
+                # A recipe's test, unless a run judges the site anyway (a fetch's address is
+                # another page: the test waits for the next turn).
+                with self._lock:
+                    testing = job_id in self._tests and fetch is None
+                    if testing:
+                        self._tests.discard(job_id)
                 try:
                     self.run(job, wanted, fetch)
+                    if testing and not wanted:
+                        self.test(job)
                 finally:
                     with self._lock:
                         self.controls.pop(job_id, None)
                         self._sites.pop(job_id, None)
-                        again = job_id in self._wanted
+                        again = job_id in self._wanted or job_id in self._tests
                     # Its next turn: a run asked for meanwhile, or the next address.
                     if again or self.store.fetches([job_id]):
                         self.request(job_id, run=False)
@@ -442,7 +472,7 @@ class Executor:
             self._queued.pop(job.id, None)
             return True
 
-    def run(  # pylint: disable=too-many-locals,too-many-statements
+    def run(  # pylint: disable=too-many-locals,too-many-statements,too-many-branches
         self, job: Job, wanted: bool = True, fetch: dict | None = None
     ) -> None:
         """Runs the job and records how it went; a new failure is also a notification to its user.
@@ -465,6 +495,7 @@ class Executor:
         self._begin(job_id, control, wanted, previous is not None, fetch)
         nc = self.connect()
         source = None
+        watch = None
         message = ""
         try:
             self.call(nc.set_user(job.user))
@@ -488,6 +519,7 @@ class Executor:
                     if previous is not None:
                         message = self._retag_turn(job, source, library, control, previous, wanted, nc)
                     if wanted:
+                        watch = self._watch(job, source, fetch)
                         message = self._work(job, source, library, control, started, None, fetch)
                 finally:
                     # Kept also after a failure: cookies set before it (a sign-in) still count;
@@ -498,15 +530,144 @@ class Executor:
                             self.call(save_session(nc, job, source.session()))
                     finally:
                         source.close()
-            self._succeeded(job_id, control, wanted, f"{fetch['url']}: {message}" if fetch else message, nc)
+            if not self._changed(job, watch, source, nc, message):
+                self._succeeded(job_id, control, wanted, f"{fetch['url']}: {message}" if fetch else message, nc)
         except Exception as error:  # pylint: disable=broad-exception-caught
-            self._failed(job, nc, error, not wanted, getattr(source, "shot", None))
+            # A listing that finds none of its links fails the run; where it found them before,
+            # the site changed. A page asking for a person, or a refused sign-in, is no change.
+            plain_error = isinstance(error, SourceError) and not isinstance(error, (AuthError, ChallengeError))
+            if not (plain_error and self._changed(job, watch, source, nc, str(error), failed=True)):
+                self._failed(job, nc, error, not wanted, getattr(source, "shot", None))
         finally:
             watch_stop(None)
             if fetch is not None:
                 self.store.drop_fetch(fetch["id"])
             with self._lock:
                 self.controls.pop(job_id, None)
+
+    def _watch(self, job: Job, source: Source, fetch: dict | None) -> Watch | None:
+        """What the run's walk finds, level by level, for a website job's own runs (not a fetch's:
+        another address, another page), judged by its last good runs."""
+        if fetch is not None or not hasattr(source, "observe"):
+            return None
+        watch = Watch(self.store.summaries(job.id or 0))
+        setattr(source, "observe", watch)
+        return watch
+
+    def _changed(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self,
+        job: Job,
+        watch: Watch | None,
+        source: Source | None,
+        nc: AsyncNextcloudApp,
+        message: str,
+        failed: bool = False,
+        run: bool = True,
+    ) -> bool:
+        """Keeps what the run (or, run False, the recipe's test) found; when a level found less
+        than in the job's last good runs, it ends "changed" (neither OK nor failed): the progress
+        log says which level and selector, with the picture of its page, and its person is told
+        once (not again while it stays changed). message is what the run did, or why it failed
+        (failed: then it is no good run, and unless changed the caller records the failure)."""
+        if watch is None or not watch.levels:
+            return False
+        job_id = job.id or 0
+        change = watch.change()
+        self.store.add_summary(job_id, watch.summary(), good=change is None and not failed)
+        if change is None:
+            return False
+        if not self.store.job(job_id):
+            return True  # deleted while it ran: nobody to tell
+        line = self.store.log(job_id, "warning", f"The site seems to have changed: {change['detail']}")
+        picture = getattr(source, "noticed", None)
+        if picture:
+            self.store.keep_shot(job_id, line, picture)
+        text = f"The site seems to have changed: {change['reason']}"
+        if run:
+            self.store.finish(job_id, "changed", f"{text}; {message}" if message else text)
+        else:
+            # A test is no run: the job's schedule counts from its last run still.
+            self.store.mark(job_id, "changed", text)
+        LOG.warning("job %s (%s) changed: %s", job_id, job.user, change["detail"])
+        if job.last_status != "changed":
+            self.notify(
+                nc,
+                f"Harvester: {job.name} — the site seems to have changed: {change['reason']}",
+                f"{change['detail']}. Test the recipe (its form's recorder) and pick the links anew.",
+            )
+        return True
+
+    def test(self, job: Job) -> None:
+        """Tests the website job's recipe (Site.survey: its walk, nothing downloaded) with its
+        account and kept session, and judges what it found as a run's ("changed", told once); a
+        test that finds the site as before ends the warning. Its last run (and its schedule)
+        stay. Logged in the job's progress log."""
+        assert job.id is not None
+        job_id = job.id
+        with self._lock:
+            control = self.controls.setdefault(job_id, Control())
+        control.thread = threading.get_ident()
+        watch_stop(control.stopped)
+        self.store.log(job_id, "info", "Testing the recipe (nothing is downloaded)")
+        nc = self.connect()
+        try:
+            self.call(nc.set_user(job.user))
+            credentials = self._credentials(nc, job)
+            home = bool(int(job.options.get("home", 0) or 0)) and bool(browser.PROXY)
+            with guarded_client(**({"proxy": browser.PROXY} if home else {})) as client:
+                source = SOURCES[job.source](job.options, credentials, client)
+                source.home = home
+                setattr(source, "sleep", control.nap)
+                kept = self.call(load_session(nc, job))
+                if kept:
+                    source.restore(kept)
+                watch = Watch(self.store.summaries(job_id))
+                setattr(source, "observe", watch)
+                try:
+                    result = getattr(source, "survey")()
+                finally:
+                    try:
+                        if self.store.job(job_id) and self._credentials(nc, job) == credentials:
+                            self.call(save_session(nc, job, source.session()))
+                    finally:
+                        source.close()
+            self._tested(job, result, watch, source, nc)
+        except Exception as error:  # pylint: disable=broad-exception-caught
+            self.store.log(job_id, "error", f"The recipe's test failed: {error or type(error).__name__}")
+        finally:
+            watch_stop(None)
+            with self._lock:
+                self.controls.pop(job_id, None)
+
+    def _tested(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self, job: Job, result: dict, watch: Watch, source: Source, nc: AsyncNextcloudApp
+    ) -> None:
+        """The recipe test's outcome in the progress log, judged as a run's."""
+        job_id = job.id or 0
+        for problem in result["problems"]:
+            self.store.log(job_id, "info", f"Test: {problem}")
+        pages = len(result["pages"])
+        summary = f"The recipe's test: {result['files']} file links on {pages} page{'s' if pages != 1 else ''}"
+        if result.get("error") in ("ChallengeError", "AuthError"):
+            # Not the site's change: the run says so (Needs you, Sign-in refused) when it comes.
+            self.store.log(job_id, "error", f"{summary}; it ended: {result['problems'][-1]}")
+            return
+        if result["ended"] == "stopped":
+            self.store.log(job_id, "done", f"{summary}; stopped")
+            return
+        failure = result["problems"][-1] if result["ended"] == "failed" else ""
+        if self._changed(job, watch, source, nc, failure, failed=bool(failure), run=False):
+            return
+        latest = self.store.job(job_id)
+        if failure:
+            line = self.store.log(job_id, "error", f"{summary}; it failed: {failure}")
+            if result.get("shot"):
+                self.store.keep_shot(job_id, line, result["shot"])
+        else:
+            self.store.log(job_id, "done", f"{summary}: as before")
+            # Found as before: a warning of a changed site is over (the next run says the rest).
+            if latest and latest.last_status == "changed":
+                self.store.mark(job_id, "ok", "The recipe's test found the site as before")
 
     def _succeeded(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self, job_id: int, control: Control, wanted: bool, message: str, nc: AsyncNextcloudApp
