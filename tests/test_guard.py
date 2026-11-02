@@ -15,10 +15,11 @@ import dataclasses
 import socket
 import threading
 import time
+from urllib.parse import urlsplit
 
 import pytest
 
-from conftest import PUBLIC
+from conftest import PUBLIC, needs_loopback
 from harvester import browser
 from harvester.browser import guard
 from harvester.browser.guard import Guard
@@ -157,6 +158,7 @@ def test_a_name_that_does_not_resolve_is_refused(monkeypatch):
     assert checked("nowhere.example") == "the name does not resolve"
 
 
+@needs_loopback
 def test_a_tunnel_goes_to_the_checked_address(sites):
     async def run():
         server = await echo_server()
@@ -172,6 +174,7 @@ def test_a_tunnel_goes_to_the_checked_address(sites):
     assert sites.dialed == [f"{PUBLIC}:443"]
 
 
+@needs_loopback
 def test_a_refused_tunnel_is_answered_and_kept(sites, monkeypatch):
     resolving(monkeypatch, {"127.0.0.1.nip.io": ["127.0.0.1"]})
 
@@ -192,6 +195,7 @@ def test_a_refused_tunnel_is_answered_and_kept(sites, monkeypatch):
     assert not sites.dialed, "nothing refused is connected"
 
 
+@needs_loopback
 def test_a_plain_request_goes_on_in_origin_form(sites):
     heads: list[bytes] = []
 
@@ -215,6 +219,7 @@ def test_a_plain_request_goes_on_in_origin_form(sites):
     assert not any(line.lower().startswith(("proxy-", "connection: keep")) for line in lines)
 
 
+@needs_loopback
 def test_bad_requests_are_refused():
     async def run(proxy: Guard):
         for head in (
@@ -234,6 +239,7 @@ def test_bad_requests_are_refused():
 # DNS rebinding: one lookup, the checked address
 
 
+@needs_loopback
 def test_the_name_is_looked_up_once_and_its_checked_address_connected(sites, monkeypatch):
     asked: list[str] = []
     answers = iter([[PUBLIC], ["127.0.0.1"], ["127.0.0.1"]])
@@ -266,6 +272,7 @@ def test_the_name_is_looked_up_once_and_its_checked_address_connected(sites, mon
     assert sites.dialed == [f"{PUBLIC}:443"], "the checked address, never the name"
 
 
+@needs_loopback
 def test_an_address_that_hangs_holds_up_the_next_one_briefly(sites, monkeypatch):
     resolving(monkeypatch, {"dual.example": ["2001:db8:1::1", "2001:db8:1::2", PUBLIC]})
     real = guard.dial
@@ -311,6 +318,7 @@ def test_interleaved_families():
     assert guard.interleaved(["1.1.1.1"]) == ["1.1.1.1"]
 
 
+@needs_loopback
 def test_a_site_that_does_not_answer_is_a_bad_gateway(sites):
     async def run(proxy: Guard):
         _, writer, answer = await tunnel(proxy.port, "news.example:443")  # no stand-in: refused
@@ -326,20 +334,31 @@ def test_a_site_that_does_not_answer_is_a_bad_gateway(sites):
 
 
 async def http_proxy(seen: list[str], sites: Sites, refuse: bool = False) -> asyncio.Server:
-    """A stand-in http proxy: CONNECTs to the stand-in sites, plain requests answered itself."""
+    """A stand-in http proxy like tinyproxy: CONNECTs to the stand-in sites; a request with the
+    whole address goes on with a Host header rebuilt from that address."""
 
     async def serve(reader, writer):
         head = (await reader.readuntil(b"\r\n\r\n")).decode()
         seen.append(head)
-        method, target, _ = head.split("\r\n", 1)[0].split(" ")
-        if method != "CONNECT":
-            writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nproxed")
-        elif refuse:
+        method, target, version = head.split("\r\n", 1)[0].split(" ")
+        if refuse:
             writer.write(b"HTTP/1.1 407 Proxy Authentication Required\r\n\r\n")
-        else:
+        elif method == "CONNECT":
             host, port = target.rsplit(":", 1)
             site_reader, site_writer = await asyncio.open_connection("127.0.0.1", sites.routes[(host, int(port))])
             writer.write(b"HTTP/1.1 200 Connection established\r\n\r\n")
+            await guard.pipe(reader, writer, site_reader, site_writer)
+            site_writer.close()
+        else:
+            address = urlsplit(target)
+            site_reader, site_writer = await asyncio.open_connection(
+                "127.0.0.1", sites.routes[(address.hostname, address.port or 80)]
+            )
+            kept = [
+                line for line in head.split("\r\n")[1:] if line and not line.lower().startswith(("host:", "proxy-"))
+            ]
+            rebuilt = [f"{method} {address.path} {version}", f"Host: {address.netloc}", *kept]
+            site_writer.write(("\r\n".join(rebuilt) + "\r\n\r\n").encode())
             await guard.pipe(reader, writer, site_reader, site_writer)
             site_writer.close()
         await writer.drain()
@@ -348,12 +367,31 @@ async def http_proxy(seen: list[str], sites: Sites, refuse: bool = False) -> asy
     return await asyncio.start_server(serve, "127.0.0.1", 0)
 
 
+async def named_site(heads: list[bytes]) -> asyncio.Server:
+    """A site served by name (a virtual host): news.example answers "ok", any other Host 404."""
+
+    async def answer(reader, writer):
+        head = await reader.readuntil(b"\r\n\r\n")
+        heads.append(head)
+        if b"\r\nHost: news.example\r\n" in head:
+            writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+        else:
+            writer.write(b"HTTP/1.1 404 Not Found\r\nContent-Length: 7\r\nConnection: close\r\n\r\nno site")
+        await writer.drain()
+        writer.close()
+
+    return await asyncio.start_server(answer, "127.0.0.1", 0)
+
+
+@needs_loopback
 def test_the_home_connection_gets_the_checked_address_with_credentials(sites):
     seen: list[str] = []
+    heads: list[bytes] = []
 
     async def run():
-        site, home = await echo_server(), await http_proxy(seen, sites)
+        site, named, home = await echo_server(), await named_site(heads), await http_proxy(seen, sites)
         sites.routes[(PUBLIC, 443)] = port_of(site)
+        sites.routes[(PUBLIC, 80)] = port_of(named)
         sites.routes[("proxy.example", 3128)] = port_of(home)
         with Guard("http://anna%40home:p%3Ass@proxy.example:3128") as proxy:
             reader, writer, answer = await tunnel(proxy.port, "news.example:443")
@@ -365,20 +403,27 @@ def test_the_home_connection_gets_the_checked_address_with_credentials(sites):
             reader, writer, answer = await ask(
                 proxy.port, "GET http://news.example/feed HTTP/1.1\r\nHost: news.example\r\n\r\n"
             )
-            assert answer.startswith("HTTP/1.1 200") and await reader.read() == b"proxed"
+            assert answer.startswith("HTTP/1.1 200") and await reader.read() == b"ok", "the site by its name"
             writer.close()
-        site.close()
-        home.close()
+        # The stand-in does rebuild Host: the whole address with the checked one would miss the site.
+        reader, writer = await asyncio.open_connection("127.0.0.1", port_of(home))
+        writer.write(f"GET http://{PUBLIC}/feed HTTP/1.1\r\nHost: news.example\r\n\r\n".encode())
+        assert (await asyncio.wait_for(reader.read(), 5)).startswith(b"HTTP/1.1 404")
+        writer.close()
+        for server in (site, named, home):
+            server.close()
 
     asyncio.run(run())
     credentials = base64.b64encode(b"anna@home:p:ss").decode()
     assert seen[0].startswith(f"CONNECT {PUBLIC}:443 HTTP/1.1\r\n")
     assert f"Proxy-Authorization: Basic {credentials}\r\n" in seen[0]
-    assert len(seen) == 2, "the refused address never reached the proxy"
-    assert seen[1].startswith(f"GET http://{PUBLIC}:80/feed HTTP/1.1\r\n") and "Host: news.example\r\n" in seen[1]
+    assert seen[1].startswith(f"CONNECT {PUBLIC}:80 HTTP/1.1\r\n"), "plain http through a tunnel too"
     assert f"Proxy-Authorization: Basic {credentials}\r\n" in seen[1]
+    assert len(seen) == 3, "the refused address never reached the proxy (the third: the check above)"
+    assert heads[0].startswith(b"GET /feed HTTP/1.1\r\n") and b"Connection: close" in heads[0]
 
 
+@needs_loopback
 def test_a_proxy_that_refuses_is_told(sites):
     async def run():
         home = await http_proxy([], sites, refuse=True)
@@ -421,6 +466,7 @@ async def socks_proxy(seen: list[bytes], sites: Sites) -> asyncio.Server:
     return await asyncio.start_server(serve, "127.0.0.1", 0)
 
 
+@needs_loopback
 def test_a_socks_proxy_gets_the_checked_address_never_the_name(sites):
     seen: list[bytes] = []
 
@@ -447,6 +493,7 @@ def test_an_unknown_proxy_is_refused():
 # rclone's sign-in: one local address, for one browser, while allowed
 
 
+@needs_loopback
 @pytest.mark.usefixtures("sites")
 def test_the_sign_in_browsers_guard_alone_opens_rclones_listener():
     async def run():
@@ -489,6 +536,7 @@ def test_the_recorders_exception_reaches_its_guard():
 # Limits
 
 
+@needs_loopback
 def test_a_head_too_large_is_refused():
     async def run(proxy: Guard):
         _, writer, answer = await ask(
@@ -501,6 +549,7 @@ def test_a_head_too_large_is_refused():
         asyncio.run(run(proxy))
 
 
+@needs_loopback
 def test_connections_beyond_the_limit_are_refused(sites, monkeypatch):
     monkeypatch.setattr(guard, "CONNECTIONS", 2)
 
@@ -524,6 +573,7 @@ def test_connections_beyond_the_limit_are_refused(sites, monkeypatch):
     asyncio.run(run())
 
 
+@needs_loopback
 def test_idle_and_silent_connections_are_closed(sites, monkeypatch):
     monkeypatch.setattr(guard, "IDLE_TIMEOUT", 0.3)
     monkeypatch.setattr(guard, "HEAD_TIMEOUT", 0.3)
@@ -546,6 +596,7 @@ def test_idle_and_silent_connections_are_closed(sites, monkeypatch):
     asyncio.run(run())
 
 
+@needs_loopback
 def test_a_slow_reader_holds_the_stream_back(sites):
     """Nothing is buffered without bound: a browser that reads nothing stops the site's sending
     after a few chunks."""
@@ -585,6 +636,7 @@ def refuses(port: int) -> bool:
         return True
 
 
+@needs_loopback
 def test_stopping_frees_the_port_and_closes_the_connections(sites):
     threads = threading.active_count()
 
@@ -611,6 +663,7 @@ def test_stopping_frees_the_port_and_closes_the_connections(sites):
     assert threading.active_count() <= threads, "its threads end"
 
 
+@needs_loopback
 def test_the_jobs_browser_stops_its_guard_on_every_path(monkeypatch):
     from test_browser import needs_chromium  # pylint: disable=import-outside-toplevel
 
@@ -620,10 +673,12 @@ def test_the_jobs_browser_stops_its_guard_on_every_path(monkeypatch):
 
     free = browser.free_browsers()
     driver = site.BrowserDriver([], {})
-    assert driver._guard is not None
-    port = driver._guard.port
-    assert not refuses(port)
-    driver.close()
+    try:
+        assert driver._guard is not None
+        port = driver._guard.port
+        assert not refuses(port)
+    finally:
+        driver.close()
     assert refuses(port) and browser.free_browsers() == free
 
     ports: list[int] = []
@@ -639,6 +694,7 @@ def test_the_jobs_browser_stops_its_guard_on_every_path(monkeypatch):
     assert refuses(ports[0]) and browser.free_browsers() == free, "a failed start frees both"
 
 
+@needs_loopback
 def test_the_recorders_guard_stops_with_it():
     from test_browser import needs_chromium  # pylint: disable=import-outside-toplevel
 
@@ -649,11 +705,13 @@ def test_the_recorders_guard_stops_with_it():
     async def run():
         recorder = Recorder(lambda message: asyncio.sleep(0))
         recorder.loopback = "http://127.0.0.1:53682"
-        await recorder.start()
-        assert recorder._gate is not None and recorder._gate._loopback == ("127.0.0.1", 53682)
-        port = recorder._gate.port
-        assert not refuses(port)
-        await recorder.close()
+        try:
+            await recorder.start()
+            assert recorder._gate is not None and recorder._gate._loopback == ("127.0.0.1", 53682)
+            port = recorder._gate.port
+            assert not refuses(port)
+        finally:
+            await recorder.close()  # also when a check fails: no browser left to the next tests
         return port
 
     assert refuses(asyncio.run(run()))
@@ -674,6 +732,7 @@ PEER = """async server => {
 }"""
 
 
+@needs_loopback
 def test_chromium_goes_through_its_guard_for_everything(sites, monkeypatch):  # pylint: disable=too-many-locals
     """A worker's WebSocket and a page's fetch to the loopback and the private network are
     refused at the guard (the routes, the second layer, are not set here); a public page loads."""

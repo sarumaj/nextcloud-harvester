@@ -10,8 +10,10 @@ allowed_host), and connects to an address it checked, never looking the name up 
 
 https and WebSockets come as CONNECT (a tunnel), plain http as a request with the whole address,
 which goes on in origin form. With the home connection (browser.PROXY: http, https, socks5 or
-socks5h), the guard checks the destination first and then asks the proxy for the checked address,
-never the name: the proxy is the one address the guard connects to unchecked. A browser's guard
+socks5h), the guard checks the destination first and then asks the proxy for a tunnel to the
+checked address, never the name (CONNECT for plain http too: a proxy that took the request whole
+would rebuild its Host header from the address, and sites by name would not answer): the proxy is
+the one address the guard connects to unchecked. A browser's guard
 may also let it open one local address (allow: rclone's sign-in listener, while rclone runs).
 
 One guard per browser, on 127.0.0.1 with a port of its own, in a thread with its own event loop:
@@ -264,11 +266,12 @@ class Guard:  # pylint: disable=too-many-instance-attributes
             return await self._plain(parts, lines[1:])
         server = await self._connect(*split_target(parts[1]))
         writer.write(b"HTTP/1.1 200 Connection established\r\n\r\n")
-        return server[0], server[1]
+        return server
 
     async def _plain(self, parts: list[str], lines: list[str]) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
         """Sends a plain http request on (method, address, version; its header lines) to the
-        checked address, in origin form (or to an http proxy, with the checked address)."""
+        checked address in origin form, with the site's Host header (through the proxy's tunnel,
+        if any)."""
         method, target, version = parts
         try:
             address = urlsplit(target)
@@ -278,21 +281,13 @@ class Guard:  # pylint: disable=too-many-instance-attributes
         if address.scheme != "http" or not host:
             raise Refused(400, "only http:// addresses (https comes as CONNECT)")
         path = (address.path or "/") + (f"?{address.query}" if address.query else "")
-        reader, writer, checked = await self._connect(host, port, plain=True)
-        if self.upstream and self.upstream.scheme in ("http", "https"):
-            # An http proxy takes the whole address: the checked one, with the site's Host header.
-            line = f"{method} http://{checked}{path} {version}\r\n{self.upstream.authorization}"
-        else:
-            line = f"{method} {path} {version}\r\n"
-        writer.write((line + sent_headers(lines) + "\r\n").encode("latin-1"))
+        reader, writer = await self._connect(host, port)
+        writer.write((f"{method} {path} {version}\r\n" + sent_headers(lines) + "\r\n").encode("latin-1"))
         return reader, writer
 
-    async def _connect(
-        self, host: str, port: int, plain: bool = False
-    ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter, str]:
-        """A connection to the host's checked address (through the upstream proxy if any), with
-        the address and port it went to; else Refused. plain: an http request that an http proxy
-        takes as it is (no tunnel)."""
+    async def _connect(self, host: str, port: int) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+        """A connection to the host's checked address (through the upstream proxy if any); else
+        Refused."""
         try:
             addresses = await self.check(host, port)
         except Refused as refused:
@@ -302,14 +297,14 @@ class Guard:  # pylint: disable=too-many-instance-attributes
 
         async def attempt(address: str) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
             if self.upstream and (host, port) != self._loopback:
-                return await asyncio.wait_for(self._via_upstream(address, port, plain), CONNECT_TIMEOUT)
+                return await asyncio.wait_for(self._via_upstream(address, port), CONNECT_TIMEOUT)
             return await asyncio.wait_for(dial(address, port), CONNECT_TIMEOUT)
 
         try:
-            (reader, writer), address = await race(interleaved(addresses), attempt)
+            (reader, writer), _ = await race(interleaved(addresses), attempt)
         except (OSError, TimeoutError, asyncio.IncompleteReadError) as error:
             raise Refused(502, f"{host} did not answer ({type(error).__name__})") from error
-        return reader, writer, host_port(f"{address}:{port}")
+        return reader, writer
 
     async def check(self, host: str, port: int) -> list[str]:
         """The addresses the browser may reach the host at (each one public), looked up once;
@@ -334,18 +329,16 @@ class Guard:  # pylint: disable=too-many-instance-attributes
             raise Refused(403, "not a public address")
         return [str(address) for address in found]
 
-    async def _via_upstream(
-        self, address: str, port: int, plain: bool
-    ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
-        """A connection to the address through the upstream proxy: a tunnel (CONNECT, SOCKS5),
-        or for a plain request to an http proxy the proxy's connection itself."""
+    async def _via_upstream(self, address: str, port: int) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+        """A tunnel to the address through the upstream proxy (CONNECT, SOCKS5), whatever goes
+        through it."""
         upstream = self.upstream
         assert upstream is not None
         reader, writer = await dial(upstream.host, upstream.port, tls=upstream.scheme == "https")
         try:
             if upstream.scheme == "socks5":
                 await socks5(reader, writer, address, port, upstream.username, upstream.password)
-            elif not plain:
+            else:
                 target = host_port(f"{address}:{port}")
                 writer.write(f"CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n{upstream.authorization}\r\n".encode())
                 answer = await reader.readuntil(b"\r\n\r\n")
