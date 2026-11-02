@@ -684,10 +684,7 @@ async def record(websocket: WebSocket, nc: NC) -> None:
         while True:
             message = await asyncio.wait_for(websocket.receive_json(), RECORDER_IDLE)
             try:
-                if message.get("type") in ("save-session", "cookies-keep") and job:
-                    await keep_session(websocket, recorder, job, nc, message["type"])
-                else:
-                    await recorder.handle(message)
+                await answer(websocket, recorder, job, nc, message)
             except Exception as error:  # pylint: disable=broad-exception-caught
                 # A step the page could not do (an element gone, a timeout): the recording goes on.
                 text = (str(error) or type(error).__name__).splitlines()[0]
@@ -833,6 +830,35 @@ def start_of(job: Job) -> str:
         return str(json.loads(str(job.options.get("recipe") or "{}") or "{}").get("start", ""))
     except (ValueError, AttributeError):
         return ""
+
+
+async def answer(websocket: WebSocket, recorder: Recorder, job: Job | None, nc: AsyncNextcloudApp, message: dict):
+    """Does what the recorder's page asks: the job's session kept, the test as the job runs (with
+    its account, which only the app reads), else the recorder's own."""
+    if message.get("type") in ("save-session", "cookies-keep") and job:
+        await keep_session(websocket, recorder, job, nc, message["type"])
+    elif message.get("type") == "test" and message.get("as_job"):
+        await test_as_job(websocket, recorder, message, nc)
+    else:
+        await recorder.handle(message)
+
+
+async def test_as_job(websocket: WebSocket, recorder: Recorder, message: dict, nc: AsyncNextcloudApp) -> None:
+    """The recipe's test as the job runs: with the saved job's account, read here from the user's
+    own job and handed to the recorder (the page never sees it, nor sends one)."""
+    try:
+        job = await own_job(int(message.get("job") or 0), nc)
+    except (TypeError, ValueError, HTTPException):
+        job = None
+    if job is None or job.source != "site":
+        refusal = "Save the job first: the test as the job runs signs in with its stored account."
+        await websocket.send_json({"type": "error", "message": refusal})
+        return
+    account = {
+        name: await nc.preferences_ex.get_value(credential_key(job, name)) or ""
+        for name in SOURCES[job.source].credentials
+    }
+    await recorder.test(message, account)
 
 
 async def keep_session(websocket: WebSocket, recorder: Recorder, job: Job, nc: AsyncNextcloudApp, kind: str) -> None:

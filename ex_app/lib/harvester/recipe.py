@@ -44,22 +44,41 @@ A click or a press that navigated has "wait": {"url": <a pattern of the address 
 "selector": <the next step's element>}: the replay waits for that address and that element
 instead of for the network to go quiet, then settles a short while. Without it, as recipes
 always did, it waits for the network.
+
+A step {"action": "mail-code", "selector": <the code's field>, "from": <a pattern on the sender>,
+"subject": <one on the subject>, "regex": <the code in the message>, "wait": <seconds>} types a
+code the site sends by e-mail: the job waits for a new message in the account's code mailbox
+(harvester.sources.mail.code_from_mail) and types the code it finds.
+
+A level of links to follow, or the file links, may take "values" from the page around each link
+(harvester.patterns.page_values): [{"name": "date", "closest": "tr", "selector": "td.date",
+"attribute": "", "regex": "...", "type": "date"}, ...]: the link's closest element matching
+closest (none: the link itself), then the element in it matching selector (none: that element),
+its attribute or else its text, narrowed by regex, of a type (text, number, date).
+
+The file links may be a JSON listing instead ("kind": "json", harvester.jsonlist): the request's
+address, the path to its items and the fields of each item; their values have a "field" in
+place of where on the page.
+
+"viewport": {"width": 1280, "height": 800} is the browser window's size the recipe was recorded
+at, which the job's browser takes too (pages lay out for it); without one, 1280 × 800.
 """
 
 import copy
 import re
 from urllib.parse import urlsplit
 
-from .browser import allowed_url
+from . import patterns
+from .browser import VIEWPORT_MAX, VIEWPORT_MIN, allowed_url
 from .patterns import token_parameters
 
-ACTIONS = {"goto", "click", "fill", "press", "scroll", "select", "hover", "popup", "opener"}
+ACTIONS = {"goto", "click", "fill", "press", "scroll", "select", "hover", "popup", "opener", "mail-code"}
 # A scroll step's rounds: by default, and at most.
 SCROLL_ROUNDS = 20
 SCROLL_ROUNDS_MAX = 100
 NEXT_KINDS = ("link", "number")
 # The actions that act on an element, and so may do it inside a frame.
-ON_ELEMENTS = ("click", "fill", "press", "select", "hover")
+ON_ELEMENTS = ("click", "fill", "press", "mail-code", "select", "hover")
 # The actions that switch the tab the steps act in, and so have no element.
 SWITCHES = ("popup", "opener")
 # What a fill step may fill in instead of a value of its own: the job's account's.
@@ -71,6 +90,11 @@ PASSWORD_FIELD = re.compile(r"pass|pwd|(?<![a-z])pw(?![a-z])|current-password|ne
 # letters and digits, with a digit).
 _NUMBER = re.compile(r"^\d+$")
 _TOKEN = re.compile(r"^(?=[^/]*\d)[\w~.-]{16,}$")
+# How long a step "mail-code" waits for its message by default, and at most (s).
+MAIL_CODE_WAIT = 180
+MAIL_CODE_WAIT_MAX = 600
+# What names an element's attribute a value is read from.
+ATTRIBUTE = re.compile(r"[A-Za-z_:][\w:.-]{0,60}$")
 
 
 def frame_address(url: str) -> str:
@@ -100,8 +124,11 @@ def frame_host(step: dict) -> str:
 
 def step_label(step: dict) -> str:
     """A step in a few words, for a log line: what it opens, clicks (its text, else its element),
-    fills or presses, and the frame it does it in."""
-    return _action_label(step) + (f" in frame {frame_host(step) or '(no address)'}" if step.get("frame") else "")
+    fills, presses or types from e-mail, and the frame it does it in."""
+    action = f"type the code from e-mail ({step.get('selector', '')})" if step.get("action") == "mail-code" else ""
+    return (action or _action_label(step)) + (
+        f" in frame {frame_host(step) or '(no address)'}" if step.get("frame") else ""
+    )
 
 
 def _action_label(step: dict) -> str:
@@ -314,6 +341,19 @@ def _wait_ok(wait: object) -> bool:
     return not _check_pattern("", wait.get("url", ""))
 
 
+def _mail_code_problem(step: dict) -> str:
+    """What is wrong with a step "mail-code", or ""."""
+    for key in ("from", "subject", "regex"):
+        try:
+            re.compile(str(step.get(key) or ""))
+        except re.error as error:
+            return f"the {key} pattern is not a regular expression ({error})"
+    wait = step.get("wait", MAIL_CODE_WAIT)
+    if not isinstance(wait, int) or isinstance(wait, bool) or not 10 <= wait <= MAIL_CODE_WAIT_MAX:
+        return f"the wait for the e-mail from 10 to {MAIL_CODE_WAIT_MAX} seconds"
+    return ""
+
+
 def _alternatives_ok(spec: dict) -> bool:
     alternatives = spec.get("alternatives", [])
     return isinstance(alternatives, list) and all(isinstance(value, str) and value for value in alternatives)
@@ -334,11 +374,78 @@ def _check_steps(steps: list) -> list[str]:
             problems.append(f"step {number}: rounds of scrolling from 1 to {SCROLL_ROUNDS_MAX}")
         elif step["action"] not in ("goto", "scroll", *SWITCHES) and not step.get("selector"):
             problems.append(f"step {number}: no element")
-        elif "wait" in step and not _wait_ok(step["wait"]):
+        elif step["action"] != "mail-code" and "wait" in step and not _wait_ok(step["wait"]):
             problems.append(f"step {number}: wait is an address's pattern (url) and an element (selector)")
         elif not _alternatives_ok(step):
             problems.append(f"step {number}: the alternatives are a list of selectors")
+        elif step["action"] == "mail-code" and (problem := _mail_code_problem(step)):
+            problems.append(f"step {number}: {problem}")
     return problems
+
+
+def _check_values(where: str, values: object, json_items: bool = False) -> list[str]:
+    """The problems of a level's values from the page (or of a JSON listing's items)."""
+    if values in (None, []):
+        return []
+    if not isinstance(values, list) or len(values) > patterns.MAX_VALUES:
+        return [f"{where}: the values are a list of at most {patterns.MAX_VALUES}"]
+    problems: list[str] = []
+    for value in values:
+        place = ("field",) if json_items else ("closest", "selector", "attribute")
+        if not isinstance(value, dict) or not patterns.VALUE_NAME.match(str(value.get("name", ""))):
+            problems.append(f"{where}: a value without a name of letters, digits and _")
+        elif value.get("type", "text") not in patterns.VALUE_TYPES:
+            problems.append(f"{where}: the value {value['name']} is of an unknown type {value.get('type')}")
+        elif not all(isinstance(value.get(key, ""), str) for key in (*place, "regex")):
+            problems.append(f"{where}: the value {value['name']}'s {', '.join(place)} and regex are text")
+        elif json_items and not value.get("field"):
+            problems.append(f"{where}: the value {value['name']} has no field")
+        elif value.get("attribute") and not ATTRIBUTE.match(value["attribute"]):
+            problems.append(f"{where}: the value {value['name']}'s attribute is no attribute's name")
+        else:
+            problems += _check_pattern(f"{where}: the value {value['name']}", value.get("regex", ""))
+    return problems
+
+
+def _check_json(links: dict) -> list[str]:
+    """The problems of file links of kind json."""
+    # The address may name the walk's values ({year}): it is checked with them filled in.
+    url = re.sub(r"\{[^{}]*\}", "0", str(links.get("url") or ""))
+    if not allowed_url(url):
+        return [f"file links: the JSON listing {links.get('url') or '(none)'} may not be opened"]
+    if not isinstance(links.get("items", ""), str) or not isinstance(links.get("text", ""), str):
+        return ["file links: the JSON's items and text are paths"]
+    if not links.get("file") or not isinstance(links["file"], str):
+        return ["file links: no field with the files' addresses in the JSON's items"]
+    page = links.get("page")
+    if page is not None and not (
+        isinstance(page, dict)
+        and isinstance(page.get("param"), str)
+        and page["param"]
+        and all(
+            isinstance(page.get(key, 1), int) and not isinstance(page.get(key, 1), bool) for key in ("first", "step")
+        )
+        and page.get("first", 1) >= 0
+        and page.get("step", 1) >= 1
+    ):
+        return ["file links: the JSON's pages are a parameter with its first value (0 or more) and step (1 or more)"]
+    return _check_pattern("file links", links.get("pattern", "")) + _check_values(
+        "file links", links.get("values"), True
+    )
+
+
+def _check_viewport(viewport: object) -> list[str]:
+    if viewport is None:
+        return []
+    if not isinstance(viewport, dict) or not all(
+        isinstance(viewport.get(key), int) and VIEWPORT_MIN[key] <= viewport[key] <= VIEWPORT_MAX[key]
+        for key in ("width", "height")
+    ):
+        return [
+            f"the window's size: width and height from {VIEWPORT_MIN['width']} × {VIEWPORT_MIN['height']} "
+            f"to {VIEWPORT_MAX['width']} × {VIEWPORT_MAX['height']}"
+        ]
+    return []
 
 
 def check_recipe(recipe: dict) -> list[str]:
@@ -359,17 +466,21 @@ def check_recipe(recipe: dict) -> list[str]:
             problems.append(f"level {level}: no links to follow")
         else:
             problems += _check_pattern(f"level {level}", follow.get("pattern", ""))
+            problems += _check_values(f"level {level}", follow.get("values"))
     links = recipe.get("links")
-    if not isinstance(links, dict) or not links.get("selector"):
+    if isinstance(links, dict) and links.get("kind") == "json":
+        problems += _check_json(links)
+    elif not isinstance(links, dict) or not links.get("selector"):
         problems.append("no file links picked")
     else:
         problems += _check_pattern("file links", links.get("pattern", ""))
+        problems += _check_values("file links", links.get("values"))
     picks = [("file links", links), ("next page", recipe.get("next"))]
     picks += [(f"level {level}", follow) for level, follow in enumerate(recipe.get("follow") or [], 1)]
     for where, spec in picks:
         if isinstance(spec, dict) and not _alternatives_ok(spec):
             problems.append(f"{where}: the alternatives are a list of selectors")
-    return problems + _check_next(recipe.get("next"))
+    return problems + _check_next(recipe.get("next")) + _check_viewport(recipe.get("viewport"))
 
 
 def token_warnings(recipe: dict) -> list[str]:

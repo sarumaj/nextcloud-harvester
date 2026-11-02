@@ -10,7 +10,7 @@ import time
 from ..recipe import edit_step, steps_from_events
 
 # The page's messages that change the steps.
-EDITS = frozenset({"undo", "optional", "step-delete", "step-move", "step-edit", "record-at"})
+EDITS = frozenset({"undo", "optional", "step-delete", "step-move", "step-edit", "record-at", "mail-code"})
 # How long after a click or a press a navigation of the page counts as its (s): a page that
 # reloads itself much later is none of the step's doing.
 NAVIGATION_SECONDS = 5
@@ -59,7 +59,8 @@ class StepList:
     def edit(self, kind: str, message: dict) -> bool:
         """Undo (the last event, else the last step before the new ones), and the Steps list's
         edits: a step removed, moved, changed (optional, what a fill fills in, its value, its wait),
-        and where new steps go (record-at); whether the steps changed."""
+        where new steps go (record-at), and a filled code that comes by e-mail (mail-code); whether
+        the steps changed."""
         if kind == "undo":
             if self.events:
                 self.events.pop()
@@ -76,7 +77,9 @@ class StepList:
         index = message.get("step")
         if not isinstance(index, int) or isinstance(index, bool) or not 0 <= index < len(steps):
             return False
-        if kind == "step-delete":
+        if kind == "mail-code":
+            steps[index] = mail_code(steps[index], message)
+        elif kind == "step-delete":
             del steps[index]
             point -= 1 if index < point else 0
         elif kind == "step-move":
@@ -88,3 +91,15 @@ class StepList:
             edit_step(steps[index], message)
         self.before, self.after = steps[:point], steps[point:]
         return True
+
+
+def mail_code(step: dict, message: dict) -> dict:
+    """A filled code's step as "type the code from e-mail" of a sender and subject (and the code's
+    pattern), or with off back to the current one-time code; another step as it is."""
+    kept = {key: step[key] for key in ("selector", "alternatives", "frame", "optional") if key in step}
+    if message.get("off") and step.get("action") == "mail-code":
+        return {"action": "fill", **kept, "credential": "totp"}
+    if message.get("off") or step.get("action") not in ("fill", "mail-code"):
+        return step
+    code = {key: str(message.get(key) or "") for key in ("from", "subject")}
+    return {"action": "mail-code", **kept, **code} | ({"regex": str(message["regex"])} if message.get("regex") else {})

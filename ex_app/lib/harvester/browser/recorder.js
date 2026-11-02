@@ -18,6 +18,11 @@
 // for the elements they are made for, and counts any element it is unsure of as a match, so that
 // a selector is kept only when it is certain to find the element alone.
 //
+// In the mode value the person clicks a piece of text near one of a level's links (valueLinks:
+// their selector): a date in the link's row, a title in its card. The pick says where it is from
+// the link, as the job finds it beside every link: the closest ancestor of the link that is the
+// row or card (one that holds that link alone), then the element in it, and its text.
+//
 // It runs in every frame too (a consent banner's, a sign-in's), cross-origin ones included: the
 // recorder learns from the report itself which frame it came from, and asks the frame's parent
 // for its element's selector (frameSelector). A frame reports when the mouse or the focus comes
@@ -557,7 +562,50 @@
 	let hovered = null
 	const TYPING = 'textarea, select, input:not([type=submit]):not([type=button]):not([type=checkbox]):not([type=radio]):not([type=image]):not([type=reset])'
 	const SUBMIT = 'button:not([type]), button[type=submit], input[type=submit], input[type=image]'
-	const picking = () => ['follow', 'links', 'next'].includes(state.mode)
+	const picking = () => ['follow', 'links', 'next', 'value'].includes(state.mode)
+
+	// An element by its tag and stable classes: alike in every row or card, unlike an id.
+	function generic(el) {
+		return el.tagName.toLowerCase() + classes(el).map((name) => `.${css(name)}`).join('')
+	}
+
+	// A selector for el within box (box.querySelector finds el): the shortest chain of generic
+	// parts, else the path from box down with positions.
+	function inBox(box, el) {
+		const parts = []
+		for (let node = el; node && node !== box; node = node.parentElement) {
+			parts.unshift(generic(node))
+			try {
+				if (box.querySelector(parts.join(' > ')) === el) return parts.join(' > ')
+			} catch (e) {}
+		}
+		const placed = []
+		for (let node = el; node && node !== box; node = node.parentElement) placed.unshift(generic(node) + nth(node))
+		return `:scope > ${placed.join(' > ')}`
+	}
+
+	// Where a picked value is from its link: in the link, or in the row or card (the nearest
+	// ancestor holding one of the links alone); null when it is near none of them.
+	function valuePick(el) {
+		let links = []
+		try {
+			links = state.valueLinks ? [...document.querySelectorAll(state.valueLinks)] : []
+		} catch (e) {}
+		const text = (el.innerText || el.textContent || '').trim().slice(0, 200)
+		// A <time> holds the date a script can read in its datetime, whatever it shows.
+		const attribute = el.matches('time[datetime]') ? 'datetime' : ''
+		const own = links.find((link) => link === el || link.contains(el))
+		if (own) return { closest: '', selector: own === el ? '' : inBox(own, el), attribute, text }
+		for (let box = el.parentElement; box && box !== document.body; box = box.parentElement) {
+			const inside = links.filter((link) => box.contains(link))
+			if (inside.length > 1) break
+			if (inside.length === 1) {
+				const closest = [generic(box), box.tagName.toLowerCase()].find((selector) => inside[0].closest(selector) === box) || generic(box)
+				return { closest, selector: inBox(box, el), attribute, text }
+			}
+		}
+		return null
+	}
 
 	// The cursor the page shows where the mouse is (a hand over a link, a bar in a field), or a
 	// crosshair while picking: the recorder's screen shows it, as a browser would.
@@ -577,7 +625,7 @@
 			return
 		}
 		if (hovered) hovered.style.boxShadow = ''
-		hovered = link(event.target)
+		hovered = state.mode === 'value' ? event.target : link(event.target)
 		hovered.style.boxShadow = 'inset 0 0 0 9999px rgba(0, 130, 201, 0.15)'
 	}, true)
 
@@ -624,6 +672,11 @@
 		if (!picking()) return
 		event.preventDefault()
 		event.stopImmediatePropagation()
+		if (state.mode === 'value') {
+			const found = valuePick(event.target)
+			report(found ? { action: 'pick', target: 'value', ...found } : { action: 'pick', target: 'value', none: true })
+			return
+		}
 		const next = state.mode === 'next' ? candidates(el, true) : []
 		const selector = state.mode === 'next' ? next[0] || unique(el) : similar(el)
 		const alternatives = state.mode === 'next' ? next.slice(1) : similarAlternatives(el, selector)

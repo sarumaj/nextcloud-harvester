@@ -122,3 +122,20 @@ def test_errors_and_refused_pages():
     # A name that cannot be made: that entry fails alone, in the run, saying what lacks the value.
     (item,) = media({CHANNEL: video(6, webpage_url=CHANNEL)}, path="{nothing}").items(lambda key: False)
     assert "names nothing, which the entry's information does not give" in str(item.problem)
+
+
+def test_impersonation_is_yt_dlps_own_for_the_job_that_asks():
+    from yt_dlp.networking.impersonate import ImpersonateTarget  # pylint: disable=import-outside-toplevel
+
+    from harvester.sources.media import explained  # pylint: disable=import-outside-toplevel
+
+    page = video(1)["webpage_url"]
+    assert "impersonate" not in media({page: video(1)}, url=page).base(), "off by default"
+    options = media({page: video(1)}, url=page, impersonate=1).base()
+    assert options["impersonate"] == ImpersonateTarget()
+    assert options["extractor_args"] == {"generic": {"impersonate": [""]}}
+    error = Exception(
+        "ERROR: [generic] 403 caused by Cloudflare anti-bot challenge; ... --extractor-args generic:impersonate"
+    )
+    assert "Impersonate a browser" in explained(error, {})
+    assert "Impersonate a browser" not in explained(error, {"impersonate": 1}), "already on: no hint"

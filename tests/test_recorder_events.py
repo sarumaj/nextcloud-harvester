@@ -28,6 +28,7 @@ from test_recorder_features import routed
 
 from harvester.browser import SCRIPT, jar, launch_options
 from harvester.browser.recorder import Recorder
+from harvester.browser.steps import StepList
 from harvester.recipe import (
     check_recipe,
     edit_step,
@@ -38,6 +39,8 @@ from harvester.recipe import (
     url_pattern,
 )
 from harvester.sources import site as site_module
+from harvester.sources import tabs as tabs_module
+from harvester.sources.tabs import SHORT_IDLE
 
 SITE = "https://rec.example"
 LOGIN = """<html><body><form id="login" action="/listing" method="get">
@@ -480,15 +483,14 @@ def test_a_sign_in_popup_is_recorded_and_replayed(chromium):
         page.context.close()
 
 
-def test_a_popup_that_never_opens_fails_its_step_or_is_skipped(monkeypatch):
-    monkeypatch.setattr(site_module, "OPTIONAL_TIMEOUT", 500)
+def test_a_popup_that_never_opens_fails_its_step_or_is_skipped():
     page = SimpleNamespace(context=SimpleNamespace(pages=[None]), wait_for_timeout=lambda ms: time.sleep(ms / 1000))
     tabs = site_module.Tabs(page)
     tabs.opening()
     started = time.monotonic()
     with pytest.raises(site_module.PopupMissing):
-        tabs.act({"action": "popup", "optional": True}, {})
-    assert time.monotonic() - started < site_module.OPTIONAL_TIMEOUT / 1000 + 1
+        tabs.switch({"action": "popup", "optional": True}, 500)
+    assert time.monotonic() - started < 1.5
 
 
 @needs_chromium
@@ -522,7 +524,7 @@ def test_a_navigating_click_waits_for_its_address_and_the_next_element(chromium)
 
 def test_a_step_without_a_wait_settles_as_before(monkeypatch):
     settled: list[float] = []
-    monkeypatch.setattr(site_module, "settle", lambda page, idle=15_000: settled.append(idle))
+    monkeypatch.setattr(tabs_module, "settle", lambda page, idle=15_000: settled.append(idle))
 
     page = SimpleNamespace(
         click=lambda *_args, **_options: None,
@@ -532,7 +534,7 @@ def test_a_step_without_a_wait_settles_as_before(monkeypatch):
     site_module.replay(page, {"action": "click", "selector": "#a"}, {})
     site_module.replay(page, {"action": "click", "selector": "#a", "wait": {"url": "^x"}}, {})
     site_module.replay(page, {"action": "click", "selector": "#a", "wait": {"url": "^x", "selector": "#b"}}, {})
-    assert settled == [15_000, -1, site_module.SHORT_IDLE, -1, -2, site_module.SHORT_IDLE]
+    assert settled == [15_000, -1, SHORT_IDLE, -1, -2, SHORT_IDLE]
 
 
 @needs_chromium
@@ -683,3 +685,27 @@ def test_public_suffixes_are_never_a_cookies_domain():
         assert not jar.domain_allowed(domain, hosts), domain
     for domain in ("example.co.uk", ".example.co.uk", "shop.example.co.uk", "me.github.io", "example.org"):
         assert jar.domain_allowed(domain, hosts), domain
+
+
+def test_a_filled_code_comes_by_e_mail_and_goes_back():
+    track = StepList()
+    track.load([{"action": "fill", "selector": "#code", "alternatives": ["input[name=code]"], "credential": "totp"}])
+    assert track.edit("mail-code", {"step": 0, "from": "no-reply@shop", "subject": "Code"})
+    assert track.all() == [
+        {
+            "action": "mail-code",
+            "selector": "#code",
+            "alternatives": ["input[name=code]"],
+            "from": "no-reply@shop",
+            "subject": "Code",
+        }
+    ]
+    assert not check_recipe({"steps": track.all(), "start": f"{SITE}/x", "links": {"selector": "a"}})
+    track.edit("mail-code", {"step": 0, "off": True})
+    assert track.all()[0] == {
+        "action": "fill",
+        "selector": "#code",
+        "alternatives": ["input[name=code]"],
+        "credential": "totp",
+    }
+    assert not track.edit("mail-code", {"step": 3})

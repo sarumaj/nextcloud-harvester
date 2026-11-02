@@ -9,12 +9,20 @@ A proposal leaves out what changes from visit to visit: a fragment (#page=2), th
 of a sign-in's or a visit's token (code, ticket, sid, a signature and its expiry, …) and of
 tracking (utm_*, jsessionid): the pattern takes any or none of them. It reads a link's address
 as the page wrote it (percent-encoded), an escape (%20) never part of a number.
+
+A level may also take values from the page around each link (page_values): the link's text or
+an attribute, or an element near it (its row or card, then an element in that), narrowed by a
+pattern and typed (a date gives YYYY-MM-DD and its year, month and day). propose_value proposes
+one for texts a person picked, recognising dates as English, German and Polish pages write them.
 """
 
+import datetime
 import posixpath
 import re
 from collections import Counter
+from collections.abc import Callable
 from string import Formatter
+from typing import Any
 from urllib.parse import unquote, urlparse, urlsplit
 
 # A link's address in numbers and the text between them; an escape (%20 in Report%202024.pdf) is
@@ -342,3 +350,141 @@ def js_regex(pattern: str) -> dict | None:  # pylint: disable=too-many-branches
             out.append(char)
         index += 1
     return {"source": "".join(out), "flags": "".join(sorted(set(flags)))}
+
+
+# Values from the page around a link (a level's "values", harvester.recipe): each has a name, where
+# its text is (the link itself, or an element near it, or a JSON item's field), a pattern that
+# narrows the text, and a type. Their names are a pattern group's names (a template names them).
+VALUE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,30}$")
+VALUE_TYPES = ("text", "number", "date")
+MAX_VALUES = 10
+# The longest text of the page a value's pattern reads: a pattern runs with a time limit, and
+# the text near a link is a date or a title, not a page.
+VALUE_TEXT = 1000
+
+# Month names as dates are written in English, German and Polish (both of Polish's forms, "listopad"
+# and "2 listopada"; without diacritics too, as some sites write them), and their abbreviations.
+_MONTH_NAMES = (
+    "january jänner januar jan styczeń stycznia styczen sty",
+    "february februar feb luty lutego lut",
+    "march märz maerz mär mrz marzec marca mar",
+    "april kwiecień kwietnia kwiecien apr kwi",
+    "may mai maj maja",
+    "june juni czerwiec czerwca jun cze",
+    "july juli lipiec lipca jul lip",
+    "august sierpień sierpnia sierpien aug sie",
+    "september wrzesień września wrzesien wrzesnia sept sep wrz",
+    "october oktober październik października pazdziernik pazdziernika oct okt paź paz",
+    "november listopad listopada nov lis",
+    "december dezember grudzień grudnia grudzien dec dez gru",
+)
+MONTHS = {name: number for number, names in enumerate(_MONTH_NAMES, 1) for name in names.split()}
+_MONTH = "|".join(sorted(MONTHS, key=len, reverse=True))
+# The dates a value of type date is read from, the first that is in the text: numbers year first
+# (2026-11-02, 2026/11/02), numbers day first (02.11.2026, 2/11/2026: day first, as written in
+# Germany and Poland), a day and a month's name (2. November 2026, 2 listopada 2026), a month's name
+# and a day (November 2, 2026), a month's name and a year alone (listopad 2026).
+_DATES = (
+    ("ymd", re.compile(r"(?<!\d)(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?!\d)")),
+    ("dmy", re.compile(r"(?<!\d)(\d{1,2})[./](\d{1,2})[./](\d{4})(?!\d)")),
+    ("d month y", re.compile(rf"(?<!\d)(\d{{1,2}})\.?\s+({_MONTH})\.?,?\s+(\d{{4}})(?!\d)", re.IGNORECASE)),
+    ("month d y", re.compile(rf"\b({_MONTH})\.?\s+(\d{{1,2}})(?:st|nd|rd|th)?,?\s+(\d{{4}})(?!\d)", re.IGNORECASE)),
+    ("month y", re.compile(rf"\b({_MONTH})\.?,?\s+(\d{{4}})(?!\d)", re.IGNORECASE)),
+)
+# The pattern proposed for each of them: it finds the date in the text around it.
+DATE_PATTERNS = {
+    "ymd": r"(?P<date>\d{4}[-/.]\d{1,2}[-/.]\d{1,2})",
+    "dmy": r"(?P<date>\d{1,2}[./]\d{1,2}[./]\d{4})",
+    "d month y": r"(?P<date>\d{1,2}\.?\s+[^\W\d_]+\.?,?\s+\d{4})",
+    "month d y": r"(?P<date>[^\W\d_]+\.?\s+\d{1,2}(?:st|nd|rd|th)?,?\s+\d{4})",
+    "month y": r"(?P<date>[^\W\d_]+\.?,?\s+\d{4})",
+}
+
+
+def clean_text(text: str, limit: int = 100) -> str:
+    """Text of the page as a part of a file name or a tag: one line, without the characters a
+    file name may not hold (a slash would make a folder), shortened."""
+    return re.sub(r"[\\/:*?\"<>|\s]+", " ", text).strip()[:limit].strip()
+
+
+def parse_date(text: str) -> tuple[str, tuple[int, int, int | None]] | None:
+    """The first date in the text, in one of _DATES's forms: its form and (year, month, day); the
+    day None for a month and a year alone. None when there is none (or it is no real date)."""
+    for kind, pattern in _DATES:
+        for match in pattern.finditer(text):
+            parts = match.groups()
+            if kind == "ymd":
+                year, month, day = int(parts[0]), int(parts[1]), int(parts[2])
+            elif kind == "dmy":
+                day, month, year = int(parts[0]), int(parts[1]), int(parts[2])
+            elif kind == "d month y":
+                day, month, year = int(parts[0]), MONTHS[parts[1].lower()], int(parts[2])
+            elif kind == "month d y":
+                month, day, year = MONTHS[parts[0].lower()], int(parts[1]), int(parts[2])
+            else:
+                month, year, day = MONTHS[parts[0].lower()], int(parts[1]), 1
+            try:
+                datetime.date(year, month, day)
+            except ValueError:
+                continue
+            if 1900 <= year <= 2100:
+                return kind, (year, month, None if kind == "month y" else day)
+    return None
+
+
+def _typed(name: str, kind: str, text: str, given: dict) -> dict:
+    """A value of its type: a date as YYYY-MM-DD (YYYY-MM without a day) with its year, month and
+    day where the link's other values have none; a number as one; text cleaned for a file name."""
+    if kind == "date":
+        found = parse_date(text)
+        if not found:
+            return {}
+        year, month, day = found[1]
+        values: dict = {name: f"{year:04d}-{month:02d}" + (f"-{day:02d}" if day else "")}
+        parts = {"year": year, "month": month} | ({"day": day} if day else {})
+        return values | {key: value for key, value in parts.items() if key not in given and key != name}
+    if kind == "number":
+        digits = re.sub(r"\D", "", text)
+        return {name: int(digits)} if digits else {}
+    cleaned = clean_text(text)
+    return {name: cleaned} if cleaned else {}
+
+
+def page_values(specs: list[dict], texts: list, search: Callable[[str, str], Any], given: dict) -> dict:
+    """The values a link's page gives (specs: the level's "values"; texts: what each found near the
+    link, None where it found nothing): each spec's pattern searched in its text (with search, a
+    person's pattern's time limit) and its value of its type. The pattern's named groups are values
+    too; the value is the group of its own name, else the first group, else the whole match. A value
+    whose text or pattern finds nothing is missing: a file name naming it fails, a tag is left out.
+    given: the link's values so far (a date's year does not replace the address's)."""
+    values: dict = {}
+    for spec, text in zip(specs, texts):
+        if text is None:
+            continue
+        text = re.sub(r"\s+", " ", str(text)).strip()[:VALUE_TEXT]
+        name, pattern = str(spec.get("name", "")), str(spec.get("regex") or "")
+        if pattern:
+            match = search(pattern, text)
+            if not match:
+                continue
+            groups = match.groupdict()
+            for group, found in groups.items():
+                if found is not None and group != name:
+                    values[group] = int(found) if found.isdigit() else clean_text(found)
+            text = groups.get(name) or (match.group(1) if match.re.groups and match.group(1) else match.group(0))
+        values |= _typed(name, str(spec.get("type") or "text"), text or "", given | values)
+    return values
+
+
+def propose_value(texts: list[str]) -> dict:
+    """A value for texts like these (what was picked near each link): a date when most hold one in
+    the same form, a number when they are numbers, else text; its name, pattern and type."""
+    filled = [re.sub(r"\s+", " ", text).strip() for text in texts if text and text.strip()]
+    if not filled:
+        return {"name": "title", "regex": "", "type": "text"}
+    forms = Counter(found[0] for found in map(parse_date, filled) if found)
+    if forms and forms.most_common(1)[0][1] * 2 >= len(filled):
+        return {"name": "date", "regex": DATE_PATTERNS[forms.most_common(1)[0][0]], "type": "date"}
+    if all(re.fullmatch(r"[#№]?\s*\d[\d.,\s]*", text) for text in filled):
+        return {"name": "number", "regex": r"(\d[\d.,]*)", "type": "number"}
+    return {"name": "title", "regex": "", "type": "text"}

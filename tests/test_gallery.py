@@ -101,3 +101,17 @@ def test_a_partial_failure_keeps_what_was_listed():
     stdout = json.dumps([message(1), message(2)])
     partial = gallery(stdout, returncode=1, stderr="[gallery-dl][error] HttpError: 500 for page 3\n")
     assert len(list(partial.items(lambda key: False))) == 2
+
+
+def test_impersonation_is_gallery_dls_own_browser_emulation_in_its_config():
+    plain = gallery()
+    options, files = plain.account_files()
+    assert "--config" not in options and not files, "off: nothing changes"
+    made = gallery(impersonate=1)
+    options, files = made.account_files()
+    try:
+        with open(options[options.index("--config") + 1], encoding="utf-8") as file:
+            assert json.load(file) == {"extractor": {"browser": "chrome"}}
+    finally:
+        for path in files:
+            __import__("os").unlink(path)

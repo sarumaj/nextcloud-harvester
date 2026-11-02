@@ -15,4 +15,6 @@ PySocks==1.7.1
 socksio==1.0.0
 # The schedules' time zones (zoneinfo), whether or not the image has the system's.
 tzdata==2026.5
+# yt-dlp's impersonation (the media source's option Impersonate a browser), at the version yt-dlp pins.
+curl-cffi==0.16.3
 yt-dlp==2026.10.21

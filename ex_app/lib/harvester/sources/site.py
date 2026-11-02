@@ -6,10 +6,15 @@ recipe's levels of links, takes the file links on the last level, page after pag
 downloads each file from its download URL (a template of the link's values). It waits when the
 site asks it to (429 or 503 with Retry-After, or a wait in the URL it redirects to) and checks
 what it gets: never a web page instead of a file, of the expected type and size.
+
+A level's links may carry values read from the page around each of them (harvester.patterns
+.page_values), and the file links may be a JSON listing (harvester.jsonlist), read over HTTP with
+the job's cookies (the browser's, when it has one) and walked page by page.
 """
 
 import abc
 import contextlib
+import functools
 import json
 import re
 import time
@@ -24,12 +29,13 @@ from playwright.sync_api import Route, WebSocketRoute, sync_playwright
 
 from .. import browser
 from .. import cookies as cookie_jar
-from .. import otp, pagination, patterns, selectors
+from .. import jsonlist, otp, pagination, patterns, selectors
 from .. import recipe as recipes
 from ..browser.guard import Guard
-from . import download
+from . import download, near
 from .base import AuthError, ChallengeError, Item, Option, Source, SourceError, Stopped, pattern_search
 from .download import Response
+from .tabs import PopupMissing, Tabs, arrived, settle
 
 # The seen key a run records once it has gone through the whole site (not stopped by
 # max_items): from then on, a listing of known files ends the run (stop_at_seen).
@@ -39,12 +45,8 @@ STEP_TIMEOUT = 30_000
 # How long an optional step waits for its frame and element together (ms): a banner that shows
 # comes at once with its page, and the run should not wait half a minute for one that does not.
 OPTIONAL_TIMEOUT = 5_000
-# How often a step looks again for the frame it acts in while the page builds it (ms), or for
-# the popup it goes on in.
+# How often a step looks again for the frame it acts in while the page builds it (ms).
 FRAME_POLL = 250
-# How long the network may take to go quiet after a step that waited for its address and element
-# (ms): they are there already, the rest is what a script still loads.
-SHORT_IDLE = 2_000
 LOCK_TIMEOUT = 1800
 # What the browser showed when a step failed or a page asked for a person: a JPEG of the window
 # at this quality, again at the lower one when larger than SHOT_BYTES (else none is kept).
@@ -92,6 +94,15 @@ class Driver(abc.ABC):
     @abc.abstractmethod
     def links(self, page: Any, selector: str) -> list[tuple[str, str]]:
         """The page's links matching the selector: absolute URL and text."""
+
+    def valued_links(self, page: Any, selector: str, specs: list[dict]) -> list[tuple[str, str, list]]:
+        """The page's links matching the selector, as links() gives them, each with the texts of
+        the values (specs: a level's "values"; None where a value's element is missing)."""
+        return [(url, text, [None] * len(specs)) for url, text in self.links(page, selector)]
+
+    def read_json(self, url: str) -> Any:
+        """A JSON listing's page, asked for as a file is (near.read_json)."""
+        return near.read_json(self.download, url)
 
     @abc.abstractmethod
     def next(self, page: Any, selector: str) -> Any:
@@ -156,6 +167,18 @@ class HttpDriver(Driver):
             if link.get("href")
         ]
 
+    def valued_links(self, page: Any, selector: str, specs: list[dict]) -> list[tuple[str, str, list]]:
+        page_url, soup = page
+        return [
+            (
+                urljoin(page_url, str(link.get("href"))),
+                link.get_text(" ", strip=True),
+                [near.soup_value(link, s) for s in specs],
+            )
+            for link in soup.select(selector)
+            if link.get("href")
+        ]
+
     def next(self, page: Any, selector: str) -> Any:
         found = self.links(page, selector)
         return self.open(found[0][0]) if found else None
@@ -196,6 +219,7 @@ class BrowserDriver(Driver):
         http1: bool = False,
         home: bool = False,
         saw: Callable[[dict], None] | None = None,
+        viewport: dict | None = None,
     ):
         self.saw = saw
         if not browser.SLOTS.acquire(timeout=LOCK_TIMEOUT, kind="job"):  # pylint: disable=consider-using-with
@@ -218,7 +242,8 @@ class BrowserDriver(Driver):
             self._browser = self._playwright.chromium.launch(**browser.launch_options(port, http1, home, credentials))
             self.user_agent = browser.user_agent(self._browser.version)
             self.context = self._browser.new_context(
-                **browser.context_options(self._browser.version),
+                # The window the recipe was recorded in (its steps and pages laid out alike).
+                **browser.context_options(self._browser.version, viewport),
                 accept_downloads=False,
                 storage_state=session or None,  # type: ignore[arg-type]
             )
@@ -254,7 +279,8 @@ class BrowserDriver(Driver):
                 # A popup comes from the step before the one that goes on in it: the tabs open then.
                 if index + 1 < len(todo) and todo[index + 1][1].get("action") == "popup":
                     tabs.opening()
-                tabs.act(step, secrets, lambda old, new, n=number: self._repaired(n, old, new))
+                if not tabs.switch(step, OPTIONAL_TIMEOUT if step.get("optional") else STEP_TIMEOUT):
+                    replay(tabs.page, step, secrets, functools.partial(self._repaired, number))
             except Stopped:
                 # The run or the recipe's test was stopped during the step: no failure of it.
                 raise
@@ -312,6 +338,9 @@ class BrowserDriver(Driver):
 
     def links(self, page: Any, selector: str) -> list[tuple[str, str]]:
         return page.eval_on_selector_all(selector, "els => els.map(e => [e.href || '', (e.innerText || '').trim()])")
+
+    def valued_links(self, page: Any, selector: str, specs: list[dict]) -> list[tuple[str, str, list]]:
+        return [tuple(link) for link in page.eval_on_selector_all(selector, near.VALUES, specs)]
 
     def next(self, page: Any, selector: str) -> Any:
         link = page.query_selector(selector)
@@ -441,16 +470,6 @@ def scroll_to_load(page, rounds: int) -> None:
             return
 
 
-def settle(page, idle: float = 15_000) -> None:
-    """Waits for what a step started: a new page, or the requests of a script (the network quiet,
-    idle ms at most)."""
-    page.wait_for_timeout(500)
-    try:
-        page.wait_for_load_state("networkidle", timeout=idle)
-    except Exception:  # pylint: disable=broad-exception-caught
-        pass  # a page that never goes quiet (ads, polling) is used as it is
-
-
 def filled(step: dict, secrets: dict[str, str]) -> str:
     """What a fill step types: its value, an account's credential, or the current one-time code."""
     if step.get("credential") == "totp":
@@ -467,10 +486,6 @@ def filled(step: dict, secrets: dict[str, str]) -> str:
 
 class FrameMissing(SourceError):
     """The frame a step acts in is not on the page."""
-
-
-class PopupMissing(SourceError):
-    """The popup a step goes on in did not open, or the one it goes back from did not close."""
 
 
 def short_error(error: Exception) -> str:
@@ -521,7 +536,7 @@ def replay(page, step: dict, secrets: dict[str, str], repaired: Callable[[str, s
     step with alternative selectors finds its element by the first that does (selectors.resolve,
     an alternative told to repaired) within the same time."""
     action = step["action"]
-    started = time.monotonic()
+    started, began = time.monotonic(), time.time()
     budget = OPTIONAL_TIMEOUT if step.get("optional") else STEP_TIMEOUT
     # A step without a frame acts on the page as it always did.
     target = in_frame(page, step["frame"], budget) if step.get("frame") else page
@@ -548,69 +563,15 @@ def replay(page, step: dict, secrets: dict[str, str], repaired: Callable[[str, s
         target.click(selector, **wait)
     elif action == "press":
         target.press(selector, step.get("key", "Enter"), **wait)
+    elif action == "mail-code":
+        # The message first, then the field: the page may show the field only once it is due.
+        code = near.mail_code(page, step, secrets, began)
+        target.fill(selector, code, **wait)
+        return
     elif action == "scroll":
         scroll_to_load(page, int(step.get("rounds") or recipes.SCROLL_ROUNDS))
         return
     arrived(page, step, max(1.0, budget - (time.monotonic() - started) * 1000))
-
-
-def arrived(page, step: dict, timeout: float) -> None:
-    """Waits for where the step leads: the address and the element it recorded (recipe: "wait"),
-    then a short settle; without them, for the network to go quiet (as recipes always did)."""
-    wait = step.get("wait") if isinstance(step.get("wait"), dict) else {}
-    try:
-        if not wait.get("url") and not wait.get("selector"):
-            settle(page)
-            return
-        if wait.get("url"):
-            page.wait_for_url(re.compile(wait["url"]), wait_until="domcontentloaded", timeout=timeout)
-        if wait.get("selector"):
-            page.wait_for_selector(wait["selector"], state="visible", timeout=timeout)
-        settle(page, SHORT_IDLE)
-    except PlaywrightError:
-        # A step that closed its own page (a popup's last click) has nothing to wait for there.
-        if not page.is_closed():
-            raise
-
-
-class Tabs:
-    """The tabs the steps act in: the first, and each popup a step went on in (the newest acts),
-    back to the one that opened it after a step "opener"."""
-
-    def __init__(self, page):
-        self.pages = [page]
-        self.known = 0
-
-    def opening(self) -> None:
-        """Before the step that opens a popup: the tabs open until then."""
-        self.known = len(self.pages[-1].context.pages)
-
-    def act(self, step: dict, secrets: dict[str, str], repaired: Callable[[str, str], None] | None = None) -> None:
-        """Does the step in the tab that acts now (replay, repaired told of an alternative selector
-        that stood in), or switches the tab (popup, opener), within the step's time (an optional
-        one's OPTIONAL_TIMEOUT)."""
-        page = self.pages[-1]
-        timeout = OPTIONAL_TIMEOUT if step.get("optional") else STEP_TIMEOUT
-        deadline = time.monotonic() + timeout / 1000
-        if step.get("action") == "popup":
-            while len(opened := page.context.pages) <= self.known:
-                if time.monotonic() >= deadline:
-                    raise PopupMissing("no popup opened")
-                page.wait_for_timeout(FRAME_POLL)
-            popup = opened[-1]
-            popup.wait_for_load_state("domcontentloaded")
-            self.pages.append(popup)
-        elif step.get("action") == "opener":
-            # The popup closes itself (a sign-in's, once done): the page that opened it goes on.
-            while len(self.pages) > 1 and not page.is_closed():
-                if time.monotonic() >= deadline:
-                    raise PopupMissing("the popup did not close")
-                self.pages[-2].wait_for_timeout(FRAME_POLL)
-            if len(self.pages) > 1:
-                self.pages.pop()
-            settle(self.pages[-1])
-        else:
-            replay(page, step, secrets, repaired)
 
 
 class Site(Source):  # pylint: disable=too-many-instance-attributes
@@ -622,7 +583,7 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
         "Files linked from a website's pages: record it in the browser (sign in if need be, then pick the links to "
         "follow and the file links) or start from a template."
     )
-    credentials = ("username", "password", "totp", "cookies")
+    credentials = ("username", "password", "totp", "cookies", "code_mailbox")
     credential_help = {
         "username": (
             "Username",
@@ -639,6 +600,14 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
             "Cookies",
             "A signed-in browser's cookies for the site, instead of a recorded sign-in: a cookies.txt export "
             "(Netscape format) or a Cookie header's name=value; name=value. They expire as they do in the browser.",
+        ),
+        "code_mailbox": (
+            "Mailbox for codes",
+            "For a sign-in that sends a code by e-mail (the step “type the code from e-mail”): the IMAP mailbox it "
+            "arrives in, one setting per line: host = mail.example.org, user = me@example.org, password = …; also "
+            "port (993), folder (INBOX), and auth = oauth2-google, oauth2-microsoft or oauth2 with token_url, "
+            "client_id, client_secret, refresh_token. Without user and password, the job's Username and Password "
+            "sign in. Read-only: nothing is marked as read.",
         ),
     }
     options = {
@@ -763,6 +732,7 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
                     http1=bool(int(self.settings["http1"])),
                     home=self.home,
                     saw=self._saw,
+                    viewport=self.recipe.get("viewport"),
                 )
                 for skipped in self.driver.skipped:
                     self.report("info", skipped_line(skipped))
@@ -783,25 +753,30 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
         def matching(page, spec: dict, level: int, number: int) -> list[tuple[str, str, dict]]:
             pattern = spec.get("pattern") or ""
             found = []
+            specs = spec.get("values") or []
             what = "file links" if spec is self.recipe["links"] else f"level {level + 1}"
-            links = self._links(driver, page, spec, what)
-            for url, text in links:
+            links, where = self.listed(driver, page, spec, what)
+            for url, text, *texts in links:
                 # A person's pattern, within its time limit (a slow one fails the run).
                 match = pattern_search(pattern, url) if url else None
                 if match and url not in visited:
                     visited.add(url)
-                    found.append((url, text, patterns.group_values(match)))
-            kind = "follow" if spec is not self.recipe["links"] else "links"
-            where = {"level": level, "page": number, "url": driver.address(page), "kind": kind}
-            what = self.observe(where | {"selector": spec["selector"], "found": len(links), "matching": len(found)})
-            if what:
+                    groups = patterns.group_values(match)
+                    if specs:
+                        # A date's year, month and day where the link's pattern gives none.
+                        groups |= patterns.page_values(specs, texts[0], pattern_search, groups)
+                    found.append((url, text, groups))
+            where |= {"level": level, "page": number, "kind": "follow" if spec is not self.recipe["links"] else "links"}
+            what = self.observe(where | {"found": len(links), "matching": len(found)})
+            # A JSON listing has no page to picture.
+            if what and not isinstance(page, jsonlist.JsonPage):
                 self.noticed = snapshot(page, what)
             return found
 
         # A page without the links it should have may be asking for a person instead; the start
         # page without any is a signed-out session or a changed site, not an empty listing.
         def blocked(page, level: int = 1, number: int = 2) -> None:
-            found = driver.challenge(page)
+            found = None if isinstance(page, jsonlist.JsonPage) else driver.challenge(page)
             if found:
                 raise ChallengeError(*found)
             if level == 0 and number == 1:
@@ -823,7 +798,7 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
         # A followed link's listing; True when it holds files, all known.
         def known(link: str, level: int, values: dict, outcome: dict) -> Generator[Item, None, bool]:
             child = {"found": False, "new": False}
-            yield from walk(link, level + 1, values, child)
+            yield from listing(link, level + 1, values, child)
             outcome["found"] |= child["found"]
             outcome["new"] |= child["new"]
             return child["found"] and not child["new"]
@@ -847,6 +822,18 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
                         break
                 return False
             return False
+
+        # A JSON listing's pages, read one after another while its files go on.
+        def json_files(level: int, values: dict, outcome: dict) -> Iterator[Item]:
+            for number, page in enumerate(near.json_pages(self.recipe["links"], self.settings, driver, values), 1):
+                if (yield from files(page, number, values, outcome, level)):
+                    return
+
+        # The listing at the level: its pages, or the JSON listing that holds the file links.
+        def listing(url: str | None, level: int, values: dict, outcome: dict) -> Iterator[Item]:
+            if level == len(follow) and self.recipe["links"].get("kind") == "json":
+                return json_files(level, values, outcome)
+            return walk(url, level, values, outcome)
 
         # Each listing reports whether it found files and whether any was new.
         def walk(url: str | None, level: int, values: dict, outcome: dict) -> Iterator[Item]:
@@ -875,7 +862,18 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
                 if page is not None:
                     driver.done(page)
 
-        yield from walk(self.recipe.get("start") or None, 0, {}, {"found": False, "new": False})
+        yield from listing(self.recipe.get("start") or None, 0, {}, {"found": False, "new": False})
+
+    def listed(self, driver: Driver, page: Any, spec: dict, what: str) -> tuple[list, dict]:
+        """A level's links on the page (address, text and, where the level has values, their
+        texts; _links), and where they were read: a page's address and the selector, or a JSON
+        listing's address and its items' path."""
+        if isinstance(page, jsonlist.JsonPage):
+            return jsonlist.entries(page, spec), {"url": page.url, "selector": spec.get("items") or "(the answer)"}
+        # The values' texts only where the level has values: other recipes read as before.
+        specs = spec.get("values") or []
+        read = (lambda selector: driver.valued_links(page, selector, specs)) if specs else None
+        return self._links(driver, page, spec, what, read), {"url": driver.address(page), "selector": spec["selector"]}
 
     def _repaired(self, what: str, old: str, new: str) -> None:
         line = selectors.repair_line(what, old, new)
@@ -883,20 +881,24 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
             self.repairs.append(line)
             self.report("info", line)
 
-    def _links(self, driver: Driver, page: Any, spec: dict, what: str) -> list[tuple[str, str]]:
+    def _links(
+        self, driver: Driver, page: Any, spec: dict, what: str, read: Callable[[str], list] | None = None
+    ) -> list[tuple]:
         """A pick's links on the page: its selector's, else (none of them matching its pattern)
-        the first alternative's of which the pattern matches any (a repair, said once)."""
+        the first alternative's of which the pattern matches any (a repair, said once). read
+        reads a selector's links (with the values' texts, say); driver.links without."""
+        read = read or (lambda selector: driver.links(page, selector))
         tries = selectors.candidates(spec)
-        links = driver.links(page, tries[0])
+        links = read(tries[0])
         pattern = spec.get("pattern") or ""
-        if len(tries) < 2 or any(url and pattern_search(pattern, url) for url, _ in links):
+        if len(tries) < 2 or any(url and pattern_search(pattern, url) for url, *_ in links):
             return links
         for alternative in tries[1:]:
             try:
-                found = driver.links(page, alternative)
+                found = read(alternative)
             except selectors.SELECTOR_ERRORS:
                 continue  # an engine this driver lacks (the browser's, over HTTP)
-            if any(url and pattern_search(pattern, url) for url, _ in found):
+            if any(url and pattern_search(pattern, url) for url, *_ in found):
                 self._repaired(what, tries[0], alternative)
                 return found
         return links
