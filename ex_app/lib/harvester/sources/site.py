@@ -6,6 +6,10 @@ recipe's levels of links, takes the file links on the last level, page after pag
 downloads each file from its download URL (a template of the link's values). It waits when the
 site asks it to (429 or 503 with Retry-After, or a wait in the URL it redirects to) and checks
 what it gets: never a web page instead of a file, of the expected type and size.
+
+A level's links may carry values read from the page around each of them (harvester.patterns
+.page_values), and the file links may be a JSON listing (harvester.jsonlist), read over HTTP with
+the job's cookies (the browser's, when it has one) and walked page by page.
 """
 
 import abc
@@ -24,11 +28,11 @@ from playwright.sync_api import Route, WebSocketRoute, sync_playwright
 
 from .. import browser
 from .. import cookies as cookie_jar
-from .. import otp, pagination, patterns
+from .. import jsonlist, otp, pagination, patterns
 from .. import recipe as recipes
 from ..browser.guard import Guard
-from . import download
-from .base import AuthError, ChallengeError, Item, Option, Source, SourceError, Stopped, pattern_search
+from . import download, mail
+from .base import AuthError, ChallengeError, Item, Option, Source, SourceError, Stopped, check_stop, pattern_search
 from .download import Response
 
 # The seen key a run records once it has gone through the whole site (not stopped by
@@ -57,6 +61,17 @@ PAGE_SIZE = (
 )
 SCROLL_DOWN = "() => window.scrollTo(0, (document.scrollingElement || document.body).scrollHeight)"
 OUTER_HTML = "s => { const e = document.querySelector(s); return e ? e.outerHTML : '' }"
+# A level's links with the texts of its values (harvester.recipe: "values"): each value's element
+# (the link's closest match of closest, then the match of selector in it), its attribute or its
+# text; null where there is none, or a selector the page cannot read.
+VALUES = """(els, specs) => els.map(e => [e.href || '', (e.innerText || '').trim(), specs.map(s => {
+  try {
+    let at = s.closest ? e.closest(s.closest) : e
+    if (at && s.selector) at = at.querySelector(s.selector)
+    if (!at) return null
+    return s.attribute ? at.getAttribute(s.attribute) : (at.innerText || at.textContent || '').trim()
+  } catch (error) { return null }
+})])"""
 # The recipe test (Site.survey): the file links it lists, and the listing pages it opens at most.
 SURVEY_FILES = 20
 SURVEY_PAGES = 30
@@ -86,6 +101,29 @@ class Driver(abc.ABC):
     @abc.abstractmethod
     def links(self, page: Any, selector: str) -> list[tuple[str, str]]:
         """The page's links matching the selector: absolute URL and text."""
+
+    def valued_links(self, page: Any, selector: str, specs: list[dict]) -> list[tuple[str, str, list]]:
+        """The page's links matching the selector, as links() gives them, each with the texts of
+        the values (specs: a level's "values"; None where a value's element is missing)."""
+        return [(url, text, [None] * len(specs)) for url, text in self.links(page, selector)]
+
+    def read_json(self, url: str) -> Any:
+        """A JSON listing's page, asked for as a file is (the job's cookies, the guarded client),
+        read up to download.MAX_PAGE."""
+        with self.download(url) as response:
+            if response.status >= 400:
+                raise SourceError(f"the JSON listing {url} answered {response.status}")
+            body = bytearray()
+            for chunk in response.chunks:
+                body += chunk
+                if len(body) > download.MAX_PAGE:
+                    raise SourceError(f"the JSON listing {url} is larger than {download.MAX_PAGE // 1048576} MB")
+        try:
+            return jsonlist.parse(bytes(body))
+        except ValueError as error:
+            raise SourceError(
+                f"the JSON listing {url} is not JSON ({str(error).splitlines()[0]}): signed out?"
+            ) from error
 
     @abc.abstractmethod
     def next(self, page: Any, selector: str) -> Any:
@@ -150,6 +188,18 @@ class HttpDriver(Driver):
             if link.get("href")
         ]
 
+    def valued_links(self, page: Any, selector: str, specs: list[dict]) -> list[tuple[str, str, list]]:
+        page_url, soup = page
+        return [
+            (
+                urljoin(page_url, str(link.get("href"))),
+                link.get_text(" ", strip=True),
+                [soup_value(link, s) for s in specs],
+            )
+            for link in soup.select(selector)
+            if link.get("href")
+        ]
+
     def next(self, page: Any, selector: str) -> Any:
         found = self.links(page, selector)
         return self.open(found[0][0]) if found else None
@@ -190,6 +240,7 @@ class BrowserDriver(Driver):
         http1: bool = False,
         home: bool = False,
         saw: Callable[[dict], None] | None = None,
+        viewport: dict | None = None,
     ):
         self.saw = saw
         if not browser.SLOTS.acquire(timeout=LOCK_TIMEOUT, kind="job"):  # pylint: disable=consider-using-with
@@ -208,7 +259,8 @@ class BrowserDriver(Driver):
             self._browser = self._playwright.chromium.launch(**browser.launch_options(port, http1))
             self.user_agent = browser.user_agent(self._browser.version)
             self.context = self._browser.new_context(
-                **browser.context_options(self._browser.version),
+                # The window the recipe was recorded in (its steps and pages laid out alike).
+                **browser.context_options(self._browser.version, viewport),
                 accept_downloads=False,
                 storage_state=session or None,  # type: ignore[arg-type]
             )
@@ -295,6 +347,9 @@ class BrowserDriver(Driver):
     def links(self, page: Any, selector: str) -> list[tuple[str, str]]:
         return page.eval_on_selector_all(selector, "els => els.map(e => [e.href || '', (e.innerText || '').trim()])")
 
+    def valued_links(self, page: Any, selector: str, specs: list[dict]) -> list[tuple[str, str, list]]:
+        return [tuple(link) for link in page.eval_on_selector_all(selector, VALUES, specs)]
+
     def next(self, page: Any, selector: str) -> Any:
         link = page.query_selector(selector)
         if not link:
@@ -342,6 +397,24 @@ class BrowserDriver(Driver):
                     self._guard.stop()
             finally:
                 browser.SLOTS.release("job")
+
+
+def soup_value(link: Any, spec: dict) -> str | None:
+    """A value's text for a link of a page read over HTTP, as VALUES finds it in the browser: the
+    link's closest match of closest, the match of selector in it, its attribute or its text; None
+    where there is none (or a selector BeautifulSoup cannot read)."""
+    try:
+        at = link.css.closest(spec["closest"]) if spec.get("closest") else link
+        if at is not None and spec.get("selector"):
+            at = at.select_one(spec["selector"])
+    except Exception:  # pylint: disable=broad-exception-caught
+        return None  # soupsieve's SelectorSyntaxError and its kin: the value is missing
+    if at is None:
+        return None
+    if spec.get("attribute"):
+        value = at.get(spec["attribute"])
+        return " ".join(value) if isinstance(value, list) else value
+    return at.get_text(" ", strip=True)
 
 
 def skipped_line(skipped: dict) -> str:
@@ -446,6 +519,18 @@ def filled(step: dict, secrets: dict[str, str]) -> str:
     return str(step.get("value", ""))
 
 
+def mail_code(page, step: dict, secrets: dict[str, str], began: float) -> str:
+    """The code of a step "mail-code" (harvester.sources.mail.code_from_mail): from a message that
+    came after the step began, waited for in the page's pauses, so a run or a test stopped
+    meanwhile ends there."""
+
+    def pause(seconds: float) -> None:
+        check_stop()
+        page.wait_for_timeout(seconds * 1000)
+
+    return mail.code_from_mail(step, secrets, began, pause)
+
+
 class FrameMissing(SourceError):
     """The frame a step acts in is not on the page."""
 
@@ -496,7 +581,7 @@ def replay(page, step: dict, secrets: dict[str, str]) -> None:
     """Does one recorded step, in its frame if it has one; an optional step waits for its frame
     and element OPTIONAL_TIMEOUT at most (a required one the page's default, STEP_TIMEOUT)."""
     action = step["action"]
-    started = time.monotonic()
+    started, began = time.monotonic(), time.time()
     budget = OPTIONAL_TIMEOUT if step.get("optional") else STEP_TIMEOUT
     # A step without a frame acts on the page as it always did.
     target = in_frame(page, step["frame"], budget) if step.get("frame") else page
@@ -512,6 +597,11 @@ def replay(page, step: dict, secrets: dict[str, str]) -> None:
         target.click(step["selector"], **wait)
     elif action == "press":
         target.press(step["selector"], step.get("key", "Enter"), **wait)
+    elif action == "mail-code":
+        # The message first, then the field: the page may show the field only once it is due.
+        code = mail_code(page, step, secrets, began)
+        target.fill(step["selector"], code, **wait)
+        return
     elif action == "scroll":
         scroll_to_load(page, int(step.get("rounds") or recipes.SCROLL_ROUNDS))
         return
@@ -527,7 +617,7 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
         "Files linked from a website's pages: record it in the browser (sign in if need be, then pick the links to "
         "follow and the file links) or start from a template."
     )
-    credentials = ("username", "password", "totp", "cookies")
+    credentials = ("username", "password", "totp", "cookies", "code_mailbox")
     credential_help = {
         "username": (
             "Username",
@@ -544,6 +634,14 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
             "Cookies",
             "A signed-in browser's cookies for the site, instead of a recorded sign-in: a cookies.txt export "
             "(Netscape format) or a Cookie header's name=value; name=value. They expire as they do in the browser.",
+        ),
+        "code_mailbox": (
+            "Mailbox for codes",
+            "For a sign-in that sends a code by e-mail (the step “type the code from e-mail”): the IMAP mailbox it "
+            "arrives in, one setting per line: host = mail.example.org, user = me@example.org, password = …; also "
+            "port (993), folder (INBOX), and auth = oauth2-google, oauth2-microsoft or oauth2 with token_url, "
+            "client_id, client_secret, refresh_token. Without user and password, the job's Username and Password "
+            "sign in. Read-only: nothing is marked as read.",
         ),
     }
     options = {
@@ -663,6 +761,7 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
                     http1=bool(int(self.settings["http1"])),
                     home=self.home,
                     saw=self._saw,
+                    viewport=self.recipe.get("viewport"),
                 )
                 for skipped in self.driver.skipped:
                     self.report("info", skipped_line(skipped))
@@ -681,22 +780,27 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
         def matching(page, spec: dict, level: int, number: int) -> list[tuple[str, str, dict]]:
             pattern = spec.get("pattern") or ""
             found = []
-            links = driver.links(page, spec["selector"])
-            for url, text in links:
+            specs = spec.get("values") or []
+            links, where = self.listed(driver, page, spec)
+            for url, text, *texts in links:
                 # A person's pattern, within its time limit (a slow one fails the run).
                 match = pattern_search(pattern, url) if url else None
                 if match and url not in visited:
                     visited.add(url)
-                    found.append((url, text, patterns.group_values(match)))
+                    groups = patterns.group_values(match)
+                    if specs:
+                        # A date's year, month and day where the link's pattern gives none.
+                        groups |= patterns.page_values(specs, texts[0], pattern_search, groups)
+                    found.append((url, text, groups))
             kind = "follow" if spec is not self.recipe["links"] else "links"
-            where = {"level": level, "page": number, "url": driver.address(page), "kind": kind}
-            self.observe(where | {"selector": spec["selector"], "found": len(links), "matching": len(found)})
+            where |= {"level": level, "page": number, "kind": kind}
+            self.observe(where | {"found": len(links), "matching": len(found)})
             return found
 
         # A page without the links it should have may be asking for a person instead; the start
         # page without any is a signed-out session or a changed site, not an empty listing.
         def blocked(page, level: int = 1, number: int = 2) -> None:
-            found = driver.challenge(page)
+            found = None if isinstance(page, jsonlist.JsonPage) else driver.challenge(page)
             if found:
                 raise ChallengeError(*found)
             if level == 0 and number == 1:
@@ -718,7 +822,7 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
         # A followed link's listing; True when it holds files, all known.
         def known(link: str, level: int, values: dict, outcome: dict) -> Generator[Item, None, bool]:
             child = {"found": False, "new": False}
-            yield from walk(link, level + 1, values, child)
+            yield from listing(link, level + 1, values, child)
             outcome["found"] |= child["found"]
             outcome["new"] |= child["new"]
             return child["found"] and not child["new"]
@@ -742,6 +846,18 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
                         break
                 return False
             return False
+
+        # A JSON listing's pages, read one after another while its files go on.
+        def json_files(level: int, values: dict, outcome: dict) -> Iterator[Item]:
+            for number, page in enumerate(self.json_pages(driver, values), 1):
+                if (yield from files(page, number, values, outcome, level)):
+                    return
+
+        # The listing at the level: its pages, or the JSON listing that holds the file links.
+        def listing(url: str | None, level: int, values: dict, outcome: dict) -> Iterator[Item]:
+            if level == len(follow) and self.recipe["links"].get("kind") == "json":
+                return json_files(level, values, outcome)
+            return walk(url, level, values, outcome)
 
         # Each listing reports whether it found files and whether any was new.
         def walk(url: str | None, level: int, values: dict, outcome: dict) -> Iterator[Item]:
@@ -770,7 +886,32 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
                 if page is not None:
                     driver.done(page)
 
-        yield from walk(self.recipe.get("start") or None, 0, {}, {"found": False, "new": False})
+        yield from listing(self.recipe.get("start") or None, 0, {}, {"found": False, "new": False})
+
+    @staticmethod
+    def listed(driver: Driver, page: Any, spec: dict) -> tuple[list, dict]:
+        """A level's links on the page (address, text and, where the level has values, their
+        texts), and where they were read: a page's address and the selector, or a JSON listing's
+        address and its items' path."""
+        if isinstance(page, jsonlist.JsonPage):
+            return jsonlist.entries(page, spec), {"url": page.url, "selector": spec.get("items") or "(the answer)"}
+        # The values' texts only where the level has values: other recipes read as before.
+        specs = spec.get("values") or []
+        found = driver.valued_links(page, spec["selector"], specs) if specs else driver.links(page, spec["selector"])
+        return found, {"url": driver.address(page), "selector": spec["selector"]}
+
+    def json_pages(self, driver: Driver, values: dict) -> Iterator[jsonlist.JsonPage]:
+        """The pages of the JSON listing (harvester.jsonlist), its address made of the walk's
+        values, up to the job's pages; one without a page parameter."""
+        spec = self.recipe["links"]
+        try:
+            first = patterns.render(str(spec["url"]), patterns.link_values(str(spec["url"]), "", 1) | values)
+        except (KeyError, ValueError, IndexError) as error:
+            raise SourceError(f"the JSON listing's address: {str(error).strip(chr(39))}") from error
+        pages = int(self.settings["max_pages"]) if (spec.get("page") or {}).get("param") else 1
+        for number in range(1, pages + 1):
+            url = jsonlist.page_url(first, spec.get("page"), number)
+            yield jsonlist.JsonPage(url, driver.read_json(url))
 
     def item(self, link: str, text: str, page: int, groups: dict) -> Item:
         """The file of a link: its download URL and path from the link's values (an item that
