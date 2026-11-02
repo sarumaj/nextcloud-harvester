@@ -546,10 +546,13 @@ class Wizards:
         with self.lock:
             mine = sorted((s for s in self.sessions.values() if s.user == user), key=lambda s: s.used)
             ended = mine[: max(0, len(mine) - PER_USER + 1)]
+            # Refused before any of the user's wizards is taken out of the list: one taken out
+            # and not ended would keep its directory (its configuration's secrets) until the app
+            # stops.
+            if len(self.sessions) - len(ended) >= TOTAL:
+                raise WizardError("too many rclone wizards are open: try again in a few minutes", 429)
             for session in ended:
                 del self.sessions[session.id]
-            if len(self.sessions) >= TOTAL:
-                raise WizardError("too many rclone wizards are open: try again in a few minutes", 429)
             session = Session(user, kind, binary, self.run, used=self.clock())
             self.sessions[session.id] = session
         for old in ended:
