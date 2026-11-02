@@ -354,6 +354,7 @@ class Executor:
             control = self.controls.setdefault(job_id, Control())
         self._begin(job_id, control, wanted, previous is not None)
         nc = self.connect()
+        source = None
         try:
             self.call(nc.set_user(job.user))
             source_class = SOURCES[job.source]
@@ -391,7 +392,7 @@ class Executor:
                 self.store.finish(job_id, "ok", message)
             self.store.log(job_id, "done", message)
         except Exception as error:  # pylint: disable=broad-exception-caught
-            self._failed(job, nc, error, not wanted)
+            self._failed(job, nc, error, not wanted, getattr(source, "shot", None))
         finally:
             watch_stop(None)
             with self._lock:
@@ -427,14 +428,19 @@ class Executor:
             self.store.log(job.id or 0, "info", message)
         return message
 
-    def _failed(self, job: Job, nc: AsyncNextcloudApp, error: Exception, retagging: bool) -> None:
-        """Records why a run failed, and tells its user of a new failure; a job deleted while it
-        ran ends quietly, and a pass for the tags only logs it (the job's last run stays)."""
+    def _failed(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self, job: Job, nc: AsyncNextcloudApp, error: Exception, retagging: bool, shot: dict | None = None
+    ) -> None:
+        """Records why a run failed (with what the browser showed, if the source shot it), and
+        tells its user of a new failure; a job deleted while it ran ends quietly, and a pass for
+        the tags only logs it (the job's last run stays)."""
         job_id = job.id or 0
         if not self.store.job(job_id):
             return
         message = str(error) or type(error).__name__
-        self.store.log(job_id, "error", message)
+        line = self.store.log(job_id, "error", message)
+        if shot:
+            self.store.keep_shot(job_id, line, shot)
         if retagging:
             return
         if isinstance(error, ChallengeError):

@@ -11,21 +11,21 @@ what it gets: never a web page instead of a file, of the expected type and size.
 import abc
 import contextlib
 import json
-import re
 import time
 from collections.abc import Callable, Generator, Iterator
 from typing import Any, BinaryIO
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Route, sync_playwright
 
 from .. import browser
 from .. import cookies as cookie_jar
-from .. import otp, patterns
+from .. import otp, pagination, patterns
 from .. import recipe as recipes
 from . import download
-from .base import AuthError, ChallengeError, Item, Option, Source, SourceError
+from .base import AuthError, ChallengeError, Item, Option, Source, SourceError, Stopped, pattern_search
 from .download import Response
 
 # The seen key a run records once it has gone through the whole site (not stopped by
@@ -34,10 +34,40 @@ FULL_PASS = "harvester:full-pass"
 # How long a browser step may take (ms), and how long a job waits for the browser (s).
 STEP_TIMEOUT = 30_000
 LOCK_TIMEOUT = 1800
+# What the browser showed when a step failed or a page asked for a person: a JPEG of the window
+# at this quality, again at the lower one when larger than SHOT_BYTES (else none is kept).
+SHOT_QUALITY = (60, 35)
+SHOT_BYTES = 400_000
+# A scroll step ends once the page stopped growing for this many rounds in a row, or after
+# SCROLL_SECONDS (a feed that never ends).
+SCROLL_STILL = 2
+SCROLL_SECONDS = 60
+# The page's size as a scroll step compares it: its links, its elements and its height.
+PAGE_SIZE = (
+    "() => [document.links.length, document.getElementsByTagName('*').length,"
+    " (document.scrollingElement || document.body).scrollHeight]"
+)
+SCROLL_DOWN = "() => window.scrollTo(0, (document.scrollingElement || document.body).scrollHeight)"
+OUTER_HTML = "s => { const e = document.querySelector(s); return e ? e.outerHTML : '' }"
+# The recipe test (Site.survey): the file links it lists, and the listing pages it opens at most.
+SURVEY_FILES = 20
+SURVEY_PAGES = 30
 
 
 class Driver(abc.ABC):
     """Fetches pages and files: over HTTP or in the browser."""
+
+    # What the browser showed when a step failed or a page asked for a person (snapshot()), and
+    # who is told of it (the source: a driver whose sign-in fails is never handed over).
+    shot: dict | None = None
+    saw: Callable[[dict], None] | None = None
+
+    def keep_shot(self, page: Any, what: str) -> None:
+        """Keeps what the page shows, and tells saw."""
+        self.shot = snapshot(page, what) or self.shot
+        tell = self.saw
+        if self.shot and tell is not None:
+            tell(self.shot)  # pylint: disable=not-callable
 
     @abc.abstractmethod
     def open(self, url: str | None) -> Any:
@@ -50,6 +80,15 @@ class Driver(abc.ABC):
     @abc.abstractmethod
     def next(self, page: Any, selector: str) -> Any:
         """The page after this one (its link clicked or followed), or None."""
+
+    @abc.abstractmethod
+    def numbered(self, page: Any, selector: str, counted: int) -> Any:
+        """The page numbered one higher than this one in the pagination (harvester.pagination),
+        or None; counted is the walk's count of the listing's pages so far."""
+
+    @abc.abstractmethod
+    def address(self, page: Any) -> str:
+        """The page's address."""
 
     @abc.abstractmethod
     def download(self, url: str) -> contextlib.AbstractContextManager[Response]:
@@ -104,6 +143,16 @@ class HttpDriver(Driver):
         found = self.links(page, selector)
         return self.open(found[0][0]) if found else None
 
+    def numbered(self, page: Any, selector: str, counted: int) -> Any:
+        page_url, soup = page
+        box = soup.select_one(selector)
+        found = pagination.following(str(box) if box else "", page_url, counted)
+        # A button has no address to fetch: only the browser can click it.
+        return self.open(urljoin(page_url, found[1])) if found and found[1] else None
+
+    def address(self, page: Any) -> str:
+        return page[0]
+
     def download(self, url: str) -> contextlib.AbstractContextManager[Response]:
         return download.http(self.client)(url)
 
@@ -115,7 +164,12 @@ class BrowserDriver(Driver):
     step that fails on a page asking for a person raises ChallengeError (only then: a login page
     may well carry an invisible CAPTCHA that lets people through)."""
 
-    def __init__(
+    # The listing the steps ended on is read in their tab, as they left it (scrolled to load
+    # more, say), once; other pages open in tabs of their own.
+    _start = ""
+    _reused = False
+
+    def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
         steps: list[dict],
         secrets: dict[str, str],
@@ -124,7 +178,9 @@ class BrowserDriver(Driver):
         cookies: list[dict] | None = None,
         http1: bool = False,
         home: bool = False,
+        saw: Callable[[dict], None] | None = None,
     ):
+        self.saw = saw
         if not browser.SLOTS.acquire(timeout=LOCK_TIMEOUT):  # pylint: disable=consider-using-with
             raise SourceError("no browser came free (recordings use them all)")
         self._playwright = None
@@ -150,13 +206,17 @@ class BrowserDriver(Driver):
             raise
 
     def sign_in(self, steps: list[dict], secrets: dict[str, str], session: dict | None, start: str) -> None:
-        """Replays the steps, unless the kept session still reaches the listing."""
+        """Replays the steps, unless the kept session still reaches the listing: then only the
+        scroll steps at their end, which load the listing's later entries."""
+        todo = list(enumerate(steps, 1))
+        self._start = start
         if session and start:
             self.main.goto(start, wait_until="domcontentloaded")
             settle(self.main)
             if not self.main.query_selector("input[type=password]:visible"):
-                return
-        for number, step in enumerate(steps, 1):
+                last = max((number for number, step in todo if step.get("action") != "scroll"), default=0)
+                todo = todo[last:]
+        for number, step in todo:
             try:
                 replay(self.main, step, secrets)
             except Exception as error:
@@ -164,20 +224,28 @@ class BrowserDriver(Driver):
                 if found:
                     raise ChallengeError(*found) from error
                 why = browser.connection_refused(error) or str(error)
-                raise SourceError(f"step {number} ({step['action']} {step.get('text') or ''}) failed: {why}") from error
+                what = f"step {number} ({recipes.step_label(step)}) failed"
+                self.keep_shot(self.main, what)
+                raise SourceError(f"{what}: {why}") from error
 
     def challenge(self, page: Any) -> tuple[str, str] | None:
         try:
             kind = page.evaluate(browser.CHALLENGE_SCRIPT)
         except Exception:  # pylint: disable=broad-exception-caught
             return None  # the page is gone or navigating
-        return (page.url, kind) if kind else None
+        if not kind:
+            return None
+        self.keep_shot(page, f"the page asks for a person ({kind})")
+        return page.url, kind
 
     def session(self) -> dict | None:
         return self.context.storage_state()  # type: ignore[return-value]
 
     def open(self, url: str | None) -> Any:
         if url is None:
+            return self.main
+        if not self._reused and url == self._start and self.main.url.split("#")[0] == url.split("#")[0]:
+            self._reused = True
             return self.main
         page = self.context.new_page()
         try:
@@ -200,6 +268,17 @@ class BrowserDriver(Driver):
         link.click()
         settle(page)
         return page
+
+    def numbered(self, page: Any, selector: str, counted: int) -> Any:
+        found = pagination.following(page.evaluate(OUTER_HTML, selector), page.url, counted)
+        if not found or not page.evaluate(pagination.MARK_NUMBER, [selector, str(found[0])]):
+            return None
+        page.click("[data-harvester-next]")
+        settle(page)
+        return page
+
+    def address(self, page: Any) -> str:
+        return page.url
 
     def done(self, page: Any) -> None:
         if page is not self.main:
@@ -234,6 +313,33 @@ def guard(route: Route) -> None:
         route.continue_()
     else:
         route.abort("blockedbyclient")
+
+
+def snapshot(page, what: str) -> dict | None:
+    """What the page shows (a JPEG of the window, small enough to keep), its address and title,
+    and what went wrong there; None when the page cannot be shot (gone, or a picture too large)."""
+    try:
+        for quality in SHOT_QUALITY:
+            image = page.screenshot(type="jpeg", quality=quality, timeout=10_000)
+            if len(image) <= SHOT_BYTES:
+                return {"image": image, "url": page.url, "title": page.title(), "what": what, "at": time.time()}
+    except Exception:  # pylint: disable=broad-exception-caught
+        pass  # the page closed or hangs: the error says what went wrong all the same
+    return None
+
+
+def scroll_to_load(page, rounds: int) -> None:
+    """Scrolls to the page's end until it stops growing (no new links, elements or height for
+    SCROLL_STILL rounds), at most rounds times or SCROLL_SECONDS."""
+    deadline = time.monotonic() + SCROLL_SECONDS
+    still = 0
+    for _ in range(rounds):
+        before = page.evaluate(PAGE_SIZE)
+        page.evaluate(SCROLL_DOWN)
+        settle(page)
+        still = still + 1 if page.evaluate(PAGE_SIZE) == before else 0
+        if still >= SCROLL_STILL or time.monotonic() > deadline:
+            return
 
 
 def settle(page) -> None:
@@ -271,6 +377,9 @@ def replay(page, step: dict, secrets: dict[str, str]) -> None:
         page.click(step["selector"])
     elif action == "press":
         page.press(step["selector"], step.get("key", "Enter"))
+    elif action == "scroll":
+        scroll_to_load(page, int(step.get("rounds") or recipes.SCROLL_ROUNDS))
+        return
     settle(page)
 
 
@@ -366,6 +475,17 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
         self.driver: Driver | None = None
         self.kept: dict | None = None
         self.sleep: Callable[[float], None] = time.sleep
+        # Told of each listing page the walk reads (survey(): the recipe's test).
+        self.observe: Callable[[dict], None] = lambda event: None
+        self._shot: dict | None = None
+
+    def _saw(self, shot: dict) -> None:
+        self._shot = shot
+
+    @property
+    def shot(self) -> dict | None:
+        """What the browser showed when a step failed or a page asked for a person, if it did."""
+        return self._shot or (self.driver.shot if self.driver else None)
 
     def restore(self, session: dict) -> None:
         self.kept = session
@@ -387,6 +507,7 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
                     cookie_jar.to_playwright(found),
                     http1=bool(int(self.settings["http1"])),
                     home=self.home,
+                    saw=self._saw,
                 )
             else:
                 # Without recorded steps, the account's user name and password are HTTP Basic's.
@@ -394,20 +515,25 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
                 self.driver = HttpDriver(self.client, self.kept)
         return self.driver
 
-    def items(self, seen: Callable[[str], bool]) -> Iterator[Item]:
+    def items(self, seen: Callable[[str], bool]) -> Iterator[Item]:  # pylint: disable=too-many-statements
         driver = self._driver()
         stop_at_seen = int(self.settings["stop_at_seen"]) and seen(FULL_PASS)
         follow = self.recipe.get("follow") or []
         visited: set[str] = set()
 
-        def matching(page, spec: dict) -> list[tuple[str, str, dict]]:
-            pattern = re.compile(spec.get("pattern") or "")
+        def matching(page, spec: dict, level: int, number: int) -> list[tuple[str, str, dict]]:
+            pattern = spec.get("pattern") or ""
             found = []
-            for url, text in driver.links(page, spec["selector"]):
-                match = pattern.search(url) if url else None
+            links = driver.links(page, spec["selector"])
+            for url, text in links:
+                # A person's pattern, within its time limit (a slow one fails the run).
+                match = pattern_search(pattern, url) if url else None
                 if match and url not in visited:
                     visited.add(url)
                     found.append((url, text, patterns.group_values(match)))
+            kind = "follow" if spec is not self.recipe["links"] else "links"
+            where = {"level": level, "page": number, "url": driver.address(page), "kind": kind}
+            self.observe(where | {"selector": spec["selector"], "found": len(links), "matching": len(found)})
             return found
 
         # A page without the links it should have may be asking for a person instead; the start
@@ -422,7 +548,7 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
         # The file links of a listing's page; True when the listing ends there (no file links, or
         # only known ones while known files end the run).
         def files(page, number: int, values: dict, outcome: dict, level: int) -> Generator[Item, None, bool]:
-            found = matching(page, self.recipe["links"])
+            found = matching(page, self.recipe["links"], level, number)
             if not found:
                 blocked(page, level, number)
             new = [entry for entry in found if not seen(entry[0])]
@@ -466,7 +592,7 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
             try:
                 for number in range(1, int(self.settings["max_pages"]) + 1):
                     if level < len(follow):
-                        links = matching(page, follow[level])
+                        links = matching(page, follow[level], level, number)
                         if not links:
                             blocked(page, level, number)
                         if (yield from children(links, level, values, outcome)):
@@ -476,9 +602,13 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
                     after = self.recipe.get("next") or {}
                     if not after.get("selector") or int(after.get("level", 0)) != level:
                         return
-                    page = driver.next(page, after["selector"])
-                    if page is None:
+                    if after.get("kind") == "number":
+                        later = driver.numbered(page, after["selector"], number)
+                    else:
+                        later = driver.next(page, after["selector"])
+                    if later is None:
                         return
+                    page = later
             finally:
                 if page is not None:
                     driver.done(page)
@@ -500,6 +630,52 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
 
     def fetch(self, item: Item, dest: BinaryIO) -> None:
         download.fetch(self._driver().download, item.url, dest, self.settings, self.sleep)
+
+    def survey(
+        self, files: int = SURVEY_FILES, pages: int = SURVEY_PAGES, begin: Callable[[], None] = lambda: None
+    ) -> dict:
+        """The recipe's test: walks the site as a run does (after begin: the steps), downloading
+        nothing, and tells what it found: each listing page read with the links its selector and
+        pattern matched, the first file links with their file names, and the problems met. It
+        ends after that many files or pages, or when stopped (Stopped)."""
+        result: dict = {"pages": [], "problems": [], "files": 0, "ended": "complete", "shot": None}
+
+        def observe(event: dict) -> None:
+            if len(result["pages"]) >= pages:
+                raise Stopped("pages")
+            where = "the listing" if event["level"] == 0 else f"a level {event['level']} page"
+            where += f" (page {event['page']}, {event['url']})"
+            if not event["found"]:
+                result["problems"].append(f"{where}: {event['selector']} matched nothing")
+            elif not event["matching"]:
+                result["problems"].append(f"{where}: none of its {event['found']} links matched the pattern")
+            result["pages"].append(event | {"files": []})
+
+        self.observe = observe
+        items = self.items(lambda key: False)
+        try:
+            begin()
+            for item in items:
+                problem = str(item.problem) if item.problem else ""
+                result["pages"][-1]["files"].append({"url": item.url, "path": item.path, "problem": problem})
+                result["files"] += 1
+                if result["files"] >= files:
+                    result["ended"] = "files"
+                    break
+        except Stopped as stop:
+            # "pages", "time" (the test's limits) or "stopped" (by the person).
+            result["ended"] = str(stop) if str(stop) in ("pages", "time") else "stopped"
+        except (SourceError, PlaywrightError) as error:
+            result["ended"] = "failed"
+            result["problems"].append((str(error) or type(error).__name__).splitlines()[0])
+        finally:
+            # The walk's pages close; a test stopped meanwhile cannot close them (its browser
+            # context goes as a whole).
+            with contextlib.suppress(Exception):
+                items.close()
+            self.observe = lambda event: None
+        result["shot"] = self.shot
+        return result
 
     def close(self) -> None:
         if self.driver:

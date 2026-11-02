@@ -49,6 +49,17 @@ CREATE TABLE IF NOT EXISTS log (
     message TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS log_job ON log (job, id);
+-- What the job's browser showed at its last failed step or challenge (the newest only), and the
+-- log line that tells of it.
+CREATE TABLE IF NOT EXISTS shots (
+    job INTEGER PRIMARY KEY REFERENCES jobs(id) ON DELETE CASCADE,
+    log INTEGER,
+    at REAL NOT NULL,
+    url TEXT NOT NULL,
+    title TEXT NOT NULL,
+    what TEXT NOT NULL,
+    image BLOB NOT NULL
+);
 """
 # The lines of the progress log kept per job (its last runs).
 LOG_KEPT = 500
@@ -80,7 +91,7 @@ class Job:
     timezone: str = "UTC"
 
 
-class Store:
+class Store:  # pylint: disable=too-many-public-methods
     """Thread-safe access to the database: the web requests and the scheduler share it."""
 
     def __init__(self, path: str):
@@ -168,28 +179,48 @@ class Store:
         with self._lock, self._db:
             self._db.execute("UPDATE jobs SET last_message = NULL WHERE id = ?", (job_id,))
 
-    def log(self, job_id: int, level: str, message: str) -> None:
-        """A line of the job's progress log (info, error, done); the oldest beyond LOG_KEPT go.
-        Nothing for a job deleted meanwhile (its run goes on to its end)."""
+    def log(self, job_id: int, level: str, message: str) -> int | None:
+        """A line of the job's progress log (info, error, done), and its id; the oldest beyond
+        LOG_KEPT go. Nothing for a job deleted meanwhile (its run goes on to its end)."""
         try:
             with self._lock, self._db:
-                self._db.execute(
+                line = self._db.execute(
                     "INSERT INTO log (job, at, level, message) VALUES (?, ?, ?, ?)",
                     (job_id, time.time(), level, message[:1000]),
-                )
+                ).lastrowid
                 self._db.execute(
                     "DELETE FROM log WHERE job = ? AND id <= (SELECT id FROM log WHERE job = ? ORDER BY id DESC"
                     " LIMIT 1 OFFSET ?)",
                     (job_id, job_id, LOG_KEPT),
                 )
+            return line
+        except sqlite3.IntegrityError:
+            return None
+
+    def keep_shot(self, job_id: int, line: int | None, shot: dict) -> None:
+        """Keeps what the job's browser showed (site.snapshot), told of by the log line, in place
+        of the one before. Nothing for a job deleted meanwhile."""
+        try:
+            with self._lock, self._db:
+                self._db.execute(
+                    "INSERT OR REPLACE INTO shots (job, log, at, url, title, what, image) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (job_id, line, shot["at"], shot["url"], shot["title"], shot["what"], shot["image"]),
+                )
         except sqlite3.IntegrityError:
             pass
+
+    def shot(self, job_id: int) -> dict | None:
+        """What the job's browser showed last (its image as bytes), or None."""
+        with self._lock:
+            row = self._db.execute("SELECT * FROM shots WHERE job = ?", (job_id,)).fetchone()
+        return dict(row) if row else None
 
     def log_lines(self, user: str, job_id: int | None = None, after: int = 0) -> list[dict]:
         """The user's progress log after the line after (its id), oldest first: of one job, or
         of all theirs; the newest LOG_PAGE when there are more."""
         query = (
-            "SELECT log.id, log.job, jobs.name, log.at, log.level, log.message FROM log JOIN jobs ON jobs.id = log.job"
+            "SELECT log.id, log.job, jobs.name, log.at, log.level, log.message,"
+            " EXISTS (SELECT 1 FROM shots WHERE shots.log = log.id) AS shot FROM log JOIN jobs ON jobs.id = log.job"
             " WHERE jobs.user = ? AND log.id > ?"
         )
         values: list = [user, after]

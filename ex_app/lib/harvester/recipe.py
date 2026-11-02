@@ -12,17 +12,44 @@
 steps (optional) sign in or prepare in the browser; without them the pages are fetched without
 one. start is the listing (after the steps); each entry of follow is a level of links to follow
 before the file links (a year, then its issues); next is the link to a listing's next page, at
-that level (0: start's).
+that level (0: start's). A next of {"kind": "number", "selector": <the pagination's container>,
+"level": 0} is a pagination of numbers instead (harvester.pagination): the item numbered one
+higher than the current page, a link or a button ("buttons": true: only the browser clicks them).
+
+A step {"action": "scroll", "rounds": 20} scrolls the page to its end until no more comes (a
+listing that loads more as it is scrolled), at most rounds times (SCROLL_ROUNDS without).
 """
 
 import re
 
 from .browser import allowed_url
 
-ACTIONS = {"goto", "click", "fill", "press"}
+ACTIONS = {"goto", "click", "fill", "press", "scroll"}
+# A scroll step's rounds: by default, and at most.
+SCROLL_ROUNDS = 20
+SCROLL_ROUNDS_MAX = 100
+NEXT_KINDS = ("link", "number")
 
 
-def steps_from_events(events: list[dict]) -> list[dict]:
+def step_label(step: dict) -> str:
+    """A step in a few words, for a log line: what it opens, clicks (its text, else its element),
+    fills or presses."""
+    action = step.get("action")
+    if action == "goto":
+        return f"open {step.get('url', '')}"
+    if action == "scroll":
+        return "scroll to load more"
+    if action == "click":
+        text = str(step.get("text") or "").strip()
+        return f"click “{text}”" if text else f"click {step.get('selector', '')}"
+    if action == "press":
+        return f"press {step.get('key', 'Enter')} in {step.get('selector', '')}"
+    if action == "fill":
+        return f"fill in {step.get('credential') or 'a value'} ({step.get('selector', '')})"
+    return str(action)
+
+
+def steps_from_events(events: list[dict]) -> list[dict]:  # pylint: disable=too-many-branches
     """Turns what the recorder saw into the recipe's steps.
 
     Typing into a field several times keeps the last value. A password is never kept: its step
@@ -35,6 +62,8 @@ def steps_from_events(events: list[dict]) -> list[dict]:
         action = event.get("action")
         if action == "goto":
             steps.append({"action": "goto", "url": event["url"]})
+        elif action == "scroll":
+            steps.append({"action": "scroll"})
         elif action == "click":
             steps.append({"action": "click", "selector": event["selector"], "text": event.get("text", "")})
         elif action == "press":
@@ -69,6 +98,19 @@ def _check_pattern(where: str, pattern: str) -> list[str]:
     return []
 
 
+def _rounds_ok(rounds: object) -> bool:
+    return isinstance(rounds, int) and not isinstance(rounds, bool) and 1 <= rounds <= SCROLL_ROUNDS_MAX
+
+
+def _check_next(after: object) -> list[str]:
+    # A next without its element has always meant none (the walk ends after the first page).
+    if not isinstance(after, dict) or not after.get("selector"):
+        return [] if not after or isinstance(after, dict) else ["next page: not an object"]
+    if after.get("kind", "link") not in NEXT_KINDS:
+        return [f"next page: unknown kind {after.get('kind')}"]
+    return []
+
+
 def _check_steps(steps: list) -> list[str]:
     problems = []
     for number, step in enumerate(steps, 1):
@@ -76,7 +118,9 @@ def _check_steps(steps: list) -> list[str]:
             problems.append(f"step {number}: unknown action {step.get('action') if isinstance(step, dict) else step}")
         elif step["action"] == "goto" and not allowed_url(str(step.get("url", ""))):
             problems.append(f"step {number}: the browser may not open {step.get('url')}")
-        elif step["action"] != "goto" and not step.get("selector"):
+        elif step["action"] == "scroll" and not _rounds_ok(step.get("rounds", SCROLL_ROUNDS)):
+            problems.append(f"step {number}: rounds of scrolling from 1 to {SCROLL_ROUNDS_MAX}")
+        elif step["action"] not in ("goto", "scroll") and not step.get("selector"):
             problems.append(f"step {number}: no element")
     return problems
 
@@ -104,9 +148,12 @@ def check_recipe(recipe: dict) -> list[str]:
         problems.append("no file links picked")
     else:
         problems += _check_pattern("file links", links.get("pattern", ""))
-    return problems
+    return problems + _check_next(recipe.get("next"))
 
 
 def uses_browser(recipe: dict) -> bool:
-    """Whether the recipe needs the browser: it has steps to replay."""
-    return bool(recipe.get("steps"))
+    """Whether the recipe needs the browser: it has steps to replay, or numbered pages that are
+    buttons (clicked, no address to fetch)."""
+    after = recipe.get("next") or {}
+    numbered_buttons = isinstance(after, dict) and after.get("kind") == "number" and bool(after.get("buttons"))
+    return bool(recipe.get("steps")) or numbered_buttons
