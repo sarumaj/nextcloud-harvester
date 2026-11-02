@@ -19,6 +19,7 @@ The messages are JSON over the page's WebSocket:
 import asyncio
 import re
 from collections.abc import Awaitable, Callable
+from urllib.parse import urlparse
 
 from playwright.async_api import Browser, BrowserContext, CDPSession, Page, Playwright, Route, async_playwright
 
@@ -74,6 +75,19 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         self._context: BrowserContext | None = None
         self._page: Page | None = None
         self._cdp: CDPSession | None = None
+        # The one local address this browser may open besides the public ones (scheme, host and
+        # port, e.g. rclone's sign-in listener while it runs); "" for none.
+        self.loopback = ""
+
+    def opens_loopback(self, url: str) -> bool:
+        """Whether the address is at self.loopback (any path and query)."""
+        if not self.loopback:
+            return False
+        try:
+            parsed, allowed = urlparse(url), urlparse(self.loopback)
+            return (parsed.scheme, parsed.hostname, parsed.port) == (allowed.scheme, allowed.hostname, allowed.port)
+        except ValueError:
+            return False
 
     @property
     def recipe(self) -> dict:
@@ -101,7 +115,7 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         self._context.on("page", lambda page: asyncio.ensure_future(self._show(page)))
         await self._show(await self._context.new_page())
         asyncio.ensure_future(self._tell_address(home and bool(browser.PROXY)))
-        if url and allowed_url(url) and self._page:
+        if url and (allowed_url(url) or self.opens_loopback(url)) and self._page:
             await self._page.goto(url, wait_until="domcontentloaded")
 
     async def _tell_address(self, proxied: bool) -> None:
@@ -132,10 +146,9 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
                 except Exception:  # pylint: disable=broad-exception-caught
                     pass  # stopping Playwright ends its browser in any case
 
-    @staticmethod
-    async def _guard(route: Route) -> None:
+    async def _guard(self, route: Route) -> None:
         # The name's lookup off the event loop (the screen and the input go on meanwhile).
-        if await asyncio.to_thread(reachable, route.request.url):
+        if self.opens_loopback(route.request.url) or await asyncio.to_thread(reachable, route.request.url):
             await route.continue_()
         else:
             await route.abort("blockedbyclient")

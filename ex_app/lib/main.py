@@ -16,7 +16,7 @@ from nc_py_api.ex_app import AppAPIAuthMiddleware, anc_app, persistent_storage, 
 from pydantic import BaseModel, Field, field_validator
 
 from harvester import browser, schedule, settings
-from harvester.rclone_wizard import WizardError, Wizards, remote_types
+from harvester.rclone_wizard import AUTHORIZE_ORIGIN, Authorization, WizardError, Wizards, remote_types
 from harvester.browser.recorder import Recorder
 from harvester.executor import RUNNERS, Executor, credential_key, load_session, save_session, session_key
 from harvester.presets import PRESETS, make_job
@@ -360,8 +360,14 @@ async def record(websocket: WebSocket, nc: NC) -> None:
 
     With ?job=<id> (the user's job) the browser starts with the job's kept session at the page
     that asked for a person; {type: save-session} keeps the browser's session for the job,
-    clears the challenge and runs the job again."""
+    clears the challenge and runs the job again.
+
+    With ?rclone=<wizard> (the user's rclone wizard, at its sign-in question) the browser shows
+    the provider's sign-in for `rclone authorize` instead (sign_in)."""
     await websocket.accept()
+    if websocket.query_params.get("rclone"):
+        await sign_in(websocket, nc, websocket.query_params["rclone"])
+        return
     allowed, job = await admit(websocket, nc)
     if not allowed:
         return
@@ -404,6 +410,95 @@ async def record(websocket: WebSocket, nc: NC) -> None:
         closing = asyncio.ensure_future(recorder.close())
         closing.add_done_callback(lambda _: browser.SLOTS.release())
         await asyncio.shield(closing)
+
+
+async def sign_in(websocket: WebSocket, nc: AsyncNextcloudApp, wizard: str) -> None:
+    """A provider's sign-in for the user's rclone wizard in the app's browser: rclone authorize
+    runs, the browser opens its link (and may open rclone's listener, AUTHORIZE_ORIGIN, alone of
+    the local addresses, until rclone ends), the person signs in, and the token rclone prints
+    answers the wizard's question; the page gets {type: rclone-done, view} with what comes next."""
+    user = await nc.user
+    authorization = await admit_sign_in(websocket, user, wizard)
+    if authorization is None:
+        return
+    # Directly, never through the jobs' proxy: the listener is this container's own, and with
+    # Playwright's proxy Chromium sends even 127.0.0.1 to the proxy (no loopback bypass).
+    recorder = Recorder(websocket.send_json)
+    recorder.loopback = AUTHORIZE_ORIGIN
+    try:
+        try:
+            token = await signed_in(websocket, recorder, authorization)
+            # The browser may no more open the listener, which ends with rclone.
+            recorder.loopback = ""
+            view = await asyncio.to_thread(WIZARDS.answer, user, wizard, authorization.state, token)
+        except WizardError as error:
+            await websocket.send_json({"type": "error", "message": str(error)})
+        else:
+            await websocket.send_json({"type": "rclone-done", "view": view})
+        await websocket.close()
+    except (WebSocketDisconnect, RuntimeError):
+        pass
+    finally:
+        recorder.loopback = ""
+        stopping = asyncio.ensure_future(authorization.stop())
+        closing = asyncio.ensure_future(recorder.close())
+        closing.add_done_callback(lambda _: browser.SLOTS.release())
+        await asyncio.shield(asyncio.gather(stopping, closing))
+
+
+async def admit_sign_in(websocket: WebSocket, user: str, wizard: str) -> Authorization | None:
+    """The app's one sign-in for the user's wizard, with a browser's slot taken; else the page is
+    told why (another sign-in runs, all browsers are in use) and the socket closed."""
+    refusal = ""
+    authorization = None
+    if not allowed_origin(websocket.headers.get("origin", "")):
+        refusal = "This page may not open the browser."
+    else:
+        try:
+            authorization = WIZARDS.authorization(user, wizard)
+        except WizardError as error:
+            refusal = str(error)
+    if authorization and not browser.SLOTS.acquire(blocking=False):  # pylint: disable=consider-using-with
+        authorization.kill()
+        authorization = None
+        refusal = "All browsers are in use (other recordings, or a job): try again in a few minutes."
+    if authorization is None:
+        await websocket.send_json({"type": "error", "message": refusal})
+        await websocket.close(code=1008)
+    return authorization
+
+
+async def signed_in(websocket: WebSocket, recorder: Recorder, authorization: Authorization) -> str:
+    """Starts rclone and the browser at its link, and passes the person's input to the browser
+    until rclone prints the token (WizardError when it fails or takes too long)."""
+    try:
+        link = await authorization.start()
+        await recorder.start(url=link)
+        await recorder.handle({"type": "mode", "mode": "browse"})
+    except WizardError:
+        raise
+    except Exception as error:  # pylint: disable=broad-exception-caught
+        LOGGER.warning("the browser for rclone's sign-in did not start: %s", error)
+        raise WizardError(
+            f"The browser did not start: {(str(error) or type(error).__name__).splitlines()[0]}"
+        ) from error
+    token = asyncio.ensure_future(authorization.token())
+    try:
+        while True:
+            receiving = asyncio.ensure_future(websocket.receive_json())
+            await asyncio.wait({receiving, token}, return_when=asyncio.FIRST_COMPLETED)
+            if token.done():
+                receiving.cancel()
+                return token.result()
+            message = receiving.result()
+            try:
+                await recorder.handle(message)
+            except Exception as error:  # pylint: disable=broad-exception-caught
+                # A step the page could not do: the sign-in goes on.
+                text = (str(error) or type(error).__name__).splitlines()[0]
+                await websocket.send_json({"type": "error", "message": text})
+    finally:
+        token.cancel()
 
 
 async def admit(websocket: WebSocket, nc: AsyncNextcloudApp) -> tuple[bool, Job | None]:

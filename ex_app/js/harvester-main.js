@@ -324,13 +324,15 @@
 		async function step(method, path, body) {
 			error.textContent = ''
 			try {
-				const view = await api(method, path, body)
-				session = view.session
-				if (view.done) showDone(view)
-				else showQuestion(view)
+				render(await api(method, path, body))
 			} catch (e) {
 				error.textContent = e.message
 			}
+		}
+		function render(view) {
+			session = view.session
+			if (view.done) showDone(view)
+			else showQuestion(view)
 		}
 
 		async function chooseType() {
@@ -397,13 +399,59 @@
 			el('p', { class: 'harvester-wizard-help', text: question.help }),
 			view.authorize
 				? el('div', { class: 'harvester-wizard-authorize' },
-					el('p', { text: 'Sign-in happens in a browser, which the app does not open for you. On a computer with a web browser and rclone (the same version is best), run this, sign in, and paste everything it prints here:' }),
+					el('p', {},
+						el('strong', { text: 'Sign in here: ' }),
+						'the provider’s sign-in opens in Harvester’s own browser, shown below; rclone takes the token when you are done. ',
+						'Some providers refuse to sign in in such a browser (Google may say “This browser or app may not be secure”): then use your own computer, as below.'),
+					el('button', { type: 'button', text: 'Sign in here', onclick: () => signInHere(view) }),
+					el('p', { text: 'Or on your own computer: with a web browser and rclone (the same version is best), run this, sign in, and paste everything it prints here:' }),
 					el('pre', { class: 'harvester-code', text: view.authorize }))
 				: '',
 			error,
 			el('button', { type: 'submit', class: 'primary', text: 'Next' }), back, cancel)
 			panel.replaceChildren(el('h3', { text: `Set up with rclone: ${view.type}` }), form)
 			input.focus()
+		}
+
+		// The provider's sign-in in the app's browser (the recorder's screen): the server runs
+		// `rclone authorize`, and its token answers the question once the person signed in.
+		function signInHere(view) {
+			const socket = new WebSocket(`${RECORDER}?rclone=${encodeURIComponent(session)}`)
+			const send = (message) => socket.readyState === WebSocket.OPEN && socket.send(JSON.stringify(message))
+			const screen = el('img', { class: 'harvester-screen', tabindex: '0', alt: 'The sign-in’s browser' })
+			const url = el('input', { class: 'harvester-url', readonly: '' })
+			const message = el('p', { class: 'harvester-muted', text: 'Starting rclone and the browser…' })
+			let finished = false
+			const back = el('button', { type: 'button', text: 'Back to the question', onclick: () => { finished = true; socket.close(); showQuestion(view) } })
+			socket.addEventListener('message', (event) => {
+				const data = JSON.parse(event.data)
+				if (data.type === 'frame') {
+					screen.frame(data.data)
+					if (message.textContent === 'Starting rclone and the browser…') message.textContent = ''
+				} else if (data.type === 'cursor') screen.style.cursor = data.cursor
+				else if (data.type === 'url') url.value = data.url
+				else if (data.type === 'error') { message.textContent = data.message; screen.say(data.message) }
+				else if (data.type === 'viewport') screen.resized(data)
+				else if (data.type === 'rclone-done') {
+					finished = true
+					socket.close()
+					render(data.view)
+				}
+			})
+			socket.addEventListener('close', () => {
+				if (!finished && panel.contains(screen)) {
+					message.textContent ||= 'The browser closed.'
+					screen.say(message.textContent)
+				}
+			})
+			const box = wireScreen(screen, send)
+			const container = el('div', { class: 'harvester-recorder' })
+			container.append(
+				el('p', { class: 'harvester-muted', text: 'Sign in and allow rclone’s access; the browser closes by itself once rclone has the token (at most ten minutes).' }),
+				overlay(el('div', { class: 'harvester-toolbar' }, url, fullWindow(container, box, send), back), message),
+				el('div', { class: 'harvester-stage' }, box))
+			panel.replaceChildren(el('h3', { text: `Set up with rclone: sign in to ${view.type}` }), container)
+			screen.focusKeys()
 		}
 
 		function showDone(view) {
