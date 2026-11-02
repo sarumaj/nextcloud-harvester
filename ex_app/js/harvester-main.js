@@ -862,9 +862,9 @@
 	}
 
 	// One pick in the recorder's panel (a level of links to follow, the file links, the next
-	// page): its element (a CSS selector) and its pattern, both editable, what it matches on the
-	// page, examples with their values, the proposed file name and tags; and the same controls for
-	// each: Pick again (repick) and Remove.
+	// page): its element (a selector, with the alternatives a job tries when it finds nothing) and
+	// its pattern, both editable, what it matches on the page, examples with their values, the
+	// proposed file name and tags; and the same controls for each: Pick again (repick) and Remove.
 	function renderLevel(title, spec, proposal, send, target, level, suggestions, repick) {
 		const selector = el('input', { class: 'harvester-pattern', value: spec.selector || '', spellcheck: 'false' })
 		selector.addEventListener('change', () => send({ type: 'selector', target, level, selector: selector.value }))
@@ -872,7 +872,10 @@
 			el('div', { class: 'harvester-level-head' }, el('h4', { text: title }),
 				el('button', { type: 'button', text: 'Pick again', title: 'Pick this on the page again (in its picking mode)', onclick: () => repick(target, level) }),
 				el('button', { type: 'button', class: 'error', text: 'Remove', title: target === 'follow' ? 'Remove this level (the levels after it move up)' : 'Remove this pick', onclick: () => send({ type: 'remove', target, level }) })),
-			field(target === 'next' && spec.kind === 'number' ? 'The numbers’ container (CSS selector)' : 'Element (CSS selector)', selector))
+			field(target === 'next' && spec.kind === 'number' ? 'The numbers’ container (CSS selector)' : 'Element (selector)', selector))
+		if (spec.alternatives && spec.alternatives.length) {
+			box.append(el('p', { class: 'harvester-muted', text: `Alternatives, tried in this order when it finds nothing: ${spec.alternatives.join('  ·  ')}` }))
+		}
 		if (target === 'next') return renderNext(box, spec, proposal, send)
 		const pattern = el('input', { class: 'harvester-pattern', value: spec.pattern || '', spellcheck: 'false' })
 		pattern.addEventListener('change', () => send({ type: 'pattern', target, level, pattern: pattern.value }))
@@ -886,6 +889,12 @@
 		if (target === 'links' && proposal.path) {
 			const use = (label, apply) => el('button', { type: 'button', text: label, onclick: (e) => { apply(); e.target.textContent = '✔ will be used' } })
 			box.append(el('p', { text: `Proposed file name: ${proposal.path}` }), use('Use it', () => { suggestions.path = proposal.path }))
+			// The same script serves all the files (download.php?id=N): the name the server gives
+			// each file is likely the better one.
+			if (proposal.generic) {
+				box.append(el('p', { class: 'harvester-muted', text: 'The links all have the same name: the name the server gives each file ({disposition}) may be better.' }),
+					use('Use {disposition}', () => { suggestions.path = proposal.path.replace(/[^/]*$/, '{disposition}') }))
+			}
 			if (proposal.tags.length) {
 				box.append(el('p', { text: `Proposed tags: ${proposal.tags.join(', ')}` }), use('Use them', () => { suggestions.tags = proposal.tags }))
 			}
@@ -936,6 +945,13 @@
 			box.append(el('div', { class: 'harvester-skipped' },
 				el('p', { class: 'harvester-muted', text: 'Optional steps skipped:' }),
 				el('ul', {}, ...skipped.map((step) => el('li', { class: 'harvester-muted', text: `step ${step.number} (${step.label}): ${step.why}` })))))
+		}
+		// Elements an alternative selector found: the recipe still works, but the site changed.
+		const repaired = result.repaired || []
+		if (repaired.length) {
+			box.append(el('div', { class: 'harvester-repaired' },
+				el('p', { class: 'harvester-muted', text: 'Found by an alternative selector (the recipe is unchanged):' }),
+				el('ul', {}, ...repaired.map((line) => el('li', { class: 'harvester-muted', text: line })))))
 		}
 		box.append(el('ol', { class: 'harvester-test-pages' }, ...result.pages.map((page) => el('li', {},
 			el('span', { text: `${page.level === 0 ? 'Listing' : `Level ${page.level}`}, page ${page.page}: ${page.matching} of ${page.found} ${page.kind === 'follow' ? 'links to follow' : 'file links'} ` }),
@@ -1392,6 +1408,8 @@
 			recipe = JSON.parse(textarea.value || '{}')
 		} catch (e) {}
 		let proposals = {}
+		// The recorder's warnings of addresses with a token of this visit (spent when the job runs).
+		let warnings = []
 		let testing = false
 		let tested = null
 		const suggestions = {}
@@ -1495,10 +1513,11 @@
 			test.textContent = testing ? 'Stop the test' : 'Test the recipe'
 			panel.replaceChildren(
 				el('div', { class: 'harvester-level-head' }, el('h3', { text: 'Steps' })),
+				warnings.length ? el('ul', { class: 'harvester-error harvester-warnings' }, ...warnings.map((warning) => el('li', { text: warning }))) : '',
 				el('ol', {}, ...(recipe.steps || []).map((step, index) => renderStep(step, index))),
 				el('div', { class: 'harvester-level-head' }, el('h3', { text: 'Listing' }),
 					el('button', { type: 'button', text: 'Undo pick', title: 'Take back the last change of the picks', onclick: () => send({ type: 'undo-pick' }) })),
-				el('p', { text: recipe.start || '(the page where you pick)' }),
+				el('p', { text: recipe.start || ((recipe.steps || []).length ? '(where the steps end)' : '(the page where you pick)') }),
 				...(recipe.follow || []).map((spec, level) =>
 					renderLevel(`Level ${level + 1}: links to follow`, spec, proposals[`follow${level}`], send, 'follow', level, suggestions, repick)),
 				recipe.links && recipe.links.selector
@@ -1541,6 +1560,7 @@
 				recipe = { ...recipe, ...data.recipe, steps: data.recipe.steps.length ? data.recipe.steps : recipe.steps || [] }
 				if (!data.recipe.next) delete recipe.next
 				proposals = data.proposals
+				warnings = data.warnings || []
 				message.textContent = ''
 				renderPanel()
 			}
