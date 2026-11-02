@@ -1,5 +1,6 @@
 """File stores and cloud drives through rclone: WebDAV (a Nextcloud's public share too), SFTP, FTP,
-S3, Google Drive, Dropbox, OneDrive and the other remotes rclone speaks.
+SMB, S3, Google Drive, Dropbox, OneDrive and the other storage services rclone speaks
+(ALLOWED_TYPES; REFUSED_TYPES says why the rest are not).
 
 The job's account is an rclone configuration with one remote, as `rclone config` writes it (OAuth
 tokens come from `rclone authorize` on a computer with a browser). It runs in the app's
@@ -26,30 +27,83 @@ from .. import patterns
 from ..browser import allowed_host, allowed_url, child_env
 from .base import Item, Option, Source, SourceError
 
-# Remotes on other machines. Not: local, and the wrappers (alias, union, combine, crypt, chunker,
-# hasher, compress, cache, memory, ...) that may lead to the container's own files.
+# rclone's remotes that may not be used, and why (scripts/rclone_backends.py lists the rest from
+# rclone itself; a test fails while a remote of the pinned rclone is in neither list, so a new
+# one is looked at before it is offered).
+REFUSED_TYPES = {
+    "local": "the container's own files (the app's secret, every person's jobs)",
+    "alias": "wraps another remote, which may be a local path",
+    "archive": "wraps another remote, which may be a local path",
+    "cache": "wraps another remote, which may be a local path",
+    "chunker": "wraps another remote, which may be a local path",
+    "combine": "wraps other remotes, which may be local paths",
+    "compress": "wraps another remote, which may be a local path",
+    "crypt": "wraps another remote, which may be a local path",
+    "hasher": "wraps another remote, which may be a local path",
+    "union": "wraps other remotes, which may be local paths",
+    "memory": "keeps nothing: there is nothing to fetch",
+    "doi": "its server comes from the DOI's resolution, which the app cannot check beforehand",
+    "hdfs": "a cluster in a private network, signed in with Kerberos files of the machine",
+    "sia": "its daemon's address defaults to this machine (127.0.0.1)",
+    "oos": "signs in with the machine's cloud identity or a configuration file of the machine",
+}
+# Remotes on other machines, whose server the configuration names (SERVER_KEYS) or rclone knows.
 ALLOWED_TYPES = frozenset(
     {
         "azureblob",
+        "azurefiles",
         "b2",
         "box",
+        "cloudinary",
+        "drime",
         "drive",
         "dropbox",
+        "fichier",
+        "filefabric",
+        "filelu",
+        "filen",
+        "filescom",
         "ftp",
         "gcs",
+        "gofile",
+        "gphotos",
+        "hidrive",
         "http",
+        "huaweidrive",
+        "iclouddrive",
+        "imagekit",
+        "internetarchive",
+        "internxt",
+        "jottacloud",
         "koofr",
+        "linkbox",
+        "mailru",
         "mega",
+        "netstorage",
         "onedrive",
         "opendrive",
         "pcloud",
+        "pikpak",
+        "pixeldrain",
+        "premiumizeme",
         "protondrive",
+        "putio",
+        "qingstor",
+        "quatrix",
         "s3",
+        "seafile",
         "sftp",
+        "shade",
         "sharefile",
+        "smb",
+        "storj",
+        "sugarsync",
         "swift",
+        "tardigrade",
+        "ulozto",
         "webdav",
         "yandex",
+        "zoho",
     }
 )
 # Keys that name a file of the container or run a command in it.
@@ -58,10 +112,45 @@ FORBIDDEN_KEY = re.compile(
 )
 # Keys that, set, have rclone take credentials from where it runs instead of the configuration:
 # the app's environment, or the cloud's metadata service (S3's, Azure's and Swift's env_auth).
-AMBIENT_KEYS = ("env_auth", "use_msi", "use_emulator")
+# The local emulator (Azure's, at 127.0.0.1) and Kerberos (a credential cache of the machine) too.
+AMBIENT_KEYS = ("env_auth", "use_msi", "use_emulator", "use_kerberos")
 # Keys that name the remote's server: a URL or a host.
-SERVER_KEYS = ("url", "endpoint", "host", "auth", "auth_url", "server", "token_url", "storage_url")
+# Each allowed remote's settings that name one, as rclone calls them (a test checks rclone's list).
+SERVER_KEYS = (
+    "url",
+    "endpoint",
+    "host",
+    "hostname",
+    "auth",
+    "auth_url",
+    "server",
+    "token_url",
+    "storage_url",
+    "sas_url",
+    "download_url",
+    "api_url",
+    "sts_endpoint",
+    "ibm_iam_endpoint",
+    "front_endpoint",
+    "satellite_address",
+    "upload_prefix",
+    "tenant_url",
+)
 TIMEOUT = 900
+LOG_PREFIX = re.compile(r"^\d{4}/\d\d/\d\d \d\d:\d\d:\d\d [A-Z]+\s*: (Fatal error: )?")
+
+
+def reachable_server(value: str) -> bool:
+    """Whether a remote's server setting names a host the app may reach: an address, or a host
+    with what rclone's remotes put around it (a node's id@, a :port, a /path: Storj, NetStorage)."""
+    if "://" in value:
+        return allowed_url(value)
+    host = value.rpartition("@")[2].split("/", 1)[0]
+    if host.startswith("["):
+        host = host[1:].split("]", 1)[0]
+    elif host.count(":") == 1:
+        host = host.split(":", 1)[0]
+    return bool(host) and allowed_host(host)
 
 
 def parse_config(text: str) -> tuple[str, dict[str, str]]:
@@ -94,10 +183,8 @@ def parse_config(text: str) -> tuple[str, dict[str, str]]:
             raise SourceError(f"the remote's setting {key} is not allowed (a file or a command of the app)")
         if key in AMBIENT_KEYS and value.strip().lower() not in ("", "false", "0", "no"):
             raise SourceError(f"the remote's setting {key} is not allowed (credentials from the app's machine)")
-        if key in SERVER_KEYS and value:
-            reachable = allowed_url(value) if "://" in value else allowed_host(value.split(":")[0])
-            if not reachable:
-                raise SourceError(f"the remote's {key} {value} may not be reached")
+        if key in SERVER_KEYS and value and not reachable_server(value):
+            raise SourceError(f"the remote's {key} {value} may not be reached")
     return name, settings
 
 
@@ -107,8 +194,8 @@ class Remote(Source):  # pylint: disable=too-many-instance-attributes
     name = "remote"
     title = "File store or cloud drive (rclone)"
     description = (
-        "Files in a folder of a WebDAV, SFTP, FTP or S3 server, a public share, or Google Drive, Dropbox or "
-        "OneDrive, through an rclone configuration."
+        "Files in a folder of a WebDAV, SFTP, FTP, SMB or S3 server, a public share, or Google Drive, Dropbox, "
+        "OneDrive, pCloud, Mega, Proton Drive and the other storage services rclone speaks."
     )
     credentials = ("config",)
     options = {
@@ -260,4 +347,5 @@ class Remote(Source):  # pylint: disable=too-many-instance-attributes
 def last_line(text: str) -> str:
     """The last line rclone wrote, which says what went wrong."""
     lines = [line for line in (text or "").splitlines() if line.strip()]
-    return lines[-1][-300:] if lines else "no message"
+    # Without rclone's log prefix (time, level, "Fatal error:"): the reason is what the page needs.
+    return LOG_PREFIX.sub("", lines[-1])[-300:] if lines else "no message"

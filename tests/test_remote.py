@@ -9,13 +9,25 @@ source writes; it is skipped where there is none.
 import io
 import json
 import os
+import pathlib
+import re
 import shutil
 import subprocess
 
 import pytest
 
 from harvester.sources import SourceError
-from harvester.sources.remote import Remote, parse_config
+from harvester.sources.remote import (
+    AMBIENT_KEYS,
+    last_line,
+    ALLOWED_TYPES,
+    FORBIDDEN_KEY,
+    REFUSED_TYPES,
+    SERVER_KEYS,
+    Remote,
+    parse_config,
+    reachable_server,
+)
 
 WEBDAV = """[share]
 type = webdav
@@ -188,3 +200,77 @@ def test_rclone_reads_the_configuration_the_source_writes():
     finally:
         made.close()
     assert result.stdout.split() == ["gdrive:", "drive"]
+
+
+# rclone's remotes as the pinned rclone lists them (scripts/rclone_backends.py writes the file).
+BACKENDS = json.loads((pathlib.Path(__file__).parent / "data" / "rclone-backends.json").read_text(encoding="utf-8"))
+# Settings whose names look like a server's but are not one: login domains, a path, a switch.
+NOT_SERVERS = {"domain", "tenant_domain", "root_prefix", "use_accelerate_endpoint"}
+# Settings of the machine's credentials that only count with one of AMBIENT_KEYS, which are refused.
+WITH_AMBIENT = {
+    "msi_client_id",
+    "msi_mi_res_id",
+    "msi_object_id",
+    "disable_instance_discovery",
+    "kerberos_ccache",
+    "profile",
+    "ibm_resource_instance_id",
+}
+ADDRESS_LIKE = re.compile(r"(url|uri|host|hostname|endpoint|server|address|domain|prefix|api)$|^auth$")
+AMBIENT_LIKE = re.compile(r"env_auth|msi|emulator|kerberos|principal|profile|instance")
+
+
+def test_the_lists_follow_the_rclone_the_image_pins():
+    dockerfile = (pathlib.Path(__file__).parents[1] / "Dockerfile").read_text(encoding="utf-8")
+    pinned = re.search(r"RCLONE_VERSION=(\S+)", dockerfile)
+    assert pinned and BACKENDS["version"] == pinned.group(1), "run scripts/rclone_backends.py with the new rclone"
+    known = set(BACKENDS["backends"])
+    assert not ALLOWED_TYPES & set(REFUSED_TYPES)
+    assert known == ALLOWED_TYPES | set(REFUSED_TYPES), (
+        f"remotes neither allowed nor refused: {sorted(known - ALLOWED_TYPES - set(REFUSED_TYPES))}; "
+        f"no longer in rclone: {sorted((ALLOWED_TYPES | set(REFUSED_TYPES)) - known)}"
+    )
+
+
+def test_every_server_setting_of_an_allowed_remote_is_checked():
+    for kind in sorted(ALLOWED_TYPES):
+        for name, default in BACKENDS["backends"][kind].items():
+            if FORBIDDEN_KEY.search(name):
+                continue
+            if ADDRESS_LIKE.search(name):
+                assert name in SERVER_KEYS or name in NOT_SERVERS, f"{kind}'s {name}: a server's setting?"
+            if AMBIENT_LIKE.search(name):
+                assert name in AMBIENT_KEYS or name in WITH_AMBIENT, f"{kind}'s {name}: the machine's credentials?"
+            # A default is not in the configuration, so parse_config never sees it: none may be local.
+            if name in SERVER_KEYS and default:
+                host = default.split("://", 1)[-1].rpartition("@")[2].split("/", 1)[0].split(":", 1)[0]
+                assert host != "localhost" and not host.startswith(
+                    ("127.", "10.", "192.168.", "169.254.")
+                ), f"{kind}'s {name} defaults to {default}"
+
+
+@pytest.mark.parametrize(
+    ("value", "host"),
+    [
+        ("12abc@us1.storj.io:7777", "us1.storj.io"),
+        ("example-nsu.akamaihd.net/123", "example-nsu.akamaihd.net"),
+        ("sftp.example.org:2222", "sftp.example.org"),
+        ("127.0.0.1:9980", "127.0.0.1"),
+        ("[::1]:22", "::1"),
+        ("node@10.0.0.5:7777", "10.0.0.5"),
+    ],
+)
+def test_a_servers_host_is_found_in_what_remotes_put_around_it(monkeypatch, value, host):
+    asked: list[str] = []
+    monkeypatch.setattr("harvester.sources.remote.allowed_host", lambda name: asked.append(name) or True)
+    assert reachable_server(value) and asked == [host]
+    monkeypatch.undo()
+    if host[0].isdigit() or ":" in host:
+        assert not reachable_server(value), "this machine and the private network stay out"
+
+
+def test_rclones_message_comes_without_its_log_prefix():
+    text = "2026/11/02 10:03:34 NOTICE: Fatal error: failed to get token: invalid client\n"
+    assert last_line(text) == "failed to get token: invalid client"
+    assert last_line("2026/11/02 10:03:34 ERROR : x.pdf: not found") == "x.pdf: not found"
+    assert last_line("") == "no message"

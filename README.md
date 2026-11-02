@@ -31,7 +31,13 @@ the app's browser or taken from a template, not by code.
   - `remote`: the files in a folder of a WebDAV, SFTP, FTP or S3 server, a Nextcloud public
     share, Google Drive, Dropbox, OneDrive and other rclone remotes. The job's account is an
     rclone configuration with one remote (OAuth tokens from `rclone authorize` on a computer).
-    Only remotes of other machines: no local files, wrappers, commands or private hosts.
+    Only remotes of other machines: every one of rclone's storage services (54 in rclone 1.75,
+    from S3, B2 and Azure to pCloud, Mega, Proton Drive, iCloud Drive, Jottacloud, SMB, Storj
+    ...), not local files, the wrappers (alias, crypt, union, ...), DOI, HDFS, Sia or Oracle
+    Object Storage, whose files, servers or sign-ins the app cannot check. No commands, no private
+    hosts, no credentials from the app's machine (`env_auth`, `use_msi`, ...). A new rclone's
+    remotes are refused until they are looked at (`scripts/rclone_backends.py`, then the lists in
+    `sources/remote.py`; a test fails until each is in one).
     Refreshed tokens are kept as the job's session. **Set up with rclone**, beside the account's
     field, asks rclone's own configuration questions one at a time (`rclone config` without a
     terminal, in a throwaway configuration): the kinds of remote allowed, no advanced settings,
