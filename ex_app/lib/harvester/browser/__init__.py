@@ -110,6 +110,16 @@ CHILD_ENV_KEYS = (
 )
 
 
+# Where the app asks which address sites see (Cloudflare's own view: ip=, loc= lines).
+TRACE_URL = "https://www.cloudflare.com/cdn-cgi/trace"
+
+
+def seen_address(trace: str) -> dict[str, str]:
+    """The address and country in a trace's answer ({} if it has none)."""
+    fields = dict(line.split("=", 1) for line in trace.splitlines() if "=" in line)
+    return {"ip": fields["ip"], "country": fields.get("loc", "")} if fields.get("ip") else {}
+
+
 def child_env() -> dict[str, str]:
     """The environment of a child process: the few variables it needs, no secret."""
     return {key: os.environ[key] for key in CHILD_ENV_KEYS if key in os.environ}

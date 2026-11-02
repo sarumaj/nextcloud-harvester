@@ -472,6 +472,20 @@
 		return bar
 	}
 
+	// Which address the sites see this browser come from (the server's, or the proxy's), as the
+	// server asked Cloudflare through the browser's own connection: the proof that a proxy is used.
+	function networkLine() {
+		const line = el('p', { class: 'harvester-muted harvester-network', text: 'Checking which address sites see…' })
+		line.show = (data) => {
+			const where = data.proxied ? `through ${data.via}` : 'directly, from the server'
+			line.textContent = data.error
+				? `Sites see: unknown (${where}; the check failed: ${data.error})`
+				: `Sites see ${data.ip}${data.country ? ` (${data.country})` : ''}, ${where}.`
+			line.classList.toggle('harvester-proxied', Boolean(data.proxied && !data.error))
+		}
+		return line
+	}
+
 	// A job that met a page asking for a person: the browser opens there with the job's session;
 	// the person answers it, and "Done" keeps the session and runs the job again.
 	function openSession(root, job) {
@@ -480,6 +494,7 @@
 		const screen = el('img', { class: 'harvester-screen', tabindex: '0', alt: 'The job’s browser' })
 		const url = el('input', { class: 'harvester-url', readonly: '', value: job.challenge_url || '' })
 		const message = el('p', { class: 'harvester-muted', text: 'Starting the browser…' })
+		const network = networkLine()
 		const done = el('button', {
 			class: 'primary',
 			text: 'Done',
@@ -496,6 +511,7 @@
 			else if (data.type === 'error') { message.textContent = data.message; done.disabled = false; screen.say(data.message) }
 			else if (data.type === 'session-saved') { socket.close(); show(root) }
 			else if (data.type === 'viewport') screen.resized(data)
+			else if (data.type === 'network') network.show(data)
 		})
 		socket.addEventListener('close', () => { if (root.contains(screen)) { message.textContent ||= 'The browser closed.'; screen.say(message.textContent) } })
 		const box = wireScreen(screen, send)
@@ -508,7 +524,7 @@
 			overlay(
 				el('div', { class: 'harvester-toolbar' }, url, fullWindow(container, box, send), done,
 					el('button', { text: 'Cancel', onclick: () => { socket.close(); show(root) } })),
-				message),
+				network, message),
 			el('div', { class: 'harvester-stage' }, box))
 		root.replaceChildren(container)
 		screen.focusKeys()
@@ -531,6 +547,7 @@
 		const screen = el('img', { class: 'harvester-screen', tabindex: '0', alt: 'The recorder’s browser' })
 		const url = el('input', { class: 'harvester-url', placeholder: 'https://… the site’s first page' })
 		const message = el('p', { class: 'harvester-error' })
+		const network = networkLine()
 		const panel = el('div', { class: 'harvester-steps' })
 		const modes = el('div', { class: 'harvester-modes' })
 		const help = {
@@ -579,6 +596,7 @@
 			else if (data.type === 'url') url.value = data.url
 			else if (data.type === 'error') { message.textContent = data.message; screen.say(data.message) }
 			else if (data.type === 'viewport') screen.resized(data)
+			else if (data.type === 'network') network.show(data)
 			else if (data.type === 'recipe') {
 				// What an earlier recording picked stays unless picked again.
 				recipe = {
@@ -618,7 +636,7 @@
 					drawer,
 					el('button', { class: 'primary', text: 'Done', onclick: () => close(true) }),
 					el('button', { text: 'Cancel', onclick: () => close(false) })),
-				modes, modeHelp, message),
+				modes, modeHelp, network, message),
 			el('div', { class: 'harvester-stage' }, box, panel))
 		root.replaceChildren(container)
 		renderPanel()
@@ -849,6 +867,8 @@
 		#harvester h2 { margin: 0 0 4px; font-size: 1.5em; }
 		#harvester h3 { margin: 16px 0 8px; font-size: 1.15em; }
 		#harvester .harvester-muted { color: var(--color-text-maxcontrast); }
+		#harvester .harvester-network { margin: 4px 0; }
+		#harvester .harvester-network.harvester-proxied { color: var(--color-success-text, var(--color-success)); }
 		#harvester .harvester-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
 		#harvester .harvester-header p { margin: 0; }
 		#harvester .harvester-empty { padding: 48px 0; text-align: center; }

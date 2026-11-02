@@ -106,6 +106,11 @@ the app's browser or taken from a template, not by code.
   changes what the form says, e.g. *Through the home connection* for a proxy at home. Without
   one the option is not offered, and a job that chose it goes directly. The recorder follows the
   form's choice.
+- **Which address sites see:** the recorder shows it under its address bar ("Sites see
+  203.0.113.10 (DE), through the home connection", or "directly, from the server"), and a run
+  through the proxy starts its log with it. Both ask Cloudflare's `cdn-cgi/trace` through the
+  same connection the pages and downloads use, so it is the proxy's address only when the proxy
+  is really used.
 - **Notifications:** a job that needs a person, or fails, notifies its user; the same failure
   again on the next runs does not.
 - **Templates** (`ex_app/lib/harvester/presets/*.json`), jobs with a few parameters, one card

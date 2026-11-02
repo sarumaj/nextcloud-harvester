@@ -22,9 +22,19 @@ from collections.abc import Awaitable, Callable
 
 from playwright.async_api import Browser, BrowserContext, CDPSession, Page, Playwright, Route, async_playwright
 
-from .. import patterns
+from .. import browser, patterns
 from ..recipe import steps_from_events
-from . import SCRIPT, VIEWPORT, allowed_url, context_options, fitted_viewport, launch_options, reachable
+from . import (
+    SCRIPT,
+    TRACE_URL,
+    VIEWPORT,
+    allowed_url,
+    context_options,
+    fitted_viewport,
+    launch_options,
+    reachable,
+    seen_address,
+)
 
 # record: steps; browse: go somewhere unrecorded; follow, links, next: pick links.
 MODES = ("record", "browse", "follow", "links", "next")
@@ -90,8 +100,23 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         await self._context.add_init_script(SCRIPT)
         self._context.on("page", lambda page: asyncio.ensure_future(self._show(page)))
         await self._show(await self._context.new_page())
+        asyncio.ensure_future(self._tell_address(home and bool(browser.PROXY)))
         if url and allowed_url(url) and self._page:
             await self._page.goto(url, wait_until="domcontentloaded")
+
+    async def _tell_address(self, proxied: bool) -> None:
+        """Tells the page which address sites see this browser come from, asked through the
+        browser's own connection (its proxy, if any), and whether that is the proxy."""
+        via = browser.PROXY_NAME if proxied else "directly"
+        try:
+            assert self._context is not None
+            answer = await self._context.request.get(TRACE_URL, timeout=15000)
+            seen = seen_address(await answer.text())
+        except Exception as error:  # pylint: disable=broad-exception-caught
+            text = (str(error) or type(error).__name__).splitlines()[0]
+            await self.send({"type": "network", "via": via, "proxied": proxied, "error": text})
+            return
+        await self.send({"type": "network", "via": via, "proxied": proxied, **seen})
 
     async def session(self) -> dict:
         """The browser's session now: cookies and local storage, for the job to continue with."""

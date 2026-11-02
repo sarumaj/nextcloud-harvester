@@ -314,3 +314,63 @@ def test_a_socks_proxy_goes_to_the_browser_and_the_downloads(monkeypatch):
     monkeypatch.setattr(browser, "PROXY", "socks5h://proxy.example:1080")
     assert browser.launch_options(home=True)["proxy"] == {"server": "socks5://proxy.example:1080"}
     guarded_client(proxy=browser.PROXY).close()  # socksio is installed: httpx takes it
+
+
+def test_the_address_sites_see_is_read_from_cloudflares_trace(monkeypatch):
+    import httpx  # pylint: disable=import-outside-toplevel
+
+    from harvester import browser  # pylint: disable=import-outside-toplevel
+    from harvester.executor import through_proxy  # pylint: disable=import-outside-toplevel
+
+    assert browser.seen_address("fl=1\nip=203.0.113.10\nloc=DE\n") == {"ip": "203.0.113.10", "country": "DE"}
+    assert not browser.seen_address("<html>")
+    monkeypatch.setattr(browser, "PROXY_NAME", "the home connection")
+    answer = httpx.MockTransport(lambda request: httpx.Response(200, text="ip=203.0.113.10\nloc=DE\n"))
+    with httpx.Client(transport=answer) as client:
+        assert through_proxy(client) == "Through the home connection: sites see 203.0.113.10 (DE)"
+
+    def refuse(request):
+        raise httpx.ConnectError("refused", request=request)
+
+    with httpx.Client(transport=httpx.MockTransport(refuse)) as client:
+        assert "the check of the address failed (refused)" in through_proxy(client)
+
+
+def test_the_recorder_tells_the_page_which_address_sites_see(monkeypatch):
+    import asyncio  # pylint: disable=import-outside-toplevel
+
+    from harvester import browser  # pylint: disable=import-outside-toplevel
+    from harvester.browser.recorder import Recorder  # pylint: disable=import-outside-toplevel
+
+    class Answer:  # pylint: disable=too-few-public-methods
+        """Cloudflare's trace."""
+
+        async def text(self):
+            return "ip=203.0.113.10\nloc=DE\n"
+
+    class Requests:  # pylint: disable=too-few-public-methods
+        """The context's request API."""
+
+        async def get(self, url, timeout):
+            assert url == browser.TRACE_URL and timeout
+            return Answer()
+
+    class Context:  # pylint: disable=too-few-public-methods
+        """The browser's context."""
+
+        request = Requests()
+
+    sent: list[dict] = []
+
+    async def send(message):
+        sent.append(message)
+
+    monkeypatch.setattr(browser, "PROXY_NAME", "the home connection")
+    recorder = Recorder(send)
+    recorder._context = Context()  # type: ignore[assignment]
+    asyncio.run(recorder._tell_address(True))
+    asyncio.run(recorder._tell_address(False))
+    assert sent == [
+        {"type": "network", "via": "the home connection", "proxied": True, "ip": "203.0.113.10", "country": "DE"},
+        {"type": "network", "via": "directly", "proxied": False, "ip": "203.0.113.10", "country": "DE"},
+    ]

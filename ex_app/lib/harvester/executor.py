@@ -14,6 +14,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 from urllib.parse import urlparse
 
+import httpx
 from croniter import croniter
 from nc_py_api import AsyncNextcloudApp
 
@@ -130,6 +131,20 @@ def plain(text: str) -> str:
 def page_link(nc: AsyncNextcloudApp) -> str:
     """The app's page in Nextcloud, for notifications."""
     return f"{nc.app_cfg.endpoint.rstrip('/')}/index.php/apps/app_api/embedded/harvester/harvester"
+
+
+def through_proxy(client: httpx.Client) -> str:
+    """The run's first line when it goes through the proxy: which address sites see (Cloudflare's
+    view, through the run's own client), so the log shows the proxy is used."""
+    try:
+        answer = client.get(browser.TRACE_URL, timeout=15)
+        seen = browser.seen_address(answer.text)
+    except httpx.HTTPError as error:
+        return f"Through {browser.PROXY_NAME}: the check of the address failed ({error})"
+    if not seen:
+        return f"Through {browser.PROXY_NAME}: the address sites see is unknown"
+    country = f" ({seen['country']})" if seen["country"] else ""
+    return f"Through {browser.PROXY_NAME}: sites see {seen['ip']}{country}"
 
 
 class Executor:
@@ -315,6 +330,8 @@ class Executor:
             started = time.monotonic()
             home = bool(int(job.options.get("home", 0) or 0)) and bool(browser.PROXY)
             with guarded_client(**({"proxy": browser.PROXY} if home else {})) as client:
+                if home:
+                    self.store.log(job_id, "info", through_proxy(client))
                 source = source_class(job.options, credentials, client)
                 source.home = home
                 # Every wait of the source ends at once when the run is stopped.
