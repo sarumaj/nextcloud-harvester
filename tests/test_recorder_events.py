@@ -172,6 +172,11 @@ def replayed(chromium, path: str, steps: list[dict], secrets: dict | None = None
 # What recorder.js records.
 
 
+def plain(steps: list[dict]) -> list[dict]:
+    """The steps without their alternative selectors (harvester.selectors' to test)."""
+    return [{key: value for key, value in step.items() if key != "alternatives"} for step in steps]
+
+
 @needs_chromium
 def test_a_sign_in_submitted_with_enter_is_its_fields_and_the_key(chromium):
     def sign_in(page):
@@ -185,7 +190,7 @@ def test_a_sign_in_submitted_with_enter_is_its_fields_and_the_key(chromium):
     events = record(chromium, "/login", sign_in)
     assert "s3cret" not in json.dumps(events)
     steps = steps_from_events(events)
-    assert steps == [
+    assert plain(steps) == [
         {"action": "fill", "selector": "#user", "credential": "username"},
         {"action": "fill", "selector": "#pw", "credential": "password"},
         {"action": "press", "selector": "#pw", "key": "Enter"},
@@ -229,7 +234,7 @@ def test_a_password_shown_as_text_is_never_reported(chromium):
 
     events = record(chromium, "/login", show_first)
     assert "s3cret" not in json.dumps(events) and "4711" not in json.dumps(events)
-    assert [step for step in steps_from_events(events) if step["action"] == "fill"] == [
+    assert [step for step in plain(steps_from_events(events)) if step["action"] == "fill"] == [
         {"action": "fill", "selector": "#user", "credential": "username"},
         {"action": "fill", "selector": "#pw", "credential": "password"},
         {"action": "fill", "selector": "#pin", "credential": "password"},
@@ -290,7 +295,7 @@ def test_a_one_time_code_after_a_password_is_the_current_code(chromium):
         page.keyboard.type("123456")
         page.keyboard.press("Enter")
 
-    steps = steps_from_events(record(chromium, "/login", sign_in))
+    steps = plain(steps_from_events(record(chromium, "/login", sign_in)))
     assert steps[-2:] == [
         {"action": "fill", "selector": "#idTxtBx_SAOTCC_OTC", "credential": "totp"},
         {"action": "press", "selector": "#idTxtBx_SAOTCC_OTC", "key": "Enter"},

@@ -401,7 +401,7 @@
 	}
 
 	// A selector of an element in a shadow root: matching only it among the root's elements.
-	function within(el, root) {
+	function inRoot(el, root) {
 		const matches = (selector) => {
 			try {
 				return root.querySelectorAll(selector).length
@@ -424,7 +424,7 @@
 	// one it cannot enter, nor can this script).
 	function selectorOf(el) {
 		const root = el.getRootNode()
-		return root instanceof ShadowRoot ? `${selectorOf(root.host)} ${within(el, root)}` : unique(el)
+		return root instanceof ShadowRoot ? `${selectorOf(root.host)} ${inRoot(el, root)}` : unique(el)
 	}
 
 	// A step's element as located() gives it (its selector and alternatives); inside a shadow root
