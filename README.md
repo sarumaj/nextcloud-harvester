@@ -41,8 +41,13 @@ the app's browser or taken from a template, not by code.
     Refreshed tokens are kept as the job's session. **Set up with rclone**, beside the account's
     field, asks rclone's own configuration questions one at a time (`rclone config` without a
     terminal, in a throwaway configuration): the kinds of remote allowed, no advanced settings,
-    files or commands. Where a provider signs in with a browser, it shows the
-    `rclone authorize "<type>" ...` command to run on your computer and takes the token it
+    files or commands. Where a provider signs in with a browser, there are two ways: **Sign in
+    here** runs `rclone authorize` in the app and shows the provider's sign-in in the app's
+    browser (as the recorder does), which may open rclone's listener `http://127.0.0.1:53682/`
+    and no other local address while it runs; rclone's token answers the question. One sign-in
+    at a time in the app (rclone's port is fixed), ten minutes at most, never through the proxy.
+    Some providers refuse such a browser (Google: "This browser or app may not be secure"); then
+    run the `rclone authorize "<type>" ...` command it shows on your computer and paste what it
     prints. The finished remote, checked as a run checks it, goes into the field to be reviewed
     and saved with *Save account*.
   - `releases`: the files attached to a repository's releases on GitHub, GitLab (gitlab.com or

@@ -11,24 +11,43 @@ sources.remote.parse_config() accepts it, as a run would.
 
 The state rclone returns is kept here, not taken from the page: a state names an option by its
 index, and a made-up one would set any option (a command among them).
+
+A provider's sign-in (rclone's question for a token) is answered with the output of `rclone
+authorize` on the person's computer, or here (Authorization): the app runs `rclone authorize`,
+whose listener on 127.0.0.1:53682 sends the browser on to the provider and takes the code it
+returns, and the recorder's browser, which may open that one address while it runs, shows the
+sign-in to the person. rclone prints the token, which answers the question as a pasted one would.
 """
 
+import asyncio
+import base64
+import binascii
 import functools
 import json
 import os
 import re
 import secrets
+import shlex
 import shutil
 import subprocess
 import tempfile
 import threading
 import time
+from asyncio.subprocess import DEVNULL, PIPE, Process
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from .browser import child_env
 from .sources.base import SourceError
-from .sources.remote import ALLOWED_TYPES, AMBIENT_KEYS, FORBIDDEN_KEY, last_line, parse_config
+from .sources.remote import (
+    ALLOWED_TYPES,
+    AMBIENT_KEYS,
+    FORBIDDEN_KEY,
+    SERVER_KEYS,
+    last_line,
+    parse_config,
+    reachable_server,
+)
 
 # The remote's name: fixed, so that nothing the person types names a section of the configuration.
 NAME = "remote"
@@ -47,6 +66,13 @@ TOTAL = 20
 AUTOMATIC = {"config_fs_advanced": "false", "config_is_local": "false"} | dict.fromkeys(AMBIENT_KEYS, "false")
 # rclone asks this many questions at most; more means it asks the same one again and again.
 MAX_STEPS = 200
+# Where `rclone authorize` listens for the provider's redirect: fixed by rclone (and registered as
+# the redirect address of its own OAuth clients), so one sign-in at a time in the app.
+AUTHORIZE_ORIGIN = "http://127.0.0.1:53682"
+# Seconds a sign-in may take, and rclone may take to print its link.
+AUTHORIZE_TIMEOUT = 600
+AUTHORIZE_LINK_TIMEOUT = 30
+AUTHORIZE_LINK = re.compile(r"Please go to the following link: (http://127\.0\.0\.1:53682/\S*)")
 
 
 class WizardError(Exception):
@@ -92,6 +118,33 @@ def authorize_command(text: str) -> str:
     """The `rclone authorize ...` line of rclone's question for a token, or ""."""
     found = re.search(r"^\s*(rclone authorize .+?)\s*$", text, re.MULTILINE)
     return found[1] if found else ""
+
+
+def authorize_arguments(command: str, kind: str) -> list[str]:
+    """The arguments of `rclone authorize` from the command rclone's question gives (the remote's
+    type, and its settings for the sign-in as base64 JSON or a client ID and secret); WizardError
+    for anything else, or settings that name a file, a command or a server the app may not reach
+    (rclone sends the code to the token URL among them)."""
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        parts = []
+    if parts[:3] != ["rclone", "authorize", kind] or len(parts) > 5:
+        raise WizardError("rclone's question gives no command for a sign-in here", 409)
+    for part in parts[3:]:
+        if not re.fullmatch(r"[A-Za-z0-9_.~+/=][A-Za-z0-9_.~+/=-]*", part):
+            raise WizardError("rclone's command for the sign-in is not one the app runs", 409)
+    if len(parts) == 4:
+        try:
+            blob = parts[3]
+            settings = json.loads(base64.urlsafe_b64decode(blob + "=" * (-len(blob) % 4)))
+        except (binascii.Error, ValueError) as error:
+            raise WizardError("rclone's settings for the sign-in are unreadable", 409) from error
+        for key, value in (settings if isinstance(settings, dict) else {}).items():
+            value = str(value)
+            if FORBIDDEN_KEY.search(key) or (key in SERVER_KEYS and value and not reachable_server(value)):
+                raise WizardError(f"the sign-in's setting {key} is not allowed here", 409)
+    return parts[2:]
 
 
 def pasted_token(text: str) -> str:
@@ -333,6 +386,98 @@ class Session:  # pylint: disable=too-many-instance-attributes
         shutil.rmtree(self.dir, ignore_errors=True)
 
 
+class Authorization:
+    """`rclone authorize` for a wizard's sign-in question: its link, then the token it prints.
+    Holds the app's one sign-in (Wizards.authorizing) until stop()."""
+
+    def __init__(self, session: Session, arguments: list[str], release: Callable[[], None]):
+        self.session = session
+        # The question it answers: an answer given meanwhile (pasted) makes this one too late.
+        self.state = session.current.state if session.current else ""
+        self.arguments = arguments
+        self._release: Callable[[], None] | None = release
+        self.process: Process | None = None
+        self._messages: list[str] = []
+        self._reading: asyncio.Future | None = None
+
+    async def start(self) -> str:
+        """Starts rclone; the link it asks the browser to open (its listener's)."""
+        session = self.session
+        self.process = await asyncio.create_subprocess_exec(
+            session.binary,
+            f"--config={session.path}",
+            f"--cache-dir={os.path.join(session.dir, 'cache')}",
+            "authorize",
+            *self.arguments,
+            "--auth-no-open-browser",
+            stdin=DEVNULL,
+            stdout=PIPE,
+            stderr=PIPE,
+            cwd=session.dir,
+            env=child_env(),
+        )
+        try:
+            link = await asyncio.wait_for(self._link(), AUTHORIZE_LINK_TIMEOUT)
+        except asyncio.TimeoutError as error:
+            raise WizardError("rclone did not start its sign-in", 504) from error
+        # The rest of its messages read as they come: a full pipe would stall it.
+        self._reading = asyncio.ensure_future(self._read_messages())
+        return link
+
+    async def _link(self) -> str:
+        assert self.process is not None and self.process.stderr is not None
+        while line := (await self.process.stderr.readline()).decode("utf-8", "replace"):
+            self._messages.append(line)
+            found = AUTHORIZE_LINK.search(line)
+            if found:
+                return found[1]
+        await self.process.wait()
+        raise WizardError(f"rclone could not start the sign-in: {last_line(''.join(self._messages))}")
+
+    async def _read_messages(self) -> None:
+        assert self.process is not None and self.process.stderr is not None
+        while line := await self.process.stderr.readline():
+            self._messages.append(line.decode("utf-8", "replace"))
+
+    async def token(self) -> str:
+        """The token rclone prints once the provider sent the browser back with a code (within
+        AUTHORIZE_TIMEOUT), as the answer to the question. Never logged."""
+        assert self.process is not None and self.process.stdout is not None
+        try:
+            printed = await asyncio.wait_for(self.process.stdout.read(), AUTHORIZE_TIMEOUT)
+            code = await asyncio.wait_for(self.process.wait(), 10)
+            if self._reading:
+                await asyncio.wait_for(self._reading, 10)
+        except asyncio.TimeoutError as error:
+            raise WizardError(f"the sign-in took longer than {AUTHORIZE_TIMEOUT // 60} minutes", 504) from error
+        text = printed.decode("utf-8", "replace")
+        if code != 0 or "<---" not in text:
+            raise WizardError(f"rclone's sign-in failed: {last_line(''.join(self._messages))}")
+        return pasted_token(text)
+
+    def kill(self) -> None:
+        """Ends rclone (its listener with it) and gives the app's sign-in back; once."""
+        if self.process and self.process.returncode is None:
+            try:
+                self.process.kill()
+            except ProcessLookupError:
+                pass
+        if self._reading:
+            self._reading.cancel()
+        release, self._release = self._release, None
+        if release:
+            release()
+
+    async def stop(self) -> None:
+        """kill(), and waits for rclone to be gone."""
+        self.kill()
+        if self.process:
+            try:
+                await asyncio.wait_for(self.process.wait(), 10)
+            except asyncio.TimeoutError:
+                pass
+
+
 class Wizards:
     """The wizards open now, each its user's alone, ended after IDLE seconds without a step."""
 
@@ -345,6 +490,8 @@ class Wizards:
         self.lock = threading.Lock()
         self.run = run
         self.clock = clock
+        # The app's one sign-in through rclone's listener (its port is fixed), while it runs.
+        self.authorizing: Authorization | None = None
 
     def _expire(self) -> None:
         now = self.clock()
@@ -407,6 +554,26 @@ class Wizards:
         session = self._own(user, session_id)
         return self._step(session, session.back)
 
+    def authorization(self, user: str, session_id: str) -> Authorization:
+        """The sign-in for the question the user's wizard asks now (a token), holding the app's
+        one sign-in until it stops; WizardError when the question is another, or another sign-in
+        runs."""
+        session = self._own(user, session_id)
+        step = session.current
+        if step is None or step.name != "config_token":
+            raise WizardError("the wizard does not ask for a sign-in now", 409)
+        arguments = authorize_arguments(authorize_command(step.question()["help"]), session.kind)
+        with self.lock:
+            if self.authorizing is not None:
+                raise WizardError("Another sign-in is running in Harvester: try again in a minute.", 409)
+            authorization = Authorization(session, arguments, self._released)
+            self.authorizing = authorization
+        return authorization
+
+    def _released(self) -> None:
+        with self.lock:
+            self.authorizing = None
+
     def cancel(self, user: str, session_id: str) -> None:
         """Ends the user's wizard and removes its configuration."""
         with self.lock:
@@ -417,7 +584,9 @@ class Wizards:
         session.close()
 
     def close(self) -> None:
-        """Ends every wizard (the app stops)."""
+        """Ends every wizard and the sign-in (the app stops)."""
+        if self.authorizing:
+            self.authorizing.kill()
         with self.lock:
             sessions = list(self.sessions.values())
             self.sessions.clear()
