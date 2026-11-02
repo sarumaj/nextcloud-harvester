@@ -71,9 +71,21 @@ FROM python:3.12-slim-bookworm
 # Copy installed Python packages and FRP client from the builder.
 COPY --from=builder /usr/local/ /usr/local/
 
-# pgrep for the health check.
-RUN apt-get update && apt-get install -y --no-install-recommends procps && \
+# pgrep for the health check; ffmpeg for yt-dlp, which joins a video's separate video and audio
+# streams with it (the best formats of YouTube and most sites come so).
+RUN apt-get update && apt-get install -y --no-install-recommends procps ffmpeg && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# yt-dlp starts ffmpeg and ffprobe through these (sources/media.py, FFMPEG): without the app's
+# environment, which holds its secret, as the browser and the other helpers run (child_env); a
+# media file crafted against ffmpeg would find nothing to take.
+RUN mkdir -p /usr/local/lib/harvester-ffmpeg && \
+    for tool in ffmpeg ffprobe; do \
+        printf '#!/bin/sh\nexec env -i PATH=/usr/bin:/bin HOME="$HOME" LANG=C.UTF-8 /usr/bin/%s "$@"\n' "$tool" \
+            > /usr/local/lib/harvester-ffmpeg/$tool; \
+        chmod 755 /usr/local/lib/harvester-ffmpeg/$tool; \
+    done && \
+    /usr/local/lib/harvester-ffmpeg/ffmpeg -version | head -1
 
 # Chromium for the recorder and the browser source, at Playwright's own version, with the
 # libraries it needs: the full browser, run in its new headless mode (browser.CHANNEL), not

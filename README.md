@@ -20,8 +20,10 @@ the app's browser or taken from a template, not by code.
     each entry's link, through the checked download. Values: `{title}`, `{feed}`, `{author}`,
     `{date}`, `{year}`, `{filename}`, …
   - `media`: videos and audio from YouTube, Vimeo and the other sites yt-dlp supports (a video,
-    or the newest entries of a playlist or channel); formats that come as one file only, as the
-    image has no ffmpeg to join streams. Live and upcoming streams are skipped.
+    or the newest entries of a playlist or channel). A format of separate video and audio streams
+    (YouTube's best, from 720p up) is joined with ffmpeg, without re-encoding: into mp4 where the
+    codecs fit (H.264, AV1 with AAC), else mkv (VP9 with Opus). ffmpeg runs without the app's
+    environment, as the browser does. Live and upcoming streams are skipped.
   - `gallery`: images of galleries, albums and profiles on the sites gallery-dl supports;
     gallery-dl lists them, Harvester downloads them with its checks and the page as `Referer`.
   - `remote`: the files in a folder of a WebDAV, SFTP, FTP or S3 server, a Nextcloud public

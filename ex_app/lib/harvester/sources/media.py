@@ -1,8 +1,9 @@
 """Videos and audio from the sites yt-dlp knows (YouTube, Vimeo, podcasts' pages, ...): a video, or
 the newest entries of a playlist or channel.
 
-Formats that come as one file only (yt-dlp's "best" with audio and video together): joining a
-separate video and audio stream needs ffmpeg, which the image does not have.
+A format of separate video and audio streams (YouTube's best, from 720p up) is joined with ffmpeg
+into one file: mp4 where the streams' codecs allow it, else mkv. ffmpeg runs through FFMPEG, without
+the app's environment.
 
 The account's cookies go to yt-dlp as a cookies.txt file (0600, removed when the run ends); its
 user name and password as yt-dlp's own, for the sites whose extractors sign in.
@@ -35,6 +36,12 @@ BASE = {
     "retries": 3,
     "fragment_retries": 3,
 }
+# Where yt-dlp finds ffmpeg and ffprobe: the image's wrappers, which start them without the app's
+# environment (its secret). Elsewhere (tests, a computer without them) yt-dlp looks in PATH.
+FFMPEG = "/usr/local/lib/harvester-ffmpeg"
+# The joined file's container: mp4 when the streams fit in it (H.264 or AV1 with AAC), else mkv,
+# which takes any (VP9 with Opus, YouTube's usual); never re-encoded.
+MERGED = "mp4/mkv"
 # Entries that are not (yet) a file to keep.
 SKIPPED = {"is_live", "is_upcoming", "post_live"}
 
@@ -123,7 +130,8 @@ class Media(Source):
             account["cookiefile"] = self.cookie_file
         if self.secrets.get("username"):
             account |= {"username": self.secrets["username"], "password": self.secrets.get("password", "")}
-        return BASE | account
+        tools = {"ffmpeg_location": FFMPEG} if os.path.isdir(FFMPEG) else {}
+        return BASE | tools | {"merge_output_format": MERGED} | account
 
     def close(self) -> None:
         if self.cookie_file:
@@ -195,17 +203,12 @@ class Media(Source):
             options = self.base() | {
                 "format": str(self.settings["format"]),
                 "outtmpl": str(pathlib.Path(directory) / "%(id)s.%(ext)s"),
+                # Only the joining of streams (base's merge_output_format), no other processing.
                 "postprocessors": [],
-                "merge_output_format": None,
             }
             try:
                 with self.downloader(options) as ydl:
                     info = ydl.extract_info(item.url, download=False)
-                    if len(info.get("requested_formats") or []) > 1:
-                        raise SourceError(
-                            f"{item.url}: the format joins separate streams, which needs ffmpeg; choose one that "
-                            "comes as one file"
-                        )
                     ydl.process_info(info)
             except yt_dlp.utils.DownloadError as error:
                 raise SourceError(f"yt-dlp: {str(error).removeprefix('ERROR: ')}") from error

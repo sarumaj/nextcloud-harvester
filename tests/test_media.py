@@ -98,13 +98,19 @@ def test_a_single_video_and_its_download():
     assert options["postprocessors"] == [] and options["noplaylist"]
 
 
-def test_a_format_that_joins_streams_is_refused():
+def test_a_format_of_separate_streams_is_joined_by_yt_dlp(monkeypatch, tmp_path):
     page = video(5)["webpage_url"]
     joined = video(5, requested_formats=[{"format_id": "137"}, {"format_id": "140"}])
     source = media({page: joined}, url=page)
     (item,) = list(source.items(lambda key: False))
-    with pytest.raises(SourceError, match="ffmpeg"):
-        source.fetch(item, io.BytesIO())
+    dest = io.BytesIO()
+    source.fetch(item, dest)
+    assert dest.getvalue() == b"video v5"
+    options = FakeYoutubeDL.calls[-1][1]
+    assert options["merge_output_format"] == "mp4/mkv", "mp4 where the codecs fit, else mkv"
+    assert "ffmpeg_location" not in options, "no wrappers here: yt-dlp looks in PATH"
+    monkeypatch.setattr("harvester.sources.media.FFMPEG", str(tmp_path))
+    assert source.base()["ffmpeg_location"] == str(tmp_path), "the image's wrappers, without the app's environment"
 
 
 def test_errors_and_refused_pages():
