@@ -4,3 +4,7 @@ MD013:
   line_length: 100
   code_blocks: false
   tables: false
+# The changelog repeats "Added", "Fixed", ... under every version: only headings under the same
+# parent must differ.
+MD024:
+  siblings_only: true
