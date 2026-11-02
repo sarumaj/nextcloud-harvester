@@ -8,4 +8,6 @@ playwright==1.64.1
 # SOCKS proxies: the downloads (httpx) and gallery-dl (requests).
 PySocks==1.7.1
 socksio==1.0.0
+# The schedules' time zones (zoneinfo), whether or not the image has the system's.
+tzdata==2026.5
 yt-dlp==2026.10.21

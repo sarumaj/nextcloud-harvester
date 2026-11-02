@@ -222,6 +222,7 @@ class Remote(Source):  # pylint: disable=too-many-instance-attributes
         ),
     }
     pause = 0.0
+    listing_options = ("path", "include", "recursive")
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -327,9 +328,10 @@ class Remote(Source):  # pylint: disable=too-many-instance-attributes
             if date:
                 values |= {"year": int(date[1]), "month": int(date[2]), "day": int(date[3])}
             try:
-                target = patterns.render_path(str(self.settings["path_template"]), values)
+                target = patterns.render_path(str(self.settings["path_template"]), values, "the remote's file")
             except (KeyError, ValueError) as error:
-                raise SourceError(str(error).strip("'\"")) from error
+                yield Item(key=key, path="", url=key, values=values, problem=SourceError(str(error).strip("'\"")))
+                continue
             yield Item(key=key, path=target, url=key, values=values)
 
     def fetch(self, item: Item, dest: BinaryIO) -> None:

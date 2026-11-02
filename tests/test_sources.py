@@ -55,7 +55,34 @@ def test_known_files_end_the_run_only_after_a_full_pass():
     first = list(source(Site(), ARCHIVE).items(known.__contains__))
     assert len(first) == 6, "before a full pass, older years are still fetched"
     known.add(FULL_PASS)
-    assert not list(source(Site(), ARCHIVE).items(known.__contains__)), "a year of known files ends it"
+    assert [item.key for item in source(Site(), ARCHIVE).items(known.__contains__)] == [
+        f"{SITE}/select/mag/archiv/{year}/{issue}" for year in (2024, 2025) for issue in (3, 2, 1)
+    ], "the last year has new files: the archive is taken to list its newest last, and is walked back"
+
+
+def every_issue() -> set[str]:
+    return {item.key for item in source(Site(), ARCHIVE).items(lambda key: False)} | {FULL_PASS}
+
+
+def test_known_years_at_both_ends_end_the_run():
+    known = every_issue() - {f"{SITE}/select/mag/archiv/2026/2"}
+    assert [item.key for item in source(Site(), ARCHIVE).items(known.__contains__)] == [
+        f"{SITE}/select/mag/archiv/2026/2"
+    ]
+    site = Site()
+    assert not list(source(site, ARCHIVE).items(every_issue().__contains__)), "nothing new: nothing"
+    years = [url.rsplit("/", 1)[1] for url in site.requests if url.rsplit("/", 1)[1].isdigit()]
+    assert years == ["2026", "2024"], "the first year, known, and the last: the years between are not opened"
+
+
+def test_an_archive_listing_its_oldest_first_still_gives_its_new_files():
+    site = Site()
+    site.oldest_first = True
+    known = {key for key in every_issue() if "/2026/" not in key}
+    items = list(source(site, ARCHIVE).items(known.__contains__))
+    assert [item.key for item in items] == [f"{SITE}/select/mag/archiv/2026/2", f"{SITE}/select/mag/archiv/2026/1"]
+    years = [url.rsplit("/", 1)[1] for url in site.requests if url.rsplit("/", 1)[1].isdigit()]
+    assert years == ["2024", "2026", "2025"], "the first year known, the last new: walked back to a known one"
 
 
 def test_pagination_by_next_link():
@@ -107,8 +134,9 @@ def test_bad_recipes_are_refused():
     ):
         with pytest.raises(SourceError, match=problem):
             SiteSource({"recipe": recipe}, {}, None)
-    with pytest.raises(SourceError, match="names issue"):
-        source(Site(), ARCHIVE, path="{issue}").item(f"{SITE}/a.pdf", "a", 1, {})
+    # A name that cannot be made fails its file alone (in the run), not the listing.
+    problem = source(Site(), ARCHIVE, path="{issue}").item(f"{SITE}/a.pdf", "a", 1, {}).problem
+    assert isinstance(problem, SourceError) and "names issue, which the link pattern does not give" in str(problem)
 
 
 def test_a_challenge_over_http_stops_the_run():

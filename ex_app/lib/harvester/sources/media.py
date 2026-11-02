@@ -23,7 +23,8 @@ import yt_dlp
 
 from .. import browser, cookies, patterns
 from ..browser import allowed_url
-from .base import ACCOUNT_HELP, Item, Option, Source, SourceError, Stopped, stop_requested
+from . import download
+from .base import ACCOUNT_HELP, Item, Option, Refused, Source, SourceError, Stopped, stop_requested
 
 # The quiet, offline-safe options every YoutubeDL here starts from.
 # Timeouts and retries: a stalled server must not hold the executor (one run at a time).
@@ -126,8 +127,10 @@ class Media(Source):
                 "{title} [{id}].{ext}",
             ),
         ),
+        "max_size": download.DOWNLOAD_OPTIONS["max_size"],
     }
     pause = 5.0
+    listing_options = ("url", "max_entries")
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -189,9 +192,10 @@ class Media(Source):
             # is skipped, not the run's end: else each run would stop at it again.
             try:
                 info = entry if entries is None else self._info(page, format=str(self.settings["format"]))
-            except SourceError:
+            except SourceError as error:
                 if entries is None:
                     raise
+                self.report("info", f"Skipped {page}: {error}")
                 continue
             if info.get("live_status") in SKIPPED:
                 continue
@@ -211,10 +215,15 @@ class Media(Source):
         } | dated(info.get("upload_date"))
         values |= {"filename": f"{values['title']}.{ext}", "stem": values["title"]}
         try:
-            path = patterns.render_path(str(self.settings["path"]), values)
+            path = patterns.render_path(str(self.settings["path"]), values, "the entry's information")
         except (KeyError, ValueError) as error:
-            raise SourceError(str(error).strip("'\"")) from error
+            problem = SourceError(str(error).strip("'\""))
+            return Item(key=key, path="", url=values["url"], values=values, problem=problem)
         return Item(key=key, path=path, url=values["url"], values=values)
+
+    def largest(self) -> int:
+        """The job's largest file, in bytes."""
+        return download.largest(self.settings)
 
     def fetch(self, item: Item, dest: BinaryIO) -> None:
         if not allowed_url(item.url):
@@ -227,10 +236,14 @@ class Media(Source):
                 "postprocessors": [],
                 # yt-dlp reports its progress often: a stop ends the download there.
                 "progress_hooks": [cancel_when_stopped],
+                # A larger file is not downloaded (yt-dlp checks the size it is told, and while
+                # it downloads).
+                "max_filesize": self.largest(),
             }
             try:
                 with self.downloader(options) as ydl:
                     info = ydl.extract_info(item.url, download=False)
+                    self.check_size(info, item.url)
                     ydl.process_info(info)
             except (yt_dlp.utils.DownloadError, yt_dlp.utils.DownloadCancelled) as error:
                 if stop_requested():
@@ -241,3 +254,12 @@ class Media(Source):
                 raise SourceError(f"yt-dlp left {len(files)} files for {item.url}")
             with files[0].open("rb") as produced:
                 shutil.copyfileobj(produced, dest)
+
+    def check_size(self, info: dict, url: str) -> None:
+        """Refused when the entry's size (of its formats together, as yt-dlp tells it, exact or
+        approximate) is over the job's largest file. One yt-dlp learns only while downloading
+        ends the download there (max_filesize), and the file fails as one that is left out."""
+        formats = info.get("requested_formats") or [info]
+        size = sum(int(part.get("filesize") or part.get("filesize_approx") or 0) for part in formats)
+        if size > self.largest():
+            raise Refused(f"{url} is {size // download.MB} MB, more than the job's largest file")

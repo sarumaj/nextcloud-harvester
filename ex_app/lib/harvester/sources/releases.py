@@ -78,6 +78,14 @@ class Releases(Source):
             minimum=1,
             suggestions=("1", "3", "10"),
         ),
+        "max_releases": Option(
+            "Newest releases",
+            0,
+            "Only the files of this many releases, the newest (drafts, and prereleases unless asked for, not "
+            "counted); 0: every release on the pages read.",
+            minimum=0,
+            suggestions=("1", "3", "10", "0"),
+        ),
         "forge": Option(
             "Forge",
             "auto",
@@ -88,6 +96,7 @@ class Releases(Source):
         **download.DOWNLOAD_OPTIONS,
     }
     pause = 1.0
+    listing_options = ("repository", "forge", "asset_pattern", "prereleases", "max_pages", "max_releases")
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -195,9 +204,15 @@ class Releases(Source):
                 return
 
     def items(self, seen: Callable[[str], bool]) -> Iterator[Item]:
+        newest = int(self.settings["max_releases"] or 0)
+        taken = 0
         for release in self.releases():
             if release.get("draft") or (release.get("prerelease") and not int(self.settings["prereleases"])):
                 continue
+            # The newest releases only: no more pages are asked for once they are in.
+            if newest and taken >= newest:
+                return
+            taken += 1
             tag = str(release.get("tag_name") or "")
             values: dict = {
                 "repo": self.repo,
@@ -239,14 +254,16 @@ class Releases(Source):
         link = str(asset.get("browser_download_url") or "")
         stem, ext = posixpath.splitext(filename)
         values = values | {"filename": filename, "stem": stem, "ext": ext, "size": asset.get("size", 0)}
+        key = link or f"{self.host}/{self.project}/assets/{asset.get('id')}"
         try:
-            path = patterns.render_path(str(self.settings["path"]), values)
+            path = patterns.render_path(str(self.settings["path"]), values, "this release")
         except (KeyError, ValueError) as error:
-            raise SourceError(str(error).strip("'\"")) from error
+            problem = SourceError(str(error).strip("'\""))
+            return Item(key=key, path="", url=link, values=values, problem=problem)
         # A file of the job's type gets its extension when the name has none.
         path = download.with_extension(path, self.settings)
         return Item(
-            key=link or f"{self.host}/{self.project}/assets/{asset.get('id')}",
+            key=key,
             path=path,
             # A private repository's GitHub links need the API and the token.
             url=str(asset.get("url") or link) if self.github and self.token else link,

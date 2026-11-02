@@ -1,10 +1,12 @@
-"""A job's schedule (cron, UTC) in words, and its next runs, for the job's form.
+"""A job's schedule (cron, in the job's time zone) in words, and its next runs, for the job's form.
 
 The next runs come from croniter, as the executor's do; the words cover the usual forms
 (every n minutes, hourly, daily, on weekdays, monthly) and fall back to field by field.
 """
 
 import datetime
+import functools
+import zoneinfo
 
 from croniter import croniter
 
@@ -64,8 +66,30 @@ def _days(day: str, month: str, weekday: str) -> str:
     return " ".join(parts) or "every day"
 
 
+@functools.cache
+def _zones() -> frozenset[str]:
+    return frozenset(zoneinfo.available_timezones())
+
+
+def checked_zone(name: str) -> str:
+    """The time zone's IANA name (Europe/Berlin, UTC); ValueError when there is no such zone."""
+    if name != "UTC" and name not in _zones():
+        raise ValueError(f"unknown time zone {name!r} (an IANA name, e.g. Europe/Berlin)")
+    return name
+
+
+def zone(name: str) -> datetime.tzinfo:
+    """The time zone of that name; UTC for a name this system does not know (a job's zone is
+    checked when it is saved, so only a system without it gets here)."""
+    try:
+        return zoneinfo.ZoneInfo(name or "UTC")
+    except (zoneinfo.ZoneInfoNotFoundError, ValueError):
+        return datetime.UTC
+
+
 def describe(expression: str) -> str:
-    """The schedule in words (UTC); ValueError when it is not a cron expression."""
+    """The schedule in words (its times are the job's time zone's, which the form names); ValueError
+    when it is not a cron expression."""
     if not croniter.is_valid(expression):
         raise ValueError("not a cron expression: minute hour day month weekday, e.g. 0 6 * * *")
     fields = expression.split()
@@ -83,12 +107,15 @@ def describe(expression: str) -> str:
         return f"every {hour[2:]} hours at minute {_join(minute.split(','))}, {when}"
     times = _times(minute, hour)
     if times:
-        return f"{when} {times} (UTC)"
-    return f"minute {minute}, hour {hour} (UTC), {when}"
+        return f"{when} {times}"
+    return f"minute {minute}, hour {hour}, {when}"
 
 
-def next_runs(expression: str, count: int = 3, now: datetime.datetime | None = None) -> list[float]:
-    """The next runs as timestamps, as the executor finds them (UTC)."""
-    start = now or datetime.datetime.now(datetime.UTC)
+def next_runs(
+    expression: str, count: int = 3, now: datetime.datetime | None = None, timezone: str = "UTC"
+) -> list[float]:
+    """The next runs as timestamps, as the executor finds them (the schedule's hours in the
+    time zone)."""
+    start = (now or datetime.datetime.now(datetime.UTC)).astimezone(zone(checked_zone(timezone)))
     runs = croniter(expression, start)
     return [runs.get_next(float) for _ in range(count)]

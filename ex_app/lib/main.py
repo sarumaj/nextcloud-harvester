@@ -21,7 +21,8 @@ from harvester.browser.recorder import Recorder
 from harvester.executor import RUNNERS, Executor, credential_key, load_session, save_session, session_key
 from harvester.presets import PRESETS, make_job
 from harvester.runner import COMMON_OPTIONS
-from harvester.sources import FULL_PASS, SOURCES, SourceError
+from harvester.sources.download import DOWNLOAD_OPTIONS
+from harvester.sources import SOURCES, SourceError
 from harvester.store import Job, Store
 
 LOGGER = logging.getLogger("harvester")
@@ -78,6 +79,8 @@ class JobIn(BaseModel):
     )
     tags: list[Annotated[str, Field(max_length=200)]] = Field([], max_length=50)
     enabled: bool = True
+    # The schedule's time zone (the browser's, as the page sends it); UTC when none is sent.
+    timezone: str = Field("UTC", max_length=64)
 
     @field_validator("source")
     @classmethod
@@ -94,6 +97,12 @@ class JobIn(BaseModel):
         if not croniter.is_valid(value):
             raise ValueError("not a cron expression")
         return value
+
+    @field_validator("timezone")
+    @classmethod
+    def known_zone(cls, value: str) -> str:
+        """An IANA time zone (Europe/Berlin)."""
+        return schedule.checked_zone(value)
 
     @field_validator("target")
     @classmethod
@@ -187,10 +196,16 @@ def preset_job(preset_id: str, body: dict[str, str]) -> dict:
 
 
 @APP.get("/api/schedule")
-def explain_schedule(expression: Annotated[str, Query(max_length=100)]) -> dict:
-    """The schedule in words and its next runs (timestamps), for the job's form as it is typed."""
+def explain_schedule(
+    expression: Annotated[str, Query(max_length=100)], timezone: Annotated[str, Query(max_length=64)] = "UTC"
+) -> dict:
+    """The schedule in words and its next runs (timestamps), in the time zone (the browser's),
+    for the job's form as it is typed."""
     try:
-        return {"description": schedule.describe(expression), "next": schedule.next_runs(expression)}
+        return {
+            "description": schedule.describe(expression),
+            "next": schedule.next_runs(expression, timezone=schedule.checked_zone(timezone)),
+        }
     except ValueError as error:
         return {"error": str(error)}
 
@@ -231,14 +246,31 @@ async def update_job(job_id: int, body: JobIn, nc: NC) -> dict:
     """Changes a job's settings."""
     job = await own_job(job_id, nc)
     saved = store().save(Job(id=job.id, user=job.user, created=job.created, **checked(body).model_dump()))
-    # Another source or recipe lists other files: "known files end the run" waits for its first
-    # complete pass again.
-    if saved.source != job.source or saved.options != job.options:
-        store().forget(job.id or 0, FULL_PASS)
+    forget_changed(job, saved)
     # Other tags: the files it saved get them (and lose those it gave and has no more) at once.
     if saved.tags != job.tags:
         STATE["executor"].retag(saved.id or 0, job.tags)
     return vars(saved)
+
+
+# The options whose change makes a file refused by type or size worth trying again.
+REFUSING = tuple(DOWNLOAD_OPTIONS)
+
+
+def forget_changed(job: Job, saved: Job) -> None:
+    """What the job's listing knew, when the options it lists by change: another source, recipe,
+    address, folder or patterns lists other files, so "known files end the run" waits for its
+    first complete pass again (and mail's handled messages are read again). Its file names, files
+    per run, schedule or tags change nothing there. Other types or sizes try again the files they
+    refused."""
+
+    def changed(names) -> bool:
+        return any(saved.options.get(name) != job.options.get(name) for name in names)
+
+    if saved.source != job.source or changed(SOURCES[saved.source].listing_options):
+        store().forget_marks(job.id or 0)
+    if saved.source != job.source or changed(REFUSING):
+        store().forget_refused(job.id or 0)
 
 
 @APP.delete("/api/jobs/{job_id}")
@@ -297,11 +329,17 @@ async def get_credentials(job_id: int, nc: NC) -> dict[str, bool]:
 async def set_credentials(
     job_id: int, body: dict[Annotated[str, Field(max_length=40)], Annotated[str, Field(max_length=65_536)]], nc: NC
 ) -> dict:
-    """Stores the credentials given (an empty one is left as it was), encrypted by Nextcloud."""
+    """Stores the credentials given (an empty one is left as it was), encrypted by Nextcloud. A
+    changed account forgets the job's kept session: its cookies, or a refresh token the provider
+    replaced, are the old account's and would go on being used instead."""
     job = await own_job(job_id, nc)
+    changed = False
     for name in SOURCES[job.source].credentials:
-        if body.get(name):
+        if body.get(name) and body[name] != await nc.preferences_ex.get_value(credential_key(job, name)):
             await nc.preferences_ex.set_value(credential_key(job, name), body[name], sensitive=True)
+            changed = True
+    if changed:
+        await nc.preferences_ex.delete(session_key(job))
     return {}
 
 

@@ -50,19 +50,20 @@ def group_values(match: re.Match) -> dict:
     }
 
 
-def render(template: str, values: dict) -> str:
-    """Fills in the template; a value it names that is missing is an error naming it."""
+def render(template: str, values: dict, giver: str = "the link pattern") -> str:
+    """Fills in the template; a value it names that is missing is an error naming it, and what
+    should have given it (giver: the link pattern, the message, this release)."""
     missing = [name for _, name, _, _ in Formatter().parse(template) if name and name not in values]
     if missing:
-        raise KeyError(f"{template} names {', '.join(missing)}, which the link pattern does not give")
+        raise KeyError(f"{template} names {', '.join(missing)}, which {giver} does not give")
     return template.format(**values)
 
 
-def render_path(template: str, values: dict) -> str:
+def render_path(template: str, values: dict, giver: str = "the link pattern") -> str:
     """The file's path from the template, without leaving the job's folder; each part without
     what Nextcloud refuses in a name (control characters, backslashes, leading or trailing
     spaces and trailing dots)."""
-    path = posixpath.normpath("/" + render(template, values)).lstrip("/")
+    path = posixpath.normpath("/" + render(template, values, giver)).lstrip("/")
     parts = []
     for part in path.split("/"):
         part = re.sub(r"[\x00-\x1f\x7f\\]+", " ", part).strip().rstrip(".").strip()

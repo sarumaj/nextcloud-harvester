@@ -5,7 +5,9 @@ and tags them: from websites, mailboxes, feeds, video and gallery sites, file st
 drives, and release pages. It is generic: a website is described by a **recipe**, recorded in
 the app's browser or taken from a template, not by code.
 
-- **Jobs:** a source and its settings, a folder, a cron schedule (UTC), tags and an account.
+- **Jobs:** a source and its settings, a folder, a cron schedule in your time zone (the
+  browser's, when the job is saved; `0 6 * * *` is 06:00 there in summer and winter; jobs from
+  before time zones keep UTC), tags and an account.
   *Harvester* in Nextcloud's top menu lists your jobs, runs one now and edits them. The form
   explains the schedule in words as it is typed, with its next runs, and shows sizes in KB, MB
   or GB. Fields with usual values (the schedule, file names, formats, patterns, sizes, files per
@@ -18,6 +20,11 @@ the app's browser or taken from a template, not by code.
   - `mail`: attachments of the messages in an IMAP mailbox (TLS), filtered by sender, subject,
     file name, type and size; read-only (`BODY.PEEK`, the folder selected read-only), so nothing
     is marked as read. Values: `{from}`, `{sender}`, `{subject}`, `{date}`, `{year}`, …
+    A run asks little of the server: a sender that is a plain address or domain is searched for
+    there, the headers come a hundred messages at a time, a message larger than the largest file
+    is skipped unread, and a message whose attachments were all saved or skipped (or that is not
+    the job's) is not read again until the job's server, folder, filters, types or sizes change.
+    Only the attachment the run is at is held in memory.
   - `feed`: the files of an RSS or Atom feed, newest first: its enclosures (podcast episodes) or
     each entry's link, through the checked download. Values: `{title}`, `{feed}`, `{author}`,
     `{date}`, `{year}`, `{filename}`, …
@@ -25,7 +32,10 @@ the app's browser or taken from a template, not by code.
     or the newest entries of a playlist or channel). A format of separate video and audio streams
     (YouTube's best, from 720p up) is joined with ffmpeg, without re-encoding: into mp4 where the
     codecs fit (H.264, AV1 with AAC), else mkv (VP9 with Opus). ffmpeg runs without the app's
-    environment, as the browser does. Live and upcoming streams are skipped.
+    environment, as the browser does. Live and upcoming streams are skipped; an entry that
+    cannot be had (private, removed) is skipped with a line in the progress log, and tried again
+    next run. A video larger than the job's largest file is not downloaded (yt-dlp's
+    `max_filesize`).
   - `gallery`: images of galleries, albums and profiles on the sites gallery-dl supports;
     gallery-dl lists them, Harvester downloads them with its checks and the page as `Referer`.
   - `remote`: the files in a folder of a WebDAV, SFTP, FTP or S3 server, a Nextcloud public
@@ -55,7 +65,9 @@ the app's browser or taken from a template, not by code.
     a server of its own, projects in groups of groups), Codeberg or another Forgejo or Gitea
     server, newest first (prereleases if asked, drafts never), filtered by a pattern on the
     file's name; values `tag`, `version`, `name`, `repo`, `year`. A token (the job's account)
-    for private repositories and GitHub's request limit.
+    for private repositories and GitHub's request limit. **Newest releases** takes the files of
+    that many releases only (`0`, the default: every release on the pages read, as before; the
+    `app-releases` template: 1), so a new job does not fetch a whole release history.
 - **Recipes** (`ex_app/lib/harvester/recipe.py`): the steps to sign in (replayed in Chromium;
   without steps the pages are fetched over HTTP), the listing to start at, levels of links to
   follow (a year, then its issues), the file links, and the next page's link. Each level has
@@ -82,7 +94,9 @@ the app's browser or taken from a template, not by code.
   you are human") the run stops, the job shows **Needs you** and its user gets a notification;
   scheduled runs wait. **Continue in the browser** opens the recorder's browser with the job's
   session at that page: the person answers it, **Done** keeps the session and runs the job.
-  Harvester never answers a challenge itself.
+  Harvester never answers a challenge itself. A new value for any of the job's account forgets
+  its kept session (the cookies, a refresh token the provider replaced): those are the old
+  account's, and would be used instead.
 - **A person's browser:** sites' bot protection (Cloudflare, ...) refuses a browser that says it is
   automated, or cuts its connection (`ERR_HTTP2_PROTOCOL_ERROR`). Chromium runs as the full browser
   in its new headless mode (not the headless shell), without the automation flag, with Chrome's
@@ -92,7 +106,14 @@ the app's browser or taken from a template, not by code.
 - **Downloads:** a pause between files; waits when the site asks (429 or 503 with
   `Retry-After`, or a wait pattern on the URL it redirects to, like heise's `wait_sec=`) and
   three retries of a broken transfer; never a web page instead of a file; expected file types
-  (`pdf`, `zip`, `image`, ..., several separated by commas), a smallest and a largest size.
+  (`pdf`, `zip`, `image`, ..., several separated by commas), a smallest and a largest size. A
+  megabyte is 1000 × 1000 bytes everywhere (the largest file's MB, the form, the progress log),
+  so 4096 MB is the 4.1 GB the form shows. A file of another type or over the largest size is
+  the same next run: it is skipped with a line in the log (*skipped: not of the job's file types,
+  or too large*) and not tried again, until the job's types or sizes change. A network failure,
+  an error page, a too small answer or a 401 or 403 for one file fail that file, which is tried
+  again next run; only when every file of a run (two at least) is refused is it the account's
+  trouble (*Sign-in refused*).
   Files go to Nextcloud in chunks of nc_py_api's first kind: its second numbers the first chunk 0,
   which Nextcloud refuses where the storage takes multipart uploads (S3), so every file over 5 MB
   failed with 400.
@@ -101,12 +122,25 @@ the app's browser or taken from a template, not by code.
   those files: the missing ones added, those the job gave and has no more taken off; tags their
   people added stay, a file deleted since is left. Files saved before 0.8.1, which it did not
   remember so, are found by listing the site once without downloads and looking for each in the
-  folder. Its progress log shows the pass.
+  folder. Its progress log shows the pass. A pass is kept in the database until it goes
+  through: one stopped, failed or cut short by a restart of the app comes again (queued when
+  the app starts, else at the job's next turn, before its run). A **Run now** asked for before
+  the tags changed still runs, after the pass.
 - **Repeat runs:** a job remembers what it downloaded; a file already in the folder is tagged
   and not downloaded again. At most `max_items` files per run (`-1`: no limit), the rest comes
   next time; a run ends after two hours in any case. One file that fails does not stop the
-  others (it is tried again next run), five failures without a success do. Once a run went
-  through the whole site, a listing of known files ends the next runs.
+  others (it is tried again next run), five failures without a success do; a file whose name
+  cannot be made (`{year}` of a release without a date) fails alone, naming the missing value.
+  Two files of one name (two invoices of one day, links all called "Download") get two names:
+  a name taken by a file the job saved for another item gets ` (2)`, ` (3)`, ... before the
+  extension; a file the job has no record of (put there by hand) is adopted. Once a run went
+  through the whole site, a listing of known files ends the next runs (*Stop at known files*):
+  of a level's links to follow, the first known one ends it when the level's last is known too;
+  when the last has new files the level lists its newest last, and is followed from the end back
+  to a known one. A listing over several pages is taken to start with its newest page: for one
+  whose first page is its oldest, turn the option off. Only a change of what is listed (the
+  source, a recipe, an address, a folder, patterns, the pages or entries read) starts over with
+  a complete pass; files per run, file names, tags or the schedule do not.
 - **Pause and stop:** while a job runs, **Run now** becomes **Pause** (then **Resume**) and
   **Stop**. Both act before the next file: a paused run waits (its time does not count against
   the two hours; after six hours unresumed it stops), a stopped one ends and keeps what it saved,
@@ -156,7 +190,7 @@ the app's browser or taken from a template, not by code.
   - `video-channel` and `channel-audio`: a channel's newest videos, or their audio;
   - `gallery`: a gallery or album's images;
   - `nextcloud-share`: the folder of another Nextcloud's public link;
-  - `app-releases`: an application's release downloads.
+  - `app-releases`: an application's release downloads, of its newest release.
 - **Accounts:** a job's username and password, token or rclone configuration are your sensitive
   preferences in Nextcloud (encrypted); the page only shows whether they are set. Besides a
   password, a job signs in with:

@@ -19,8 +19,9 @@ from croniter import croniter
 from nc_py_api import AsyncNextcloudApp
 
 from . import browser, runner, settings
+from .schedule import zone
 from .nextcloud import NextcloudLibrary
-from .sources import FULL_PASS, SOURCES, AuthError, ChallengeError, Source, Stopped
+from .sources import MARK, SOURCES, AuthError, ChallengeError, Source, Stopped
 from .sources.base import watch_stop
 from .sources.download import guarded_client
 from .store import Job, Store
@@ -94,7 +95,9 @@ def is_due(job: Job, now: float) -> bool:
     # A job waiting for its user (a challenge) runs again once answered, or by hand.
     if not job.enabled or job.last_status == "challenge":
         return False
-    start = datetime.datetime.fromtimestamp(job.last_run or job.created, datetime.UTC)
+    # The schedule's hours are the job's time zone's: "0 6 * * *" is 06:00 there, in summer and
+    # in winter.
+    start = datetime.datetime.fromtimestamp(job.last_run or job.created, zone(job.timezone))
     return croniter(job.schedule, start).get_next(float) <= now
 
 
@@ -166,9 +169,10 @@ class Executor:
         self.controls: dict[int, Control] = {}
         self._sites: dict[int, str] = {}
         self._queued: set[int] = set()
-        # The jobs whose tags changed, with their tags before (their first change since the
-        # last pass): their next turn brings the files' tags up to date instead of a run.
-        self._retags: dict[int, list[str]] = {}
+        # The queued jobs that are to run (the schedule, Run now), not only to bring their tags
+        # to their files: a job's tags before a change are the database's (Store.retag_from),
+        # and its next turn brings the files' tags up to date first.
+        self._wanted: set[int] = set()
         self._lock = threading.Lock()
         self._events: asyncio.AbstractEventLoop | None = None
         self._events_lock = threading.Lock()
@@ -181,7 +185,10 @@ class Executor:
 
     def start(self) -> None:
         """Starts the schedule's thread and as many runners as the setting allows; those beyond
-        self.runners wait until it is raised."""
+        self.runners wait until it is raised. The passes for tags the app did not finish (it
+        stopped meanwhile) are queued."""
+        for job_id in self.store.pending_retags():
+            self.request(job_id, run=False)
         threading.Thread(target=self._schedule, name="schedule", daemon=True).start()
         for number in range(settings.MAX_RUNNERS):
             threading.Thread(target=self._runner, args=(number,), name=f"runner-{number}", daemon=True).start()
@@ -203,9 +210,12 @@ class Executor:
         browser.SLOTS.limit = browsers
         browser.PROXY, browser.PROXY_NAME = proxy, name
 
-    def request(self, job_id: int) -> None:
-        """Runs the job as soon as a runner and its site are free (once, if asked twice)."""
+    def request(self, job_id: int, run: bool = True) -> None:
+        """Runs the job as soon as a runner and its site are free (once, if asked twice); with
+        run False, only its pending pass for the tags (a run asked for meanwhile still comes)."""
         with self._lock:
+            if run:
+                self._wanted.add(job_id)
             if job_id in self._queued:
                 return
             self._queued.add(job_id)
@@ -214,10 +224,9 @@ class Executor:
     def retag(self, job_id: int, previous: list[str]) -> None:
         """Brings the job's new tags to the files it saved, as soon as a runner is free (the job's
         tags were previous): no listing for the files it recorded, one without downloads for
-        those it saved before it recorded them."""
-        with self._lock:
-            self._retags.setdefault(job_id, list(previous))
-        self.request(job_id)
+        those it saved before it recorded them. Kept in the database until a pass goes through."""
+        self.store.set_retag(job_id, list(previous))
+        self.request(job_id, run=False)
 
     def paused(self, job_id: int) -> bool:
         """Whether the job runs and is paused."""
@@ -294,14 +303,18 @@ class Executor:
                 if not job:
                     with self._lock:
                         self._queued.discard(job_id)
+                        self._wanted.discard(job_id)
                     continue
                 if not self._claim(job):
                     # Its site (or the job itself) is busy: back to the queue, a little later.
                     time.sleep(2)
                     self.requests.put(job_id)
                     continue
+                with self._lock:
+                    wanted = job_id in self._wanted
+                    self._wanted.discard(job_id)
                 try:
-                    self.run(job)
+                    self.run(job, wanted)
                 finally:
                     with self._lock:
                         self.controls.pop(job_id, None)
@@ -322,24 +335,23 @@ class Executor:
             self._queued.discard(job.id)
             return True
 
-    def run(self, job: Job) -> None:
-        """Runs the job and records how it went; a new failure is also a notification to its user."""
+    def run(self, job: Job, wanted: bool = True) -> None:  # pylint: disable=too-many-locals
+        """Runs the job and records how it went; a new failure is also a notification to its user.
+        A pending pass for its tags comes first; without wanted, only that pass (if any)."""
         assert job.id is not None
         job_id = job.id
+        previous = self.store.retag_from(job_id)
+        if previous is None and not wanted:
+            return
         # Its controls: a runner made them when it took the job; a direct call (tests) makes them.
         with self._lock:
             control = self.controls.setdefault(job_id, Control())
-            # A change of its tags: this turn brings them to its files, the run comes on schedule.
-            previous = self._retags.pop(job_id, None)
-        self._begin(job_id, control, previous is None)
+        self._begin(job_id, control, wanted, previous is not None)
         nc = self.connect()
         try:
             self.call(nc.set_user(job.user))
             source_class = SOURCES[job.source]
-            credentials = {
-                name: self.call(nc.preferences_ex.get_value(credential_key(job, name))) or ""
-                for name in source_class.credentials
-            }
+            credentials = self._credentials(nc, job)
             started = time.monotonic()
             home = bool(int(job.options.get("home", 0) or 0)) and bool(browser.PROXY)
             with guarded_client(**({"proxy": browser.PROXY} if home else {})) as client:
@@ -353,26 +365,61 @@ class Executor:
                 kept = self.call(load_session(nc, job))
                 if kept:
                     source.restore(kept)
+                library = NextcloudLibrary(nc, self.call)
                 try:
-                    message = self._work(job, source, NextcloudLibrary(nc, self.call), control, started, previous)
+                    if previous is not None:
+                        message = self._retag_turn(job, source, library, control, previous, wanted, nc)
+                    if wanted:
+                        message = self._work(job, source, library, control, started, None)
                 finally:
                     # Kept also after a failure: cookies set before it (a sign-in) still count;
-                    # not for a job deleted while it ran (its session went with it).
+                    # not for a job deleted while it ran (its session went with it), nor when its
+                    # account changed meanwhile (the session is the old account's).
                     try:
-                        if self.store.job(job_id):
+                        if self.store.job(job_id) and self._credentials(nc, job) == credentials:
                             self.call(save_session(nc, job, source.session()))
                     finally:
                         source.close()
             # A pass for the tags is no run: the job's last run (and its schedule) stay.
-            if previous is None:
+            if wanted:
                 self.store.finish(job_id, "ok", message)
             self.store.log(job_id, "done", message)
         except Exception as error:  # pylint: disable=broad-exception-caught
-            self._failed(job, nc, error, previous is not None)
+            self._failed(job, nc, error, not wanted)
         finally:
             watch_stop(None)
             with self._lock:
                 self.controls.pop(job_id, None)
+
+    def _credentials(self, nc: AsyncNextcloudApp, job: Job) -> dict[str, str]:
+        """The job's account, as its user set it."""
+        return {
+            name: self.call(nc.preferences_ex.get_value(credential_key(job, name))) or ""
+            for name in SOURCES[job.source].credentials
+        }
+
+    def _retag_turn(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self,
+        job: Job,
+        source: Source,
+        library: runner.Library,
+        control: Control,
+        previous: list[str],
+        wanted: bool,
+        nc: AsyncNextcloudApp,
+    ) -> str:
+        """The pass for the tags before a turn's run (or alone): when a run follows, a failed
+        pass is logged and the run goes on (the pass stays pending for the next turn)."""
+        try:
+            message = self._work(job, source, library, control, 0.0, previous)
+        except Exception as error:  # pylint: disable=broad-exception-caught
+            if not wanted:
+                raise
+            self._failed(job, nc, error, True)
+            return ""
+        if wanted:
+            self.store.log(job.id or 0, "info", message)
+        return message
 
     def _failed(self, job: Job, nc: AsyncNextcloudApp, error: Exception, retagging: bool) -> None:
         """Records why a run failed, and tells its user of a new failure; a job deleted while it
@@ -396,7 +443,7 @@ class Executor:
         if (job.last_status, job.last_message) != (status, message):
             self.notify(nc, f"Harvester: {job.name} failed", message)
 
-    def _work(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    def _work(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
         self,
         job: Job,
         source: Source,
@@ -424,8 +471,15 @@ class Executor:
             return control.checkpoint(report)
 
         if previous is not None:
-            earlier = self.store.seen_keys(job_id) - {FULL_PASS} - set(known)
-            return self._earlier_tags(job, source, library, earlier, previous, changed, report, record, stopped)
+            earlier = {key for key in self.store.seen_keys(job_id) if not key.startswith(MARK)} - set(known)
+            message, whole = self._earlier_tags(
+                job, source, library, earlier, previous, changed, report, record, stopped
+            )
+            # Pending until a pass goes through: one stopped, failed or cut short by a restart
+            # comes again at the job's next turn.
+            if whole:
+                self.store.clear_retag(job_id, job.tags)
+            return message
         if changed:
             report("info", f"Tags brought up to date on {changed} files")
         return runner.run(
@@ -439,6 +493,7 @@ class Executor:
             sleep=control.nap,
             stopped=stopped,
             record=record,
+            owners={entry["file"]: key for key, entry in known.items() if entry["file"] is not None},
         )
 
     @staticmethod
@@ -452,10 +507,11 @@ class Executor:
         report: runner.Report,
         record: Callable[[runner.Placed], None],
         stopped: Callable[[], bool],
-    ) -> str:
+    ) -> tuple[str, bool]:
         """A pass for the tags after their change: those of the files saved before the job
         recorded them (earlier, their keys), found by a listing without downloads; changed
-        recorded files were brought up to date already."""
+        recorded files were brought up to date already. Returns what it did, and whether it went
+        through."""
         tagged, whole = 0, True
         if earlier:
             report(
@@ -465,15 +521,15 @@ class Executor:
                 job, source, library, earlier.__contains__, record, previous=previous, report=report, stopped=stopped
             )
         message = f"Tags brought up to date on {changed + tagged} files"
-        return message if whole else f"{message}; stopped, the others keep their tags until the next change"
+        return (message, True) if whole else (f"{message}; stopped, the others get them at the job's next turn", False)
 
-    def _begin(self, job_id: int, control: Control, run: bool) -> None:
+    def _begin(self, job_id: int, control: Control, run: bool, retag: bool) -> None:
         """A turn's start: a run's clears the last run's message (the page shows this run's
         progress, its log, instead); downloads in progress end at once when it is stopped (one
         job per thread)."""
         if run:
             self.store.begin(job_id)
-        else:
+        if retag:
             self.store.log(job_id, "info", "The job's tags changed: bringing them to its files")
         watch_stop(control.stopped)
 

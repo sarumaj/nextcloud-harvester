@@ -26,10 +26,12 @@ LOGIN = """<html><body><form method="post" action="/session">
 <button type="submit" name="rm_login">Sign in</button></form></body></html>"""
 
 
-def archive() -> str:
-    """The archive: the years, and the newest issues (which the levels must not mistake)."""
+def archive(oldest_first: bool = False) -> str:
+    """The archive: the years (newest first, or oldest first as some archives list them), and the
+    newest issues (which the levels must not mistake)."""
     years = "".join(
-        f'<li><a class="years__link" href="/select/mag/archiv/{year}">All of {year}</a></li>' for year in YEARS
+        f'<li><a class="years__link" href="/select/mag/archiv/{year}">All of {year}</a></li>'
+        for year in (sorted(YEARS) if oldest_first else YEARS)
     )
     recent = '<a class="year__link" href="/select/mag/archiv/2026/2">Mag 2/2026</a>'
     return f"<html><body><nav><a href='/'>Home</a></nav>{recent}<ul>{years}</ul></body></html>"
@@ -61,6 +63,7 @@ class Site:  # pylint: disable=too-few-public-methods
         self.requests: list[str] = []
         self.require_login = require_login
         self.challenge: set[str] = set()
+        self.oldest_first = False
 
     def answer(self, url: str, method: str = "GET", cookie: str = "") -> tuple[int, dict, bytes]:
         """Status, headers and body for a request."""
@@ -78,7 +81,7 @@ class Site:  # pylint: disable=too-few-public-methods
         if self.require_login and path.startswith("/select/") and "sid=ok" not in cookie:
             return 200, html, LOGIN.encode()
         if path == "/select/mag/archiv":
-            return 200, html, archive().encode()
+            return 200, html, archive(self.oldest_first).encode()
         if path == "/list":
             return 200, html, listing(int(parse_qs(parsed.query).get("p", ["1"])[0])).encode()
         if path.startswith("/wait"):

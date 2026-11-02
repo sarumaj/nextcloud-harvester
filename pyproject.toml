@@ -15,4 +15,4 @@ max-line-length = 120
 max-args = 7
 max-positional-arguments = 7
 # A job's fields are the database's columns.
-max-attributes = 14
+max-attributes = 15

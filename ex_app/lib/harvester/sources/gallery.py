@@ -81,6 +81,7 @@ class Gallery(Source):
         **download.DOWNLOAD_OPTIONS,
     }
     pause = 1.0
+    listing_options = ("url",)
 
     def __init__(self, options: dict, credentials: dict[str, str], client: httpx.Client | None):
         super().__init__({"file_type": "image"} | options, credentials, client)
@@ -172,9 +173,10 @@ class Gallery(Source):
             "url": url,
         }
         try:
-            path = patterns.render_path(str(self.settings["path"]), values)
+            path = patterns.render_path(str(self.settings["path"]), values, "gallery-dl's listing")
         except (KeyError, ValueError) as error:
-            raise SourceError(str(error).strip("'\"")) from error
+            problem = SourceError(str(error).strip("'\""))
+            return Item(key=key, path="", url=url, values=values, problem=problem)
         return Item(key=key, path=path, url=url, values=values)
 
     def fetch(self, item: Item, dest: BinaryIO) -> None:

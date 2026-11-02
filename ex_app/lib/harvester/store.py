@@ -6,6 +6,8 @@ import threading
 import time
 from dataclasses import dataclass, field
 
+from .sources.base import MARK, REFUSED
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
     id INTEGER PRIMARY KEY,
@@ -21,7 +23,9 @@ CREATE TABLE IF NOT EXISTS jobs (
     last_run REAL,
     last_status TEXT,
     last_message TEXT,
-    challenge_url TEXT
+    challenge_url TEXT,
+    timezone TEXT NOT NULL DEFAULT 'UTC',
+    retag_from TEXT
 );
 CREATE TABLE IF NOT EXISTS seen (
     job INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
@@ -72,6 +76,8 @@ class Job:
     last_message: str | None = None
     # The page that asked for a person (status "challenge"), where the user continues.
     challenge_url: str | None = None
+    # The time zone its schedule is in (an IANA name; the page sends the browser's).
+    timezone: str = "UTC"
 
 
 class Store:
@@ -90,11 +96,18 @@ class Store:
         columns = {row["name"] for row in self._db.execute("PRAGMA table_info(jobs)")}
         if "challenge_url" not in columns:
             self._db.execute("ALTER TABLE jobs ADD COLUMN challenge_url TEXT")
+        # A job made before time zones keeps its schedule in UTC, as it ran.
+        if "timezone" not in columns:
+            self._db.execute("ALTER TABLE jobs ADD COLUMN timezone TEXT NOT NULL DEFAULT 'UTC'")
+        if "retag_from" not in columns:
+            self._db.execute("ALTER TABLE jobs ADD COLUMN retag_from TEXT")
         self._lock = threading.Lock()
 
     @staticmethod
     def _job(row: sqlite3.Row) -> Job:
         values = dict(row)
+        # Not a setting of the job: the executor's (retag_from).
+        values.pop("retag_from", None)
         values["options"] = json.loads(values["options"])
         values["tags"] = json.loads(values["tags"])
         values["enabled"] = bool(values["enabled"])
@@ -126,20 +139,21 @@ class Store:
             json.dumps(job.tags),
             job.schedule,
             int(job.enabled),
+            job.timezone,
         )
         with self._lock, self._db:
             if job.id is None:
                 job.created = time.time()
                 cursor = self._db.execute(
-                    "INSERT INTO jobs (user, name, source, options, target, tags, schedule, enabled, created)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO jobs (user, name, source, options, target, tags, schedule, enabled, timezone,"
+                    " created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (*values, job.created),
                 )
                 job.id = cursor.lastrowid
             else:
                 self._db.execute(
                     "UPDATE jobs SET user = ?, name = ?, source = ?, options = ?, target = ?, tags = ?, schedule = ?,"
-                    " enabled = ? WHERE id = ?",
+                    " enabled = ?, timezone = ? WHERE id = ?",
                     (*values, job.id),
                 )
         return job
@@ -236,6 +250,56 @@ class Store:
                 )
 
     def forget(self, job_id: int, key: str) -> None:
-        """Forgets one recorded key (the mark of a complete pass, when the job's source changes)."""
+        """Forgets one recorded key."""
         with self._lock, self._db:
             self._db.execute("DELETE FROM seen WHERE job = ? AND key = ?", (job_id, key))
+
+    def forget_marks(self, job_id: int) -> None:
+        """Forgets the marks of what the job's listing found (sources.MARK: a complete pass, a
+        source's own, such as mail's handled messages), not its files nor its refusals: its
+        listing changed."""
+        with self._lock, self._db:
+            self._db.execute(
+                "DELETE FROM seen WHERE job = ? AND substr(key, 1, ?) = ? AND substr(key, 1, ?) != ?",
+                (job_id, len(MARK), MARK, len(REFUSED), REFUSED),
+            )
+
+    def forget_refused(self, job_id: int) -> None:
+        """Forgets the files refused by type or size, and their marks (sources.REFUSED): the job's
+        types or sizes changed, so they are tried again."""
+        with self._lock, self._db:
+            self._db.execute(
+                "DELETE FROM seen WHERE job = ? AND key IN (SELECT substr(key, ?) FROM seen WHERE job = ?"
+                " AND substr(key, 1, ?) = ?)",
+                (job_id, len(REFUSED) + 1, job_id, len(REFUSED), REFUSED),
+            )
+            self._db.execute(
+                "DELETE FROM seen WHERE job = ? AND substr(key, 1, ?) = ?", (job_id, len(REFUSED), REFUSED)
+            )
+
+    def retag_from(self, job_id: int) -> list[str] | None:
+        """The tags the job's earlier files may still have (those before its tags' first change
+        since its last complete pass for the tags), or None when no pass is pending."""
+        with self._lock:
+            row = self._db.execute("SELECT retag_from FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        return json.loads(row["retag_from"]) if row and row["retag_from"] is not None else None
+
+    def pending_retags(self) -> list[int]:
+        """The jobs with a pass for their tags pending."""
+        with self._lock:
+            rows = self._db.execute("SELECT id FROM jobs WHERE retag_from IS NOT NULL ORDER BY id").fetchall()
+        return [row["id"] for row in rows]
+
+    def set_retag(self, job_id: int, previous: list[str]) -> None:
+        """A change of the job's tags, which were previous: kept unless a pass is pending already
+        (its files have the tags of the first change, which that pass takes off)."""
+        with self._lock, self._db:
+            self._db.execute(
+                "UPDATE jobs SET retag_from = ? WHERE id = ? AND retag_from IS NULL", (json.dumps(previous), job_id)
+            )
+
+    def clear_retag(self, job_id: int, tags: list[str]) -> None:
+        """The pass for the tags went through, to the job's tags: no more pending, unless they
+        changed again meanwhile (then the next pass brings those)."""
+        with self._lock, self._db:
+            self._db.execute("UPDATE jobs SET retag_from = NULL WHERE id = ? AND tags = ?", (job_id, json.dumps(tags)))
