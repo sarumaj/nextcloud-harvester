@@ -1,9 +1,53 @@
 # Changelog
 
-## Unreleased
+## 0.9.0 - 2026-11-02
+
+### Added
+
+- **Recorder controls:** Back, Forward and Reload in both browser views; every pick (links to
+  follow, file links, next page) can be edited, picked again or removed, with *Undo pick*; the
+  recorder opens with the form's recipe.
+- **Numbered pages:** picking a page number proposes them; a job finds the current page (marked
+  number, the one that is no link, the address, its own count) and takes the next, as a link or
+  by clicking a button.
+- **Test the recipe:** walks the recipe as a job would, on screen and without downloads (at most
+  20 file links, 30 pages, 3 minutes), and lists the pages, the files with their names, and what
+  failed.
+- **Scroll to load more:** a recorded step for listings that grow as one scrolls.
+- **What the browser saw:** a failed step or a challenge keeps a picture of the job's page with
+  its address (*Show what the browser saw*, for the job's owner only), from which the page opens
+  in the browser; the log names the failing element.
+- **Time zones:** a job's schedule runs in its time zone (the browser's; older jobs keep UTC
+  until saved), and the schedule's preview shows it.
+- **Queued:** a job asked to run shows that it waits for its site or a free runner.
+- *Newest releases* for release jobs (the template takes the newest one); a size limit for mail
+  and for yt-dlp.
+
+### Changed
+
+- *Save* also stores what was typed into the account's fields; *Save account* says so, and
+  errors stay on the form.
+- One size unit everywhere: MB of 1000 × 1000 bytes, in the form, the log and the limits.
+- *Stop at known files* also finds new files on sites that list oldest first.
+- Mail reads each message once (a mark per message), fetches headers in batches and lets the
+  server search for a plain sender; only the current attachment is held in memory.
+- Changing *Files per run*, file names, tags or the schedule no longer makes the next run go
+  through the whole site; only options that change what is listed do.
+- A pending tags pass survives restarts and failures; a *Run now* queued before a change of the
+  tags does the pass, then the run.
 
 ### Fixed
 
+- A file answering 401 or 403 fails alone; the job is refused only when every file of a run is.
+- A file refused by its type or size is skipped and logged, not tried again every run (a change
+  of the job's type or size limits tries it again).
+- A second file of one name is saved as "Name (2)", not taken for the first one.
+- An item whose file name cannot be built fails alone, naming the missing value.
+- A changed password, token or cookie forgets the job's kept session.
+- Buttons whose request the app refuses (Stop as a run ends) say why beside the job; an update of
+  the list no longer replaces an open form; the rclone wizard's buttons wait for its steps.
+- The recorder's screen stayed empty now and then: a screencast refused while the page is being
+  attached is tried again, or started at its next load.
 - A browser is always freed: the end of rclone's wizard ends its sign-in (also from a worker
   thread), and a view of the page left without *Cancel* closes its connection.
 - A remote's configuration set up anew for a job wins over the tokens kept from the one before;
@@ -14,8 +58,22 @@
 - Every connection of a browser goes through its own guard, a proxy in the app: a web worker's
   WebSockets and anything else Playwright's routes do not see reach only public addresses, each
   name looked up once and its checked address connected (no DNS rebinding), also through the home
-  connection. WebRTC sends nothing past the proxy. rclone's listener is open to the sign-in's
-  browser alone.
+  connection (whose proxy is asked for addresses only, plain http in a tunnel). WebRTC sends
+  nothing past the proxy. rclone's listener is open to the sign-in's browser alone.
+- A job's options are checked by their kind: a broken flag could keep a browser's slot until a
+  restart.
+- The browser source's downloads go through the guarded client, streamed, with the browser's
+  cookies; pages and feeds are read up to 16 MB.
+- A job's id is never used again (the database is migrated once), and deleting a job stops its
+  run.
+- GitLab tokens are sent as `Authorization`, which no redirect to another host carries.
+- The app cannot be inspected by its helpers (undumpable); frpc runs as a user of its own with
+  its own copy of HaRP's TLS files; Playwright's driver gets no secret.
+- Names are resolved for every address check; pages' WebSockets and service workers are blocked.
+- A person's pattern runs with a time limit, in the recorder and in the runs, without holding the
+  other threads.
+- gallery-dl's proxy, with its password, goes in its 0600 configuration, not on its command line;
+  the rclone wizard leaves no configuration behind when its limit is reached.
 
 ## 0.8.1 - 2026-11-02
 
