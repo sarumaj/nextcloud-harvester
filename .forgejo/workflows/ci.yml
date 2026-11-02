@@ -18,7 +18,8 @@ jobs:
   python:
     runs-on: docker
     container: docker.io/library/python:3.12-slim-bookworm
-    timeout-minutes: 15
+    # The suite runs browsers against fake sites: some 8 minutes on an idle runner.
+    timeout-minutes: 30
     steps:
       - name: Check out
         run: |
