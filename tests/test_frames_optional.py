@@ -112,7 +112,7 @@ def test_an_optional_step_that_fails_is_skipped_a_required_one_fails():
 
 
 def test_a_stop_during_an_optional_step_is_never_swallowed(monkeypatch):
-    def replay(page, step, secrets):  # pylint: disable=unused-argument
+    def replay(page, step, secrets, repaired=None):  # pylint: disable=unused-argument
         raise Stopped("stopped")
 
     monkeypatch.setattr(site_module, "replay", replay)

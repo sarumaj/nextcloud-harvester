@@ -26,9 +26,9 @@ The messages are JSON over the page's WebSocket:
 
 The steps are the recipe's: those the form held (load), each edit's, and those recorded since
 (events, made steps by recipe.steps_from_events). New ones go in after step "after" of
-record-at (the end, unless the person chose otherwise), before the steps after it (tail). A tab
-the page shown opens while recording (a sign-in's popup) is shown and is a step "popup"; when it
-closes, the page that opened it comes back, a step "opener". A click or a press the page
+record-at (the end, unless the person chose otherwise), before the steps after it (steps.py).
+A tab the page shown opens while recording (a sign-in's popup) is shown and is a step "popup";
+when it closes, the page that opened it comes back, a step "opener". A click or a press the page
 navigated after keeps the address it led to, for the replay to wait for.
 
 Navigation (Back, Forward, Reload, an address) is never a step outside the mode record. In it,
@@ -36,6 +36,13 @@ an address typed, Back and Forward are a step "goto" to the page arrived at (a j
 no history to go back in); Reload is none (the same page). Scrolling is no step: positions
 depend on the window's size; a listing that loads more as it is scrolled gets the step "scroll"
 (scroll to its end until no more comes), added with its button.
+
+recorder.js finds each step's element and each pick by several selectors (harvester.selectors):
+the step or the pick keeps the best and the others as alternatives. The listing (the recipe's
+start) is the page picked on, or, when that page is where the recorded steps lead and its
+address carries a token of the visit (?code=, ?ticket=, …), where the steps end: the recipe
+has no start then. The recorder warns of such tokens in the steps' addresses and the listing's
+({type: recipe, warnings}).
 
 recorder.js runs in every frame of the page. A step done inside a frame keeps the frame's path
 from the page down (recipe: "frame"), made here from the frame the report came from: each
@@ -71,7 +78,7 @@ from playwright.async_api import (
 )
 
 from .. import browser, pagination, patterns
-from ..recipe import SCROLL_ROUNDS, edit_step, frame_address, leaked_passwords, steps_from_events, uses_browser
+from ..recipe import SCROLL_ROUNDS, frame_address, leaked_passwords, token_warnings, uses_browser
 from ..sources import site
 from ..sources.base import SourceError
 from . import jar, trial
@@ -88,6 +95,7 @@ from . import (
     seen_address,
 )
 from .guard import Guard
+from .steps import EDITS, StepList
 
 # record: steps; browse: go somewhere unrecorded; follow, links, next: pick links.
 MODES = ("record", "browse", "follow", "links", "next")
@@ -110,17 +118,16 @@ PICKS_KEPT = 50
 INPUT = frozenset({"goto", "back", "forward", "reload", "mouse", "wheel", "key", "text", "scroll"})
 # The job's settings the recipe's test takes from the form: the file names and the pages.
 TRIAL_SETTINGS = ("path", "download_url", "max_pages", "browser")
-HIGHLIGHT = "([selector, pattern]) => window.__harvester ? window.__harvester.highlight(selector, pattern) : null"
+# The links' outlines: the pattern as JavaScript reads it (patterns.js_regex) or, where it cannot,
+# the matches Python found (one per element, in their order).
+HIGHLIGHT = (
+    "([selector, pattern, hits]) => window.__harvester ? window.__harvester.highlight(selector, pattern, hits) : null"
+)
 MATCHES = "els => els.map(e => [e.href || '', (e.innerText || '').trim().slice(0, 80)])"
 FRAME_SELECTOR = (
     "el => window.__harvester && window.__harvester.frameSelector ? window.__harvester.frameSelector(el) : ''"
 )
 SET_MODE = "mode => window.__harvester && (window.__harvester.mode = mode)"
-# The messages that change the steps.
-STEP_EDITS = frozenset({"undo", "optional", "step-delete", "step-move", "step-edit", "record-at"})
-# How long after a click or a press a navigation of the page counts as its (s): a page that
-# reloads itself much later is none of the step's doing.
-NAVIGATION_SECONDS = 5
 # What recorder.js refuses to record, and why.
 REFUSED = {
     "file": "Files to upload cannot be recorded: a job has none of yours to upload. Leave the upload "
@@ -188,7 +195,8 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
 
     def __init__(self, send: Callable[[dict], Awaitable[None]]):
         self.send = send
-        self.events: list[dict] = []
+        # The steps: the form's, those edited, those recorded.
+        self.steps = StepList()
         self.start_url = ""
         self.follow: list[dict] = []
         self.links: dict = {}
@@ -196,16 +204,13 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         # Per picked level ("follow0", "links"): groups, examples, proposed file name and tags.
         self.proposals: dict[str, dict] = {}
         self.mode = "record"
-        # The steps before what is recorded now (the form's, and each edit's), and those after it.
-        self.steps: list[dict] = []
-        self.tail: list[dict] = []
         # Where the person acts now.
         self._where: dict | None = None
-        # The click or press just recorded, whose page may navigate (its address to wait for).
-        self._navigating: dict | None = None
         # The page that opened each popup, and the popups recorded as a step "popup".
         self._openers: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
         self._popups: weakref.WeakSet = weakref.WeakSet()
+        # Whether the page shown is where the recorded steps lead (no browsing since the last).
+        self._at_steps_end = False
         # The window's size: the page's, as the person makes the view larger or smaller.
         self.viewport = dict(VIEWPORT)
         self._playwright: Playwright | None = None
@@ -226,6 +231,7 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         self._trial_context: BrowserContext | None = None
         # The browser's connections all go through its guard (started with the browser).
         self._gate: Guard | None = None
+        self._proxy: dict | None = None
         self._loopback = ""
 
     @property
@@ -251,22 +257,15 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         except ValueError:
             return False
 
-    def all_steps(self, forms: bool = False) -> list[dict]:
-        """The steps: those before, the recorded ones and those after; with each fill's form (the
-        recorder's own) or without (the recipe's)."""
-        return steps_from_events(self.events, self.steps, self.tail, forms)
-
-    def _commit(self) -> None:
-        """The recorded events as steps, before an edit (which acts on steps)."""
-        steps = self.all_steps(forms=True)
-        point = len(steps) - len(self.tail)
-        self.steps, self.tail, self.events = steps[:point], steps[point:], []
-        self._navigating = None
+    @property
+    def events(self) -> list[dict]:
+        """What was recorded since the last edit of the steps."""
+        return self.steps.events
 
     @property
     def recipe(self) -> dict:
         """The recipe so far."""
-        recipe: dict = {"steps": self.all_steps(), "start": self.start_url, "follow": self.follow}
+        recipe: dict = {"steps": self.steps.all(), "start": self.start_url, "follow": self.follow}
         recipe["links"] = self.links
         if self.next:
             recipe["next"] = self.next
@@ -276,12 +275,20 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         """Starts the browser with an empty page, or with a job's session at a page of it (the one
         that asked for a person); http1 for the sites that cut HTTP/2 connections, home through
         the home connection."""
-        # The guard with the home connection, if chosen, and this browser's local exception.
-        self._gate = Guard(browser.PROXY if home else "")
-        self._gate.allow(self.loopback)
-        port = await asyncio.to_thread(self._gate.start)
+        # The guard (unless the admin switched it off) with the home connection, if chosen, and
+        # this browser's local exception; without one, the routes alone let that address through.
+        port = 0
+        if browser.GUARD:
+            self._gate = Guard(browser.PROXY if home else "")
+            self._gate.allow(self.loopback)
+            port = await asyncio.to_thread(self._gate.start)
         self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(**launch_options(port, http1))
+        credentials = self._gate.credentials if self._gate else None
+        options = launch_options(port, http1, home, credentials)
+        # The browser's way out (its guard, the home connection, or none), for asking which address
+        # sites see without the browser's cookies (_tell_address).
+        self._proxy = options.get("proxy")
+        self._browser = await self._playwright.chromium.launch(**options)
         self._context = await self._new_context(session)
         await self._context.expose_binding("__harvesterReport", self._report)
         await self._context.add_init_script(SCRIPT)
@@ -309,14 +316,22 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         """Tells the page which address sites see this browser come from, asked through the
         browser's own connection (its proxy, if any), and whether that is the proxy."""
         via = browser.PROXY_NAME if proxied else "directly"
+        # A request context of its own on the browser's way out: the context's own (context.request)
+        # shares the browser's cookies, and Cloudflare answers with one (__cf_bm), which would
+        # land in the person's recording and the job's kept session.
+        requests = None
         try:
-            assert self._context is not None
-            answer = await self._context.request.get(TRACE_URL, timeout=15000)
+            assert self._playwright is not None
+            requests = await self._playwright.request.new_context(proxy=self._proxy)  # type: ignore[arg-type]
+            answer = await requests.get(TRACE_URL, timeout=15000)
             seen = seen_address(await answer.text())
         except Exception as error:  # pylint: disable=broad-exception-caught
             text = (str(error) or type(error).__name__).splitlines()[0]
             await self.send({"type": "network", "via": via, "proxied": proxied, "error": text})
             return
+        finally:
+            if requests is not None:
+                await requests.dispose()
         await self.send({"type": "network", "via": via, "proxied": proxied, **seen})
 
     async def session(self) -> dict:
@@ -384,11 +399,10 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
             await self.send({"type": "url", "url": back.url})
 
     def _record(self, event: dict) -> None:
-        """A step's event, after the steps so far; a click or press may navigate the page."""
-        self.events.append(event)
-        self._navigating = event if event.get("action") in ("click", "press") else None
-        if self._navigating is not None:
-            self._navigating["at"] = time.monotonic()
+        """A step's event, after the steps so far: the page is where the steps lead now; a click or
+        press may navigate it (its address to wait for)."""
+        self.steps.record(event)
+        self._at_steps_end = True
 
     async def _show(self, page: Page) -> None:
         """Shows this page (the first, or a new tab or window the site opened). Once per page:
@@ -487,12 +501,13 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
 
     async def _navigated(self, frame) -> None:
         if self._page and frame == self._page.main_frame:
+            if self.mode != "record":
+                self._at_steps_end = False
             # A click or press just before: the address it led to (the last, after redirects).
-            step = self._navigating
-            if step is not None and time.monotonic() - step.get("at", 0) < NAVIGATION_SECONDS:
-                if await asyncio.to_thread(allowed_url, frame.url):
-                    step["navigated"] = frame.url
-                    await self._update()
+            step = self.steps.navigation()
+            if step is not None and await asyncio.to_thread(allowed_url, frame.url):
+                step["navigated"] = frame.url
+                await self._update()
             await self.send({"type": "url", "url": frame.url})
 
     async def _apply_mode(self) -> None:
@@ -505,7 +520,10 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
                 pass  # navigated meanwhile
 
     async def _update(self) -> None:
-        await self.send({"type": "recipe", "recipe": self.recipe, "proposals": self.proposals})
+        recipe = self.recipe
+        await self.send(
+            {"type": "recipe", "recipe": recipe, "proposals": self.proposals, "warnings": token_warnings(recipe)}
+        )
 
     def depth(self, url: str) -> int:
         """How deep the page is: 0 for the listing, n for a page the nth level's links lead to (a
@@ -565,9 +583,10 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
             await self._pick_next(event, level)
             return
         if level == 0:
-            self.start_url = url
-        proposal = patterns.propose([href for href, _ in event.get("matches", [])])
-        spec = {"selector": event["selector"], "pattern": proposal["pattern"]}
+            self.start_url = "" if self._starts_at_steps_end(url) else url
+        matches = event.get("matches", [])
+        proposal = patterns.propose([href for href, _ in matches], [text for _, text in matches])
+        spec = {"selector": event["selector"], "pattern": proposal["pattern"]} | self._alternatives(event)
         if target == "follow" and self.repick is not None and self.repick < len(self.follow):
             # Picked again: this level's links change, the levels after it stay.
             level, self.repick = self.repick, None
@@ -583,11 +602,24 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         self.proposals[key] = {**proposal, "level": level}
         await self._describe(key)
 
+    def _starts_at_steps_end(self, url: str) -> bool:
+        """Whether the listing picked on is better the page the steps end on than its address: the
+        steps lead there (they open a page, nothing browsed since) and the address carries a token
+        of this visit (a sign-in's ?code=, say), spent when the job runs."""
+        opens = any(step.get("action") == "goto" for step in self.steps.all())
+        return self._at_steps_end and opens and bool(patterns.token_parameters(url))
+
+    @staticmethod
+    def _alternatives(event: dict) -> dict:
+        """The pick's alternative selectors recorder.js found, if any."""
+        alternatives = [str(value) for value in event.get("alternatives") or [] if value]
+        return {"alternatives": alternatives} if alternatives else {}
+
     async def _pick_next(self, event: dict, level: int) -> None:
         """The next page's link picked: the link itself, or, when it is a number among numbers
         (recorder.js found their container), numbered pages (harvester.pagination), proposed
         with what this page shows: its number and the next one's."""
-        link = {"selector": event["selector"], "level": level}
+        link = {"selector": event["selector"], "level": level} | self._alternatives(event)
         container = str((event.get("numbered") or {}).get("selector") or "")
         if not container:
             self.next = link
@@ -611,7 +643,7 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
             "current": current,
             "following": following[0] if following else None,
         }
-        await self._page.evaluate(HIGHLIGHT, [container, ""])
+        await self._page.evaluate(HIGHLIGHT, [container, None, None])
         await self._update()
 
     def _remember(self) -> None:
@@ -662,17 +694,21 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         level = int(message.get("level", 0) or 0)
         if not selector:
             return
+        # The alternatives found the picked links: another selector is the person's own.
         if target == "next" and self.next:
             self._remember()
             self.next["selector"] = selector
+            self.next.pop("alternatives", None)
             await self._update()
         elif target == "links" and self.links:
             self._remember()
             self.links["selector"] = selector
+            self.links.pop("alternatives", None)
             await self._describe("links")
         elif target == "follow" and 0 <= level < len(self.follow):
             self._remember()
             self.follow[level]["selector"] = selector
+            self.follow[level].pop("alternatives", None)
             await self._describe(f"follow{level}")
 
     async def _next_kind(self, kind: object) -> None:
@@ -689,9 +725,7 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         or record more after, and its picks, to change, remove or keep."""
         if not isinstance(recipe, dict):
             return
-        steps = recipe.get("steps")
-        if isinstance(steps, list) and all(isinstance(step, dict) for step in steps):
-            self.steps, self.tail, self.events = copy.deepcopy(steps), [], []
+        self.steps.load(recipe.get("steps"))
         follow = recipe.get("follow")
         if isinstance(follow, list) and all(isinstance(spec, dict) and spec.get("selector") for spec in follow):
             self.follow = copy.deepcopy(follow)
@@ -707,7 +741,7 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         page = self._page
         assert page is not None
         before = page.url
-        self._navigating = None
+        self.steps.navigating = None
         if kind == "reload":
             await page.reload(wait_until="domcontentloaded")
             return
@@ -839,10 +873,13 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         matching = sum(1 for match in matches if match)
         proposal.update(error="", examples=examples, matching=matching, found=len(found), pattern=pattern.pattern)
         proposal["groups"] = list(pattern.groupindex)
+        # JavaScript outlines by the pattern where it reads it as Python does, else by Python's
+        # matches (a page that changed meanwhile may then be outlined slightly off).
+        hits = [bool(match) for match in matches]
         try:
-            await page.evaluate(HIGHLIGHT, [spec["selector"], spec.get("pattern", "")])
+            await page.evaluate(HIGHLIGHT, [spec["selector"], patterns.js_regex(pattern.pattern), hits])
         except Exception:  # pylint: disable=broad-exception-caught
-            pass  # a pattern JavaScript reads otherwise only outlines nothing
+            pass  # the page navigated meanwhile
         await self._update()
 
     async def handle(self, message: dict) -> None:  # pylint: disable=too-many-branches
@@ -867,17 +904,7 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
             await page.goto(url, wait_until="domcontentloaded")
             await self._update()
         elif kind == "mouse":
-            try:
-                await page.mouse.move(float(message["x"]), float(message["y"]))
-                if message.get("event") in ("down", "up"):
-                    button = message.get("button", "left")
-                    await getattr(page.mouse, message["event"])(
-                        button=button if button in ("left", "right") else "left"
-                    )
-            except PlaywrightError:
-                # A click that closed its page (a popup's last button): its opener is shown now.
-                if not page.is_closed():
-                    raise
+            await self._mouse(page, message)
         elif kind == "wheel":
             await page.mouse.wheel(float(message.get("dx", 0)), float(message.get("dy", 0)))
         elif kind == "key":
@@ -897,8 +924,9 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
             await self._apply_mode()
         elif kind == "pattern":
             await self._edit_pattern(message)
-        elif kind in STEP_EDITS:
-            await self._edit_steps(kind, message)
+        elif kind in EDITS:
+            if self.steps.edit(kind, message):
+                await self._update()
         elif kind in ("back", "forward", "reload"):
             await self._navigate(kind)
         elif kind in jar.COMMANDS and self._context is not None:
@@ -907,6 +935,19 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
                 await self.send(answer)
         else:
             await self._handle_picks(kind, message)
+
+    @staticmethod
+    async def _mouse(page: Page, message: dict) -> None:
+        """The person's mouse on the page: a move, a button down or up."""
+        try:
+            await page.mouse.move(float(message["x"]), float(message["y"]))
+            if message.get("event") in ("down", "up"):
+                button = message.get("button", "left")
+                await getattr(page.mouse, message["event"])(button=button if button in ("left", "right") else "left")
+        except PlaywrightError:
+            # A click that closed its page (a popup's last button): its opener is shown now.
+            if not page.is_closed():
+                raise
 
     async def _handle_picks(self, kind: object, message: dict) -> None:
         """The page's messages about the picks and the recipe."""
@@ -941,44 +982,8 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         elif kind == "clear":
             self._remember()
             self.start_url, self.follow, self.links, self.next, self.proposals = "", [], {}, {}, {}
-            await page.evaluate(HIGHLIGHT, ["", ""])
+            await page.evaluate(HIGHLIGHT, ["", None, None])
             await self._update()
-
-    async def _edit_steps(self, kind: str, message: dict) -> None:
-        """Undo (the last event, else the last step before the new ones), and the Steps list's edits:
-        a step removed, moved, changed (optional, what a fill fills in, its value, its wait), and
-        where new steps go (record-at)."""
-        if kind == "undo":
-            if self.events:
-                self.events.pop()
-            elif self.steps:
-                self.steps.pop()
-            await self._update()
-            return
-        self._commit()
-        steps, point = self.steps + self.tail, len(self.steps)
-        if kind == "record-at":
-            after = message.get("after")
-            if isinstance(after, int) and not isinstance(after, bool) and 0 <= after <= len(steps):
-                self.steps, self.tail = steps[:after], [] if message.get("replace") else steps[after:]
-                await self._update()
-            return
-        index = message.get("step")
-        if not isinstance(index, int) or isinstance(index, bool) or not 0 <= index < len(steps):
-            return
-        if kind == "step-delete":
-            del steps[index]
-            if index < point:
-                point -= 1
-        elif kind == "step-move":
-            other = index + (1 if message.get("by") == 1 else -1)
-            if not 0 <= other < len(steps):
-                return
-            steps[index], steps[other] = steps[other], steps[index]
-        else:
-            edit_step(steps[index], message)
-        self.steps, self.tail = steps[:point], steps[point:]
-        await self._update()
 
     async def _edit_pattern(self, message: dict) -> None:
         """Takes the person's pattern for a level and shows what it matches."""
