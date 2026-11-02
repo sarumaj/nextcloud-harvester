@@ -224,7 +224,8 @@ def test_gitlab_projects_in_groups_with_their_asset_links():
     assert [item.path for item in items] == ["v2.0.0/tool-2.0.0.tar.gz"], "the archives of the sources left out"
     assert items[0].url.endswith("/downloads/tool.tar.gz") and items[0].values["year"] == 2026
     assert gitlab.forge == "gitlab", "an unknown server: Forgejo's API asked first, then GitLab's"
-    assert headers[-1].get("private-token") == "glpat-secret" and "authorization" not in headers[-1]
+    # As Authorization, which httpx drops on a redirect to another host (PRIVATE-TOKEN it keeps).
+    assert headers[-1].get("authorization") == "Bearer glpat-secret" and "private-token" not in headers[-1]
 
 
 def test_gitlab_com_and_codeberg_are_known_by_their_names():

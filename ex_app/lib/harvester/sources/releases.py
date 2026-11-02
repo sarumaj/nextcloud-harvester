@@ -150,10 +150,11 @@ class Releases(Source):
         if self.github:
             headers["X-GitHub-Api-Version"] = "2022-11-28"
         if self.token:
-            if self.forge == "gitlab":
-                headers["PRIVATE-TOKEN"] = self.token
-            else:
-                headers["Authorization"] = f"Bearer {self.token}" if self.github else f"token {self.token}"
+            # GitLab's too as Authorization (it takes a Bearer token), never as PRIVATE-TOKEN:
+            # httpx drops Authorization when a redirect leaves the host, a header of its own not
+            # (a release's link redirects to wherever its maintainer points it).
+            bearer = self.github or self.forge == "gitlab"
+            headers["Authorization"] = f"Bearer {self.token}" if bearer else f"token {self.token}"
         return headers
 
     def resolve(self) -> httpx.Response | None:
@@ -261,7 +262,6 @@ class Releases(Source):
         # The token goes to the forge only, not to where a download link redirects (a storage host).
         if not (api_asset or urlparse(url).hostname == self.host):
             headers.pop("Authorization", None)
-            headers.pop("PRIVATE-TOKEN", None)
         return download.http(WithHeaders(self.client, headers))(url)
 
     def fetch(self, item: Item, dest: BinaryIO) -> None:
