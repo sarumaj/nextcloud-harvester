@@ -122,6 +122,25 @@
 		return svg
 	}
 
+	// A file for the person to keep, made here (a recipe file): the browser saves it.
+	function download(name, text) {
+		const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }))
+		const link = el('a', { href: url, download: name })
+		document.body.append(link)
+		link.click()
+		link.remove()
+		setTimeout(() => URL.revokeObjectURL(url), 1000)
+	}
+
+	// The largest recipe file the server reads (recipe_file.MAX_BYTES): a larger one is no recipe.
+	const RECIPE_FILE_BYTES = 256000
+
+	// A job's form filled from a recipe file's text (an imported file, or a template of the
+	// person's): the server checks it as Save would, and nothing is saved until Save.
+	async function fromRecipe(root, text) {
+		renderForm(root, null, await api('POST', '/recipes/import', { text }))
+	}
+
 	function when(timestamp) {
 		return timestamp ? new Date(timestamp * 1000).toLocaleString() : 'never'
 	}
@@ -151,6 +170,10 @@
 		if (step.action === 'scroll') return `Scroll to load more${step.rounds ? ` (at most ${step.rounds} times)` : ''}`
 		if (step.action === 'click') return `Click ${step.text ? `“${step.text}”` : step.selector}`
 		if (step.action === 'press') return `Press ${step.key} in ${step.selector}`
+		if (step.action === 'mail-code') {
+			const of = [step.from ? `from ${step.from}` : '', step.subject ? `subject ${step.subject}` : ''].filter(Boolean).join(', ')
+			return `Type the code from e-mail${of ? ` (${of})` : ''} into ${step.selector}`
+		}
 		if (step.credential === 'totp') return `Fill in the current one-time code (${step.selector})`
 		if (step.credential) return `Fill in the account's ${step.credential} (${step.selector})`
 		return `Fill in “${step.value}” (${step.selector})`
@@ -188,7 +211,7 @@
 		const body = el('tbody', {})
 		for (const job of jobs) {
 			const state = job.running ? (job.paused ? 'held' : 'running') : job.queued ? 'queued' : job.last_status || 'never'
-			const label = { running: 'Running', held: 'Paused', queued: 'Queued', ok: 'OK', failed: 'Failed', auth: 'Sign-in refused', challenge: 'Needs you', never: 'Not run yet' }[state] || state
+			const label = { running: 'Running', held: 'Paused', queued: 'Queued', ok: 'OK', failed: 'Failed', auth: 'Sign-in refused', challenge: 'Needs you', changed: 'Changed', never: 'Not run yet' }[state] || state
 			body.append(el('tr', {},
 				el('td', { class: 'harvester-with-icon', title: (sources.find((x) => x.name === job.source) || {}).title || job.source },
 					icon(job.source), el('strong', { text: job.name }),
@@ -213,6 +236,9 @@
 					fetchList(job, act)),
 				el('td', { class: 'harvester-actions' },
 					state === 'challenge' ? el('button', { class: 'primary', text: 'Continue in the browser', onclick: () => openSession(root, job) }) : '',
+					// The site seems to have changed: its recipe walked again, without downloads
+					// (the progress log tells what each level found); or picked anew in its form.
+					state === 'changed' ? el('button', { class: 'primary', text: 'Test the recipe', title: 'Walk the recipe as a run would, downloading nothing: the progress log says what each level finds', onclick: act(job, '/test') }) : '',
 					// While it runs: pause (or resume) and stop instead of Run now; a stopped run
 					// keeps what it saved, and the next run goes on from there.
 					...(job.running
@@ -481,16 +507,87 @@
 			el('h3', { class: 'harvester-with-icon' }, icon(source.name), el('span', { text: source.title })),
 			el('p', { class: 'harvester-muted', text: source.description }),
 			el('button', { class: 'primary', text: 'Start', onclick: () => renderForm(root, null, { ...BLANK, source: source.name }) })))
+		// A recipe file (Export recipe in a job's form): read here, checked by the server.
+		const file = el('input', { type: 'file', accept: '.json,application/json', 'aria-label': 'Recipe file' })
+		file.addEventListener('change', async () => {
+			error.textContent = ''
+			const chosenFile = file.files[0]
+			if (!chosenFile) return
+			if (chosenFile.size > RECIPE_FILE_BYTES) {
+				error.textContent = `The file is larger than a recipe (${RECIPE_FILE_BYTES / 1000} KB at most).`
+				file.value = ''
+				return
+			}
+			try {
+				await fromRecipe(root, await chosenFile.text())
+			} catch (e) {
+				error.textContent = e.message
+				file.value = ''
+			}
+		})
+		const importCard = el('div', { class: 'harvester-card harvester-import' },
+			el('h3', { text: 'Import a recipe' }),
+			el('p', { class: 'harvester-muted', text: 'A recipe file (Export recipe in a job’s form): the job’s form opens filled in, to choose the folder and the account; nothing is saved until Save.' }),
+			file)
+		// The person's own templates (Save as template in a job's form), each to use or remove.
+		const own = el('div', { class: 'harvester-own-templates' })
 		root.replaceChildren(
 			el('div', { class: 'harvester-header' },
 				el('div', {}, el('h2', { text: 'New job' }), el('p', { class: 'harvester-muted', text: 'What should the job fetch?' })),
 				el('button', { text: 'Back to the jobs', onclick: () => show(root) })),
 			el('div', { class: 'harvester-kinds' }, ...kinds),
+			importCard,
+			own,
 			cards.length ? el('h3', { text: 'Templates for known sites' }) : '',
 			...cards, error)
+		ownTemplates(root, own, error)
 		// The button that opened this view is gone: the keyboard goes on from the first choice.
 		const first = root.querySelector('.harvester-kind button')
 		if (first) first.focus()
+	}
+
+	// The person's own templates on the New job page: Use opens the form filled in (checked as an
+	// imported file is), Remove forgets the template.
+	async function ownTemplates(root, container, error) {
+		let templates = []
+		try {
+			templates = await api('GET', '/templates')
+		} catch (e) {
+			error.textContent = `Your templates could not be read: ${e.message}`
+			return
+		}
+		container.replaceChildren()
+		if (!templates.length) return
+		container.replaceChildren(el('h3', { text: 'Your templates' }), ...templates.map((template) => el('div', { class: 'harvester-card harvester-own-template' },
+			el('h3', { class: 'harvester-with-icon' }, icon(template.file.source), el('span', { text: template.name })),
+			el('p', { class: 'harvester-muted', text: (sources.find((s) => s.name === template.file.source) || {}).title || template.file.source }),
+			el('button', {
+				class: 'primary',
+				text: 'Use this template',
+				onclick: async () => {
+					error.textContent = ''
+					try {
+						await fromRecipe(root, JSON.stringify(template.file))
+					} catch (e) {
+						error.textContent = e.message
+					}
+				},
+			}),
+			el('button', {
+				class: 'error',
+				text: 'Remove',
+				'aria-label': `Remove the template ${template.name}`,
+				onclick: async () => {
+					if (!confirm(`Remove the template ${template.name}?`)) return
+					try {
+						await api('DELETE', `/templates/${template.id}`)
+					} catch (e) {
+						error.textContent = e.message
+						return
+					}
+					ownTemplates(root, container, error)
+				},
+			}))))
 	}
 
 	// What a source's account is for, above its fields (each field says what it is used for).
@@ -526,7 +623,7 @@
 			// Several lines (rclone's configuration, cookies) in a text area; secrets hidden.
 			const placeholder = stored[name] ? '(stored, leave empty to keep)' : ''
 			const [title, help] = (source.credential_help || {})[name] || [name, '']
-			inputs[name] = ['config', 'cookies'].includes(name)
+			inputs[name] = ['config', 'cookies', 'code_mailbox'].includes(name)
 				? el('textarea', { rows: '6', class: 'harvester-recipe', placeholder, autocomplete: 'off', spellcheck: 'false', 'data-credential': name })
 				: el('input', {
 					type: ['password', 'token', 'secret', 'totp', 'client_secret', 'refresh_token'].includes(name) ? 'password' : 'text',
@@ -769,17 +866,21 @@
 	}
 
 	// One pick in the recorder's panel (a level of links to follow, the file links, the next
-	// page): its element (a CSS selector) and its pattern, both editable, what it matches on the
-	// page, examples with their values, the proposed file name and tags; and the same controls for
-	// each: Pick again (repick) and Remove.
+	// page): its element (a selector, with the alternatives a job tries when it finds nothing) and
+	// its pattern, both editable, what it matches on the page, examples with their values, the
+	// proposed file name and tags; and the same controls for each: Pick again (repick) and Remove.
 	function renderLevel(title, spec, proposal, send, target, level, suggestions, repick) {
+		if (target === 'links' && spec.kind === 'json') return renderJson(title, spec, proposal, send)
 		const selector = el('input', { class: 'harvester-pattern', value: spec.selector || '', spellcheck: 'false' })
 		selector.addEventListener('change', () => send({ type: 'selector', target, level, selector: selector.value }))
 		const box = el('div', { class: 'harvester-level', 'data-target': target, 'data-level': String(level) },
 			el('div', { class: 'harvester-level-head' }, el('h4', { text: title }),
 				el('button', { type: 'button', text: 'Pick again', title: 'Pick this on the page again (in its picking mode)', onclick: () => repick(target, level) }),
 				el('button', { type: 'button', class: 'error', text: 'Remove', title: target === 'follow' ? 'Remove this level (the levels after it move up)' : 'Remove this pick', onclick: () => send({ type: 'remove', target, level }) })),
-			field(target === 'next' && spec.kind === 'number' ? 'The numbers’ container (CSS selector)' : 'Element (CSS selector)', selector))
+			field(target === 'next' && spec.kind === 'number' ? 'The numbers’ container (CSS selector)' : 'Element (selector)', selector))
+		if (spec.alternatives && spec.alternatives.length) {
+			box.append(el('p', { class: 'harvester-muted', text: `Alternatives, tried in this order when it finds nothing: ${spec.alternatives.join('  ·  ')}` }))
+		}
 		if (target === 'next') return renderNext(box, spec, proposal, send)
 		const pattern = el('input', { class: 'harvester-pattern', value: spec.pattern || '', spellcheck: 'false' })
 		pattern.addEventListener('change', () => send({ type: 'pattern', target, level, pattern: pattern.value }))
@@ -787,16 +888,103 @@
 		if (!proposal) return box
 		if (proposal.error) box.append(el('p', { class: 'harvester-error', text: proposal.error }))
 		box.append(el('p', { text: `On this page: ${proposal.matching} of ${proposal.found} links match (solid outline; dashed: left out).` }))
-		box.append(el('ul', {}, ...(proposal.examples || []).map((example) => el('li', {},
-			el('span', { text: example.text || example.url }), ' ',
-			...Object.entries(example.values).map(([k, v]) => el('span', { class: 'harvester-value', text: `${k}=${v}` }))))))
+		box.append(examplesList(proposal))
+		box.append(renderValues(spec, send, target, level, false),
+			el('button', { type: 'button', text: 'Pick a value', title: 'Click a text near one of these links (a date, a title in its row or card): a value for file names and tags', onclick: () => repick(target, level, 'value') }))
 		if (target === 'links' && proposal.path) {
 			const use = (label, apply) => el('button', { type: 'button', text: label, onclick: (e) => { apply(); e.target.textContent = '✔ will be used' } })
 			box.append(el('p', { text: `Proposed file name: ${proposal.path}` }), use('Use it', () => { suggestions.path = proposal.path }))
+			// The same script serves all the files (download.php?id=N): the name the server gives
+			// each file is likely the better one.
+			if (proposal.generic) {
+				box.append(el('p', { class: 'harvester-muted', text: 'The links all have the same name: the name the server gives each file ({disposition}) may be better.' }),
+					use('Use {disposition}', () => { suggestions.path = proposal.path.replace(/[^/]*$/, '{disposition}') }))
+			}
 			if (proposal.tags.length) {
 				box.append(el('p', { text: `Proposed tags: ${proposal.tags.join(', ')}` }), use('Use them', () => { suggestions.tags = proposal.tags }))
 			}
 		}
+		return box
+	}
+
+	// The examples of a pick: each link's text and its values (the pattern's and the page's).
+	function examplesList(proposal) {
+		return el('ul', {}, ...(proposal.examples || []).map((example) => el('li', {},
+			el('span', { text: example.text || example.url }), ' ',
+			...Object.entries(example.values).map(([k, v]) => el('span', { class: 'harvester-value', text: `${k}=${v}` })))))
+	}
+
+	// Where a value of the page is read, in words: in the link, or in its row or card.
+	function valueWhere(value) {
+		const where = value.closest ? `in its ${value.closest}` : 'in the link'
+		return `${where}${value.selector ? ` › ${value.selector}` : ''}: ${value.attribute ? `attribute ${value.attribute}` : 'its text'}`
+	}
+
+	// A level's values from the page (or a JSON item's fields): name, type, where (the field),
+	// the pattern on the text; each changed or removed. The examples above show what they give.
+	function renderValues(spec, send, target, level, json) {
+		const values = spec.values || []
+		const rows = values.map((value, index) => {
+			const change = (changes) => send({ type: 'value', target, level, index, changes })
+			const input = (key, label) => {
+				const box = el('input', { class: 'harvester-pattern', value: value[key] || '', spellcheck: 'false', 'aria-label': label, title: label, placeholder: label })
+				box.addEventListener('change', () => change({ [key]: box.value }))
+				return box
+			}
+			const kind = el('select', { 'aria-label': 'Type' }, ...['text', 'number', 'date'].map((type) => {
+				const option = el('option', { value: type, text: type === 'date' ? 'date (year, month, day)' : type })
+				option.selected = (value.type || 'text') === type
+				return option
+			}))
+			kind.addEventListener('change', () => change({ type: kind.value }))
+			return el('li', {},
+				input('name', 'Name'), ' ', kind, ' ',
+				json ? input('field', 'Field of the item, e.g. issued') : el('small', { class: 'harvester-muted', text: valueWhere(value) }),
+				field('Pattern on its text (empty: all of it)', input('regex', 'Pattern')),
+				el('button', { type: 'button', class: 'error', text: 'Remove', onclick: () => send({ type: 'value-remove', target, level, index }) }))
+		})
+		if (!rows.length) return el('p', { class: 'harvester-muted', text: json ? 'Values: none from the items’ fields.' : 'Values from the page: none (Pick a value).' })
+		return el('div', { class: 'harvester-page-values' }, el('h5', { text: json ? 'Values from the items’ fields' : 'Values from the page' }), el('ul', {}, ...rows))
+	}
+
+	// File links from a JSON listing (chosen in the Network panel): the request's address, the
+	// path to its items, an item's fields for the file's address and text, the page parameter;
+	// what the answer gives with them.
+	function renderJson(title, spec, proposal, send) {
+		const input = (key, label, help) => {
+			const box = el('input', { class: 'harvester-pattern', value: spec[key] || '', spellcheck: 'false' })
+			box.addEventListener('change', () => send({ type: 'json-edit', changes: { [key]: box.value } }))
+			return field(label, box, help)
+		}
+		const page = spec.page || {}
+		const param = el('input', { class: 'harvester-pattern', value: page.param || '', spellcheck: 'false', 'aria-label': 'Page parameter', placeholder: 'page' })
+		const first = el('input', { type: 'number', min: '0', value: String(page.first ?? 1), 'aria-label': 'First value' })
+		const step = el('input', { type: 'number', min: '1', value: String(page.step ?? 1), 'aria-label': 'Step' })
+		const pages = () => send({ type: 'json-edit', changes: { page: param.value.trim() ? { param: param.value.trim(), first: Number(first.value || 0), step: Number(step.value || 1) } : null } })
+		for (const box of [param, first, step]) box.addEventListener('change', pages)
+		const fieldName = el('input', { class: 'harvester-pattern', spellcheck: 'false', 'aria-label': 'Field', placeholder: 'e.g. issued or meta.date' })
+		const box = el('div', { class: 'harvester-level', 'data-target': 'links', 'data-level': '0' },
+			el('div', { class: 'harvester-level-head' }, el('h4', { text: `${title} (JSON)` }),
+				el('button', { type: 'button', class: 'error', text: 'Remove', title: 'Remove this pick', onclick: () => send({ type: 'remove', target: 'links', level: 0 }) })),
+			el('p', { class: 'harvester-muted', text: 'The files are the items of an answer the page fetched: the job asks for it itself (with its cookies), page by page.' }),
+			input('url', 'Request', 'Its page parameter is set for each page; {year} and the like take the levels’ values.'),
+			input('items', 'Items (path in the answer, e.g. data.items)'),
+			input('file', 'File’s address (field of an item, e.g. pdf.href)'),
+			input('text', 'Text (field of an item, e.g. title)'),
+			input('pattern', 'Pattern on the file’s address (optional; named groups become values)'),
+			el('div', { class: 'harvester-toolbar' }, el('span', { text: 'Pages: parameter ' }), param, el('span', { text: ' from ' }), first, el('span', { text: ' step ' }), step))
+		if (proposal && proposal.error) box.append(el('p', { class: 'harvester-error', text: proposal.error }))
+		if (proposal && proposal.chosen) {
+			box.append(el('p', { text: `In the answer: ${proposal.items} items, ${proposal.found} with a file’s address; ${proposal.matching} match the pattern.${proposal.following ? ' The next page:' : ' One page (no page parameter).'}` }))
+			if (proposal.following) box.append(el('code', { text: proposal.following }))
+			if (proposal.sample) box.append(el('details', {}, el('summary', { text: 'The first item' }), el('code', { text: proposal.sample })))
+			box.append(examplesList(proposal))
+		} else {
+			box.append(el('p', { class: 'harvester-muted', text: 'Choose its answer in the Network panel again to see what it gives.' }))
+		}
+		box.append(renderValues(spec, send, 'links', 0, true),
+			el('div', { class: 'harvester-toolbar' }, fieldName,
+				el('button', { type: 'button', text: 'Add a value', onclick: () => { if (fieldName.value.trim()) send({ type: 'value-add', target: 'links', level: 0, field: fieldName.value.trim() }) } })))
 		return box
 	}
 
@@ -835,6 +1023,13 @@
 		const box = el('div', { class: 'harvester-test', 'aria-live': 'polite' },
 			el('h3', { text: 'Test' }),
 			el('p', { text: `${result.files} file links on ${result.pages.length} pages. ${ended}` }))
+		if (result.as_job) box.append(el('p', { class: 'harvester-muted', text: 'As the job runs: a new browser with the job’s stored account, in the recipe’s window.' }))
+		if (result.probe) {
+			const probe = result.probe
+			box.append(probe.ok
+				? el('p', { text: `The first file’s first ${Math.round(probe.bytes / 1000)} KB: ${probe.type || 'no type given'}, of the job’s file types.` })
+				: el('p', { class: 'harvester-error' }, el('span', { text: `The first file: ${probe.problem} ` }), el('code', { text: probe.address || probe.url })))
+		}
 		if (result.http) box.append(el('p', { class: 'harvester-muted', text: 'The job reads these pages without the browser (no steps): a page built by JavaScript may show it fewer links than here. Turn on “Use the browser” then.' }))
 		if (result.problems.length) box.append(el('ul', { class: 'harvester-error' }, ...result.problems.map((problem) => el('li', { text: problem }))))
 		// Optional steps it went on without: no problems of the recipe, but worth knowing.
@@ -843,6 +1038,13 @@
 			box.append(el('div', { class: 'harvester-skipped' },
 				el('p', { class: 'harvester-muted', text: 'Optional steps skipped:' }),
 				el('ul', {}, ...skipped.map((step) => el('li', { class: 'harvester-muted', text: `step ${step.number} (${step.label}): ${step.why}` })))))
+		}
+		// Elements an alternative selector found: the recipe still works, but the site changed.
+		const repaired = result.repaired || []
+		if (repaired.length) {
+			box.append(el('div', { class: 'harvester-repaired' },
+				el('p', { class: 'harvester-muted', text: 'Found by an alternative selector (the recipe is unchanged):' }),
+				el('ul', {}, ...repaired.map((line) => el('li', { class: 'harvester-muted', text: line })))))
 		}
 		box.append(el('ol', { class: 'harvester-test-pages' }, ...result.pages.map((page) => el('li', {},
 			el('span', { text: `${page.level === 0 ? 'Listing' : `Level ${page.level}`}, page ${page.page}: ${page.matching} of ${page.found} ${page.kind === 'follow' ? 'links to follow' : 'file links'} ` }),
@@ -1292,15 +1494,20 @@
 	}
 
 	// The recorder: the browser's screen, the person's mouse and keys to it, and the recipe so far;
-	// settings() gives the form's settings the recipe's test uses (the file names, the pages).
-	function openRecorder(root, page, textarea, apply, settings = () => ({})) {
+	// settings() gives the form's settings the recipe's test uses (the file names, the pages, the
+	// file types), jobId() the saved job's id (the test as the job runs uses its account).
+	function openRecorder(root, page, textarea, apply, settings = () => ({}), jobId = () => null) {
 		let recipe = {}
 		try {
 			recipe = JSON.parse(textarea.value || '{}')
 		} catch (e) {}
 		let proposals = {}
+		// The recorder's warnings of addresses with a token of this visit (spent when the job runs).
+		let warnings = []
 		let testing = false
 		let tested = null
+		// The page's answers in JSON (the Network panel).
+		let requests = []
 		const suggestions = {}
 		// The form's "HTTP/1.1 only", known before the browser starts.
 		const http1 = page.querySelector('[data-option="http1"]')
@@ -1346,9 +1553,10 @@
 		})
 		const radios = {}
 		const labels = [['record', 'Record steps'], ['browse', 'Browse'], ['follow', 'Pick links to follow'], ['links', 'Pick file links'], ['next', 'Pick next-page link']]
-		const choose = (mode, text, level) => {
-			radios[mode].checked = true
-			send(level === undefined ? { type: 'mode', mode } : { type: 'mode', mode, level })
+		const choose = (mode, text, level, target) => {
+			// Picking a value has no radio of its own: it is a level's, started from its box.
+			for (const [name, radio] of Object.entries(radios)) radio.checked = name === mode
+			send(level === undefined ? { type: 'mode', mode } : { type: 'mode', mode, level, target })
 			modeHelp.textContent = text || help[mode]
 			scroll.disabled = mode !== 'record'
 			screen.focusKeys()
@@ -1361,8 +1569,11 @@
 			modes.append(el('label', {}, radio, ` ${label} `))
 		}
 		// Pick again: the pick's mode; a level's links replace that level's, the later ones stay.
-		const repick = (target, level) => {
-			if (target === 'follow') {
+		const repick = (target, level, mode) => {
+			if (mode === 'value') {
+				const which = target === 'links' ? 'the file links' : `the links of level ${level + 1}`
+				choose('value', `Click a text near one of ${which} (outlined): in a link, or in its row or card. It becomes a value (a date, a title); click more for more.`, level, target)
+			} else if (target === 'follow') {
 				const where = level === 0 ? 'the listing' : `a page of level ${level}`
 				choose('follow', `Go to ${where} (Browse) and click one of the links to follow: they replace level ${level + 1}’s.`, level)
 			} else choose(target)
@@ -1370,10 +1581,36 @@
 		const test = el('button', {
 			type: 'button',
 			text: 'Test the recipe',
-			title: 'Run the recipe as the job would, here, without downloading: the pages, the file links and their names',
+			title: 'Walk the recipe here with this browser’s session, without downloading: the pages, the file links and their names',
 			onclick: () => {
 				if (testing) send({ type: 'test-stop' })
 				else send({ type: 'test', recipe, settings: settings() })
+			},
+		})
+		// As the job runs: a new browser at the recipe's window, the saved job's account (the app
+		// adds it; this page never has it), the first file's first bytes fetched.
+		const testJob = el('button', {
+			type: 'button',
+			text: 'Test as the job runs',
+			title: jobId() ? 'A new browser with the job’s stored account and window: the sign-in replayed, the first file’s start fetched' : 'Save the job first: this test signs in with its stored account',
+			onclick: () => send({ type: 'test', recipe, settings: settings(), as_job: true, job: jobId() }),
+		})
+		testJob.disabled = !jobId()
+		const networkBox = el('div', { class: 'harvester-requests', hidden: '' })
+		const renderRequests = () => networkBox.replaceChildren(
+			el('p', { class: 'harvester-muted', text: requests.length ? 'The page’s requests answered with JSON (newest last). One whose items are the files can be the file links.' : 'No answers in JSON yet: browse the listing, its requests show here.' }),
+			el('ul', {}, ...requests.map((request) => el('li', {},
+				el('code', { text: request.url }), ` ${(request.size / 1000).toFixed(1)} KB (${request.status}) `,
+				el('button', { type: 'button', text: 'Use as the file links', onclick: () => send({ type: 'json-pick', id: request.id }) })))))
+		const networkButton = el('button', {
+			type: 'button',
+			text: 'Network',
+			title: 'The answers in JSON to the page’s requests (XHR, fetch): a listing a page builds from one',
+			'aria-expanded': 'false',
+			onclick: () => {
+				networkBox.hidden = !networkBox.hidden
+				networkButton.setAttribute('aria-expanded', String(!networkBox.hidden))
+				renderRequests()
 			},
 		})
 
@@ -1392,29 +1629,60 @@
 			box.addEventListener('change', () => toggle(box.checked))
 			return el('li', { class: step.frame && step.frame.length ? 'harvester-framed' : '' },
 				el('span', { text: `${describe(step)} ` }),
+				mailCode(step, index),
 				el('label', { title: 'Best effort: when it fails (not there, not visible), the job waits a few seconds at most and goes on without it' }, box, ' optional'),
 				!step.optional && looksLikeConsent(step)
 					? el('button', { type: 'button', class: 'harvester-link harvester-hint', text: 'make optional?', title: 'A consent banner often shows only on the first visit', onclick: () => toggle(true) })
 					: '')
 		}
 
+		// A code typed into a field (a one-time code's, or digits) may come by e-mail instead: the
+		// job then waits for the message in the account's mailbox for codes and types its code.
+		function mailCode(step, index) {
+			const code = step.action === 'mail-code'
+			if (!code && !(step.action === 'fill' && (step.credential === 'totp' || /^\d{4,8}$/.test(String(step.value || ''))))) return ''
+			const from = el('input', { class: 'harvester-pattern', value: step.from || '', placeholder: 'Sender, e.g. no-reply@shop\\.example', 'aria-label': 'Sender (a pattern)' })
+			const subject = el('input', { class: 'harvester-pattern', value: step.subject || '', placeholder: 'Subject, e.g. code|Code', 'aria-label': 'Subject (a pattern)' })
+			const use = (on) => {
+				if (on) {
+					Object.assign(step, { action: 'mail-code', from: from.value, subject: subject.value })
+					delete step.credential
+					delete step.value
+				} else {
+					step.action = 'fill'
+					step.credential = 'totp'
+					for (const key of ['from', 'subject', 'regex', 'wait']) delete step[key]
+				}
+				send(on ? { type: 'mail-code', step: index, from: from.value, subject: subject.value } : { type: 'mail-code', step: index, off: true })
+				renderPanel()
+			}
+			return el('details', code ? { class: 'harvester-mail-code', open: '' } : { class: 'harvester-mail-code' },
+				el('summary', { text: code ? 'code from e-mail' : 'code from e-mail?' }),
+				el('small', { class: 'harvester-muted', text: 'The job waits up to 3 minutes for a new message of this sender and subject in the account’s mailbox for codes, and types its code (the first number of 6 to 8 digits).' }),
+				field('Sender (pattern)', from), field('Subject (pattern)', subject),
+				el('button', { type: 'button', text: code ? 'Change' : 'Use the code from e-mail', onclick: () => use(true) }),
+				code ? el('button', { type: 'button', text: 'Back to a one-time code', onclick: () => use(false) }) : '')
+		}
+
 		function renderPanel() {
 			test.textContent = testing ? 'Stop the test' : 'Test the recipe'
+			testJob.hidden = testing
 			panel.replaceChildren(
 				el('div', { class: 'harvester-level-head' }, el('h3', { text: 'Steps' })),
+				warnings.length ? el('ul', { class: 'harvester-error harvester-warnings' }, ...warnings.map((warning) => el('li', { text: warning }))) : '',
 				el('ol', {}, ...(recipe.steps || []).map((step, index) => renderStep(step, index))),
 				el('div', { class: 'harvester-level-head' }, el('h3', { text: 'Listing' }),
 					el('button', { type: 'button', text: 'Undo pick', title: 'Take back the last change of the picks', onclick: () => send({ type: 'undo-pick' }) })),
-				el('p', { text: recipe.start || '(the page where you pick)' }),
+				el('p', { text: recipe.start || ((recipe.steps || []).length ? '(where the steps end)' : '(the page where you pick)') }),
 				...(recipe.follow || []).map((spec, level) =>
 					renderLevel(`Level ${level + 1}: links to follow`, spec, proposals[`follow${level}`], send, 'follow', level, suggestions, repick)),
-				recipe.links && recipe.links.selector
+				recipe.links && (recipe.links.selector || recipe.links.kind === 'json')
 					? renderLevel('File links', recipe.links, proposals.links, send, 'links', 0, suggestions, repick)
 					: el('p', { text: 'File links: not picked yet.' }),
 				recipe.next && recipe.next.selector
 					? renderLevel('Next page', recipe.next, proposals.next, send, 'next', Number(recipe.next.level || 0), suggestions, repick)
 					: el('p', { text: 'Next page: none.' }),
-				el('div', { class: 'harvester-level-head' }, test),
+				el('div', { class: 'harvester-level-head' }, test, testJob),
 				testing ? el('p', { class: 'harvester-muted', 'aria-live': 'polite', text: 'Testing: the browser shows the job’s way through the site…' }) : '',
 				tested && !testing ? renderTest(tested) : '')
 		}
@@ -1442,12 +1710,14 @@
 			else if (data.type === 'test-started') { testing = true; tested = null; renderPanel() }
 			else if (data.type === 'test') { testing = false; tested = data.result; renderPanel() }
 			else if (data.type === 'where') showWhere(data.frame)
+			else if (data.type === 'requests') { requests = data.items; if (!networkBox.hidden) renderRequests() }
 			else if (data.type === 'recipe') {
 				// The picks are the recorder's (it started with the form's); the steps an earlier
 				// recording made stay until new ones are recorded.
 				recipe = { ...recipe, ...data.recipe, steps: data.recipe.steps.length ? data.recipe.steps : recipe.steps || [] }
 				if (!data.recipe.next) delete recipe.next
 				proposals = data.proposals
+				warnings = data.warnings || []
 				message.textContent = ''
 				renderPanel()
 			}
@@ -1474,10 +1744,11 @@
 					el('button', { type: 'button', text: 'Clear picks', onclick: () => { recipe = { steps: recipe.steps }; send({ type: 'clear' }) } }),
 					fullWindow(container, box, send),
 					cookies.button,
+					networkButton,
 					drawer,
 					el('button', { class: 'primary', text: 'Done', onclick: () => close(true) }),
 					el('button', { text: 'Cancel', onclick: () => close(false) })),
-				modes, el('div', { class: 'harvester-toolbar' }, modeHelp, scroll), where, network, message, cookies.box),
+				modes, el('div', { class: 'harvester-toolbar' }, modeHelp, scroll), where, network, message, cookies.box, networkBox),
 			el('div', { class: 'harvester-stage' }, box, panel))
 		root.replaceChildren(container)
 		renderPanel()
@@ -1582,7 +1853,8 @@
 		// The zone its schedule runs in: a job keeps its own, a new one takes the person's.
 		const zone = job ? job.timezone || 'UTC' : ZONE
 		const name = el('input', { value: value.name, required: '' })
-		const target = el('input', { value: value.target })
+		// Required: a job made from a recipe file comes without one (the person chooses it).
+		const target = el('input', { value: value.target, required: '' })
 		// An on-demand job keeps a schedule to go back to in the field, unused.
 		const schedule = el('input', { value: value.schedule || BLANK.schedule })
 		// The schedule in words and its next runs in the person's time, as it is typed (the
@@ -1644,7 +1916,8 @@
 						type: 'button',
 						text: 'Record in the browser',
 						onclick: () => openRecorder(root, page, textarea, applySuggestions, () => Object.fromEntries(
-							['path', 'download_url', 'max_pages', 'browser'].filter((name) => optionInputs[name]).map((name) => [name, optionInputs[name].value]))),
+							['path', 'download_url', 'max_pages', 'browser', 'http1', 'file_type', 'min_size', 'max_size', 'wait_pattern']
+								.filter((name) => optionInputs[name]).map((name) => [name, optionInputs[name].value])), () => (current && current.id) || null),
 					}))
 			} else {
 				if (option.kind === 'flag') {
@@ -1688,6 +1961,19 @@
 		}
 
 		const save = el('button', { class: 'primary', type: 'submit', form: 'harvester-job-form', text: 'Save' })
+		// The job as the form holds it, as Save sends it (and Export recipe, Save as template).
+		const formBody = () => ({
+			name: name.value,
+			source: chosen.name,
+			target: target.value,
+			schedule: demanded() ? '' : schedule.value,
+			once: demanded() && once.checked,
+			timezone: zone,
+			tags: tags.value.split(','),
+			enabled: enabled.checked,
+			options: Object.fromEntries(Object.entries(optionInputs).map(([key, input]) =>
+				[key, typeof chosen.options[key].default === 'number' ? Number(input.value) : input.value])),
+		})
 		const heading = el('span', { text: job ? `Edit ${job.name}` : `New job: ${chosen.title}` })
 		const form = el('form', {
 			id: 'harvester-job-form',
@@ -1695,18 +1981,7 @@
 			onsubmit: async (event) => {
 				event.preventDefault()
 				if (save.disabled) return
-				const body = {
-					name: name.value,
-					source: chosen.name,
-					target: target.value,
-					schedule: demanded() ? '' : schedule.value,
-					once: demanded() && once.checked,
-					timezone: zone,
-					tags: tags.value.split(','),
-					enabled: enabled.checked,
-					options: Object.fromEntries(Object.entries(optionInputs).map(([key, input]) =>
-						[key, typeof chosen.options[key].default === 'number' ? Number(input.value) : input.value])),
-				}
+				const body = formBody()
 				save.disabled = true
 				error.textContent = ''
 				try {
@@ -1775,7 +2050,41 @@
 				if (!credentials.typed() || confirm('Leave without saving the account you typed?')) show(root)
 			},
 		})
-		page = el('div', {}, form, credentials, el('div', { class: 'harvester-form-actions' }, error, save, back))
+		// The recipe as a file to keep or share, or as a template of the person's own: the server
+		// checks the form as Save does, and leaves out the account, session and folder.
+		const notice = el('p', { class: 'harvester-muted', role: 'status' })
+		const exportButton = el('button', {
+			type: 'button',
+			text: 'Export recipe',
+			title: 'Download the job’s recipe and settings as a file (without its account, session and folder)',
+			onclick: async () => {
+				error.textContent = ''
+				notice.textContent = ''
+				try {
+					const file = await api('POST', '/recipes/export', { ...formBody(), target: target.value || '/' })
+					download(`${(file.name || 'recipe').replace(/[\\/:*?"<>|]+/g, '-')}.harvester.json`, JSON.stringify(file, null, 2))
+					notice.textContent = 'Exported: without the account, session and folder.'
+				} catch (e) {
+					error.textContent = e.message
+				}
+			},
+		})
+		const templateButton = el('button', {
+			type: 'button',
+			text: 'Save as template',
+			title: 'Keep this job as a template of your own on the New job page (without its account, session and folder)',
+			onclick: async () => {
+				error.textContent = ''
+				notice.textContent = ''
+				try {
+					await api('POST', '/templates', { ...formBody(), target: target.value || '/' })
+					notice.textContent = 'Saved as your template: New job lists it.'
+				} catch (e) {
+					error.textContent = e.message
+				}
+			},
+		})
+		page = el('div', {}, form, credentials, el('div', { class: 'harvester-form-actions' }, error, save, back, exportButton, templateButton, notice))
 		root.replaceChildren(page)
 		name.focus()
 		renderCredentials(credentials, job, chosen)
@@ -1825,6 +2134,7 @@
 		#harvester .harvester-status { display: inline-block; padding: 0 8px; border-radius: var(--border-radius-pill, 999px); font-size: 0.9em; background: var(--color-background-dark); }
 		#harvester .harvester-status-ok { background: var(--color-success); color: var(--color-success-text, #fff); }
 		#harvester .harvester-status-failed, #harvester .harvester-status-auth { background: var(--color-error); color: var(--color-error-text, #fff); }
+		#harvester .harvester-status-changed { background: var(--color-warning); color: var(--color-warning-text, #000); }
 		#harvester .harvester-progress { margin-top: 24px; }
 		#harvester .harvester-progress-head { display: flex; gap: 12px; align-items: center; }
 		#harvester .harvester-progress-head h3 { margin: 0; }
@@ -1836,6 +2146,7 @@
 		#harvester .harvester-log-job { color: var(--color-primary-element); flex: none; }
 		#harvester .harvester-log-text { overflow-wrap: anywhere; }
 		#harvester .harvester-log-error .harvester-log-text { color: var(--color-error-text, var(--color-error)); }
+		#harvester .harvester-log-warning .harvester-log-text { color: var(--color-warning-text, var(--color-warning)); font-weight: bold; }
 		#harvester .harvester-log-done .harvester-log-text { color: var(--color-success-text, var(--color-success)); font-weight: bold; }
 		#harvester .harvester-status-running { background: var(--color-primary-element); color: var(--color-primary-element-text); }
 		#harvester .harvester-status-queued { background: var(--color-primary-element-light); color: var(--color-primary-element-light-text, var(--color-main-text)); }

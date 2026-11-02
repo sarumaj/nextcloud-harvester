@@ -5,6 +5,7 @@ import base64
 import json
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlparse
@@ -14,9 +15,9 @@ from croniter import croniter
 from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from nc_py_api import AsyncNextcloudApp
 from nc_py_api.ex_app import AppAPIAuthMiddleware, anc_app, persistent_storage, run_app, set_handlers
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
-from harvester import browser, ondemand, schedule, settings
+from harvester import browser, ondemand, recipe_file, schedule, settings, watch
 from harvester.rclone_wizard import AUTHORIZE_ORIGIN, Authorization, WizardError, Wizards, remote_types
 from harvester.browser.recorder import Recorder
 from harvester.executor import (
@@ -187,7 +188,7 @@ def checked(body: JobIn) -> JobIn:
         raise HTTPException(422, f"{SOURCES[body.source].title} has no address to send: it runs on a schedule.")
     if body.once and body.schedule:
         raise HTTPException(422, "Only an on-demand job is deleted after its run.")
-    options = SOURCES[body.source].options | COMMON_OPTIONS
+    options = SOURCES[body.source].options | COMMON_OPTIONS | watch.options_of(body.source)
     for name, option in options.items():
         problem = option_problem(option, body.options[name]) if name in body.options else ""
         if problem:
@@ -215,7 +216,7 @@ def list_sources() -> list[dict]:
             "credential_help": {name: list(help_) for name, help_ in source.credential_help.items()},
             "options": {
                 key: vars(option) | ({"title": f"Through {browser.PROXY_NAME}"} if key == "home" else {})
-                for key, option in (source.options | COMMON_OPTIONS).items()
+                for key, option in (source.options | COMMON_OPTIONS | watch.options_of(source.name)).items()
                 if key != "home" or browser.PROXY
             },
         }
@@ -335,7 +336,9 @@ async def progress_log(nc: NC, job: int | None = None, after: int = 0) -> dict:
 @APP.post("/api/jobs")
 async def create_job(body: JobIn, nc: NC) -> dict:
     """Adds a job."""
-    return vars(store().save(Job(user=await nc.user, **checked(body).model_dump())))
+    saved = store().save(Job(user=await nc.user, **checked(body).model_dump()))
+    weekly_test_from_now(None, saved)
+    return vars(saved)
 
 
 @APP.put("/api/jobs/{job_id}")
@@ -346,6 +349,7 @@ async def update_job(job_id: int, body: JobIn, nc: NC) -> dict:
     forget_changed(job, saved)
     if sign_in_changed(job, saved):
         await nc.preferences_ex.delete(session_key(saved))
+    weekly_test_from_now(job, saved)
     # On a schedule now: the addresses sent to it are not fetched (the one running ends as it is).
     if not ondemand.on_demand(saved):
         for fetch in store().fetches([saved.id or 0]):
@@ -392,8 +396,17 @@ def forget_changed(job: Job, saved: Job) -> None:
 
     if saved.source != job.source or changed(SOURCES[saved.source].listing_options):
         store().forget_marks(job.id or 0)
+        # What its runs found is no measure of another listing ("the site changed").
+        store().forget_summaries(job.id or 0)
     if saved.source != job.source or changed(REFUSING):
         store().forget_refused(job.id or 0)
+
+
+def weekly_test_from_now(job: Job | None, saved: Job) -> None:
+    """A job's weekly test (watch.py), just turned on, counts from now: not at once for a job
+    made long ago."""
+    if switched_on(saved, "weekly_test") and not (job and switched_on(job, "weekly_test")):
+        store().set_tested(saved.id or 0, time.time())
 
 
 @APP.delete("/api/jobs/{job_id}")
@@ -428,6 +441,65 @@ async def run_job(job_id: int, nc: NC) -> dict:
     if ondemand.on_demand(job) and not SOURCES[job.source].address_of(job.options):
         raise HTTPException(409, "The job has no address of its own: fetch one with it.")
     STATE["executor"].request(job.id)
+    return {}
+
+
+@APP.post("/api/jobs/{job_id}/test")
+async def test_job(job_id: int, nc: NC) -> dict:
+    """Tests the website job's recipe as its weekly test does (after the one running): its walk,
+    nothing downloaded; what it finds is in the progress log, and a changed site warns."""
+    job = await own_job(job_id, nc)
+    if job.source != "site" or not SOURCES[job.source].address_of(job.options):
+        raise HTTPException(409, "Only a website job with a listing of its own has a recipe to test.")
+    STATE["executor"].request_test(job.id or 0)
+    return {}
+
+
+class RecipeText(BaseModel):
+    """A recipe file as the page read it (recipe_file.py), checked by the server."""
+
+    text: str = Field(max_length=recipe_file.MAX_BYTES)
+
+
+@APP.post("/api/recipes/export")
+async def export_recipe(body: JobIn, _nc: NC) -> dict:
+    """The recipe file of the job as the form holds it (checked as Save checks it): its source,
+    options, tags and schedule; never its account, session or folder."""
+    return recipe_file.export(checked(body).model_dump())
+
+
+@APP.post("/api/recipes/import")
+async def import_recipe(body: RecipeText, _nc: NC) -> dict:
+    """The job a recipe file describes, for the form (nothing is saved): 422 with why when the
+    file is refused, by its schema or by the checks of a saved job."""
+    try:
+        job = recipe_file.parse(body.text)
+        checked(JobIn(**(job | {"target": "/"})))
+    except ValueError as error:
+        # pydantic's ValidationError is a ValueError: its problems by field.
+        text = recipe_file.problems(error) if isinstance(error, ValidationError) else str(error)
+        raise HTTPException(422, text) from error
+    return job
+
+
+@APP.get("/api/templates")
+async def list_templates(nc: NC) -> list[dict]:
+    """The user's own templates (recipe files saved from a job's form)."""
+    return store().templates(await nc.user)
+
+
+@APP.post("/api/templates")
+async def save_template(body: JobIn, nc: NC) -> dict:
+    """Keeps the job as the form holds it as one of the user's templates (its recipe file: no
+    account, session or folder)."""
+    return store().add_template(await nc.user, body.name, recipe_file.export(checked(body).model_dump()))
+
+
+@APP.delete("/api/templates/{template_id}")
+async def delete_template(template_id: int, nc: NC) -> dict:
+    """Removes one of the user's templates."""
+    if not store().delete_template(await nc.user, template_id):
+        raise HTTPException(404, "no such template")
     return {}
 
 
@@ -618,10 +690,7 @@ async def record(websocket: WebSocket, nc: NC) -> None:
         while True:
             message = await asyncio.wait_for(websocket.receive_json(), RECORDER_IDLE)
             try:
-                if message.get("type") in ("save-session", "cookies-keep") and job:
-                    await keep_session(websocket, recorder, job, nc, message["type"])
-                else:
-                    await recorder.handle(message)
+                await answer(websocket, recorder, job, nc, message)
             except Exception as error:  # pylint: disable=broad-exception-caught
                 # A step the page could not do (an element gone, a timeout): the recording goes on.
                 text = (str(error) or type(error).__name__).splitlines()[0]
@@ -769,6 +838,35 @@ def start_of(job: Job) -> str:
         return ""
 
 
+async def answer(websocket: WebSocket, recorder: Recorder, job: Job | None, nc: AsyncNextcloudApp, message: dict):
+    """Does what the recorder's page asks: the job's session kept, the test as the job runs (with
+    its account, which only the app reads), else the recorder's own."""
+    if message.get("type") in ("save-session", "cookies-keep") and job:
+        await keep_session(websocket, recorder, job, nc, message["type"])
+    elif message.get("type") == "test" and message.get("as_job"):
+        await test_as_job(websocket, recorder, message, nc)
+    else:
+        await recorder.handle(message)
+
+
+async def test_as_job(websocket: WebSocket, recorder: Recorder, message: dict, nc: AsyncNextcloudApp) -> None:
+    """The recipe's test as the job runs: with the saved job's account, read here from the user's
+    own job and handed to the recorder (the page never sees it, nor sends one)."""
+    try:
+        job = await own_job(int(message.get("job") or 0), nc)
+    except (TypeError, ValueError, HTTPException):
+        job = None
+    if job is None or job.source != "site":
+        refusal = "Save the job first: the test as the job runs signs in with its stored account."
+        await websocket.send_json({"type": "error", "message": refusal})
+        return
+    account = {
+        name: await nc.preferences_ex.get_value(credential_key(job, name)) or ""
+        for name in SOURCES[job.source].credentials
+    }
+    await recorder.test(message, account)
+
+
 async def keep_session(websocket: WebSocket, recorder: Recorder, job: Job, nc: AsyncNextcloudApp, kind: str) -> None:
     """Keeps the browser's session for the job: Done (save-session) also runs the job again and
     ends the view; the cookies panel's "Use for this job" (cookies-keep) keeps it as it is now,
@@ -794,7 +892,9 @@ async def enabled_handler(enabled: bool, nc: AsyncNextcloudApp) -> str:
         await nc.ui.resources.set_script("top_menu", "harvester", "js/harvester-main")
         await nc.ui.top_menu.register("harvester", "Harvester", "img/app.svg")
         await nc.ui.settings.register_form(
-            settings.form(RUNNERS, browser.BROWSERS, settings.DEFAULT_PROXY, settings.DEFAULT_PROXY_NAME)
+            settings.form(
+                RUNNERS, browser.BROWSERS, settings.DEFAULT_PROXY, settings.DEFAULT_PROXY_NAME, settings.DEFAULT_GUARD
+            )
         )
     else:
         await nc.ui.top_menu.unregister("harvester")

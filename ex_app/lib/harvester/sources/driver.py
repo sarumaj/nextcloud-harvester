@@ -17,8 +17,8 @@ from urllib.parse import urljoin, urlparse
 import httpx
 from bs4 import BeautifulSoup
 
-from .. import browser, pagination, patterns
-from . import download
+from .. import browser, pagination, patterns, selectors
+from . import download, near
 from .base import AuthError, ChallengeError, SourceError
 from .download import Response
 
@@ -56,6 +56,8 @@ class Driver(abc.ABC):
     saw: Callable[[dict], None] | None = None
     # The optional steps the sign-in went on without: {"number", "label", "why"} each.
     skipped: list[dict] = []
+    # The steps whose element an alternative selector found (selectors.repair_line's lines).
+    repaired: list[str] = []
 
     # The page that lists the file being downloaded (download: its Referer).
     referer = ""
@@ -89,6 +91,15 @@ class Driver(abc.ABC):
     @abc.abstractmethod
     def links(self, page: Any, selector: str) -> list[tuple[str, str]]:
         """The page's links matching the selector: absolute URL and text."""
+
+    def valued_links(self, page: Any, selector: str, specs: list[dict]) -> list[tuple[str, str, list]]:
+        """The page's links matching the selector, as links() gives them, each with the texts of
+        the values (specs: a level's "values"; None where a value's element is missing)."""
+        return [(url, text, [None] * len(specs)) for url, text in self.links(page, selector)]
+
+    def read_json(self, url: str) -> Any:
+        """A JSON listing's page, asked for as a file is (near.read_json)."""
+        return near.read_json(self.download, url)
 
     @abc.abstractmethod
     def next(self, page: Any, selector: str) -> Any:
@@ -203,6 +214,18 @@ class HttpDriver(Driver):
         base = self._base(page)
         return [
             (urljoin(base, str(link.get("href"))), link.get_text(" ", strip=True))
+            for link in selectors.soup_select(page.soup, selector)
+            if link.get("href")
+        ]
+
+    def valued_links(self, page: Any, selector: str, specs: list[dict]) -> list[tuple[str, str, list]]:
+        base = self._base(page)
+        return [
+            (
+                urljoin(base, str(link.get("href"))),
+                link.get_text(" ", strip=True),
+                [near.soup_value(link, spec) for spec in specs],
+            )
             for link in page.soup.select(selector)
             if link.get("href")
         ]
@@ -211,7 +234,7 @@ class HttpDriver(Driver):
         found = self.links(page, selector)
         if found:
             return self.open(found[0][0], deep=True)
-        if page.soup.select_one(selector):
+        if selectors.soup_select(page.soup, selector):
             # A button, or a link without an address (a script's): only the browser clicks it.
             raise SourceError(
                 f"the next page ({selector}) is a button without an address: only the browser can click it "

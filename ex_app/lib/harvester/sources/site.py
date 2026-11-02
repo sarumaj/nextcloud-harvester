@@ -12,6 +12,10 @@ A kept session skips the sign-in (not the steps from there to the listing); when
 reaches the listing, the run signs in once anew, in a browser of its own, and gives the session
 up if that fails too. A listing page that gives nothing it should have (a sign-in, an error, a
 redirect elsewhere) is logged, and the run is then no complete pass.
+
+A level's links may carry values read from the page around each of them (harvester.patterns
+.page_values), and the file links may be a JSON listing (harvester.jsonlist), read over HTTP with
+the job's cookies (the browser's, when it has one) and walked page by page.
 """
 
 import contextlib
@@ -31,12 +35,12 @@ from playwright.sync_api import Route, WebSocketRoute, sync_playwright
 
 from .. import browser
 from .. import cookies as cookie_jar
-from .. import otp, pagination, patterns
+from .. import jsonlist, otp, pagination, patterns, selectors
 from .. import recipe as recipes
 from ..browser.guard import Guard
 from ..schedule import zone
-from . import download
-from .base import AuthError, ChallengeError, Item, Option, Source, SourceError, Stopped
+from . import download, near
+from .base import AuthError, ChallengeError, Item, Option, Source, SourceError, Stopped, pattern_search
 from .download import Response
 from .driver import Driver, HttpDriver, accept_language, moved
 from .walk import StartEmpty, Walk
@@ -111,6 +115,7 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes
         http1: bool = False,
         home: bool = False,
         saw: Callable[[dict], None] | None = None,
+        viewport: dict | None = None,
         *,
         timezone: str = "UTC",
         downloads: bool = False,
@@ -127,18 +132,23 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes
         self._steps, self._secrets, self._cookies = steps, secrets, cookies or []
         # Where each page was asked for and what it answered (trouble).
         self._answers: dict[int, tuple[str, int]] = {}
-        # The browser's connections all go through its guard (with the home connection, if chosen).
+        # The browser's connections all go through its guard (with the home connection, if
+        # chosen), unless the admin switched the guard off: then the routes alone check them.
         self._guard: Guard | None = None
         try:
-            self._guard = Guard(self.proxy)
-            port = self._guard.start()
+            port = 0
+            if browser.GUARD:
+                self._guard = Guard(self.proxy)
+                port = self._guard.start()
             self._playwright = sync_playwright().start()
-            self._browser = self._playwright.chromium.launch(**browser.launch_options(port, http1))
+            credentials = self._guard.credentials if self._guard else None
+            self._browser = self._playwright.chromium.launch(**browser.launch_options(port, http1, home, credentials))
             self.user_agent = browser.user_agent(self._browser.version)
             # Downloads by the browser only for file links that are clicked: their requests pass
-            # the context's routes and the guard as the pages' do.
+            # the context's routes and the guard as the pages' do. The window is the one the
+            # recipe was recorded in (its steps and pages laid out alike).
             self.context = self._browser.new_context(
-                **browser.context_options(self._browser.version),
+                **browser.context_options(self._browser.version, viewport),
                 accept_downloads=downloads,
                 storage_state=session or None,  # type: ignore[arg-type]
             )
@@ -173,6 +183,7 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes
         todo = list(enumerate(steps, 1))
         self._start = start
         self.skipped = []
+        self.repaired = []
         signing = recipes.sign_in_steps(steps)
         if session and start and signing:
             self.main.goto(start, wait_until="domcontentloaded")
@@ -187,7 +198,7 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes
         today = self.today()
         for number, step in todo:
             try:
-                replay(page, dated_step(step, today), secrets)
+                replay(page, dated_step(step, today), secrets, lambda old, new, n=number: self._repaired(n, old, new))
             except Stopped:
                 # The run or the recipe's test was stopped during the step: no failure of it.
                 raise
@@ -198,6 +209,9 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes
                 self.skipped.append({"number": number, "label": recipes.step_label(step), "why": short_error(error)})
             except Exception as error:  # pylint: disable=broad-exception-caught
                 self._failed(number, step, error, page)
+
+    def _repaired(self, number: int, old: str, new: str) -> None:
+        self.repaired.append(selectors.repair_line(f"step {number}", old, new))
 
     def _failed(self, number: int, step: dict, error: Exception, page: Any = None) -> None:
         """A required step failed: the page asking for a person (ChallengeError), else SourceError
@@ -281,6 +295,9 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes
 
     def links(self, page: Any, selector: str) -> list[tuple[str, str]]:
         return page.eval_on_selector_all(selector, "els => els.map(e => [e.href || '', (e.innerText || '').trim()])")
+
+    def valued_links(self, page: Any, selector: str, specs: list[dict]) -> list[tuple[str, str, list]]:
+        return [tuple(link) for link in page.eval_on_selector_all(selector, near.VALUES, specs)]
 
     def targets(self, page: Any, selector: str) -> list[str]:
         return page.eval_on_selector_all(selector, TARGETS)
@@ -546,26 +563,37 @@ def in_frame(page, frames: list[dict], timeout: float):
     return target
 
 
-def replay(page, step: dict, secrets: dict[str, str]) -> None:
+def replay(page, step: dict, secrets: dict[str, str], repaired: Callable[[str, str], None] | None = None) -> None:
     """Does one recorded step, in its frame if it has one; an optional step waits for its frame
-    and element OPTIONAL_TIMEOUT at most (a required one the page's default, STEP_TIMEOUT)."""
+    and element OPTIONAL_TIMEOUT at most (a required one the page's default, STEP_TIMEOUT). A
+    step with alternative selectors finds its element by the first that does (selectors.resolve,
+    an alternative told to repaired) within the same time."""
     action = step["action"]
-    started = time.monotonic()
+    started, began = time.monotonic(), time.time()
     budget = OPTIONAL_TIMEOUT if step.get("optional") else STEP_TIMEOUT
     # A step without a frame acts on the page as it always did.
     target = in_frame(page, step["frame"], budget) if step.get("frame") else page
     # What is left of an optional step's time for its element (never 0: Playwright's "no limit").
     left = max(1.0, budget - (time.monotonic() - started) * 1000)
     wait = {"timeout": left} if step.get("optional") else {}
+    selector = step.get("selector", "")
+    if action in recipes.ON_ELEMENTS and step.get("alternatives"):
+        selector = selectors.resolve(target, step, left, repaired)
+        wait = {"timeout": max(1.0, budget - (time.monotonic() - started) * 1000)}
     if action == "goto":
         page.goto(step["url"], wait_until="domcontentloaded")
     elif action == "fill":
-        target.fill(step["selector"], filled(step, secrets), **wait)
+        target.fill(selector, filled(step, secrets), **wait)
         return
     elif action == "click":
-        target.click(step["selector"], **wait)
+        target.click(selector, **wait)
     elif action == "press":
-        target.press(step["selector"], step.get("key", "Enter"), **wait)
+        target.press(selector, step.get("key", "Enter"), **wait)
+    elif action == "mail-code":
+        # The message first, then the field: the page may show the field only once it is due.
+        code = near.mail_code(page, step, secrets, began)
+        target.fill(selector, code, **wait)
+        return
     elif action == "scroll":
         scroll_to_load(page, int(step.get("rounds") or recipes.SCROLL_ROUNDS))
         return
@@ -581,7 +609,7 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
         "Files linked from a website's pages: record it in the browser (sign in if need be, then pick the links to "
         "follow and the file links) or start from a template."
     )
-    credentials = ("username", "password", "totp", "cookies")
+    credentials = ("username", "password", "totp", "cookies", "code_mailbox")
     credential_help = {
         "username": (
             "Username",
@@ -598,6 +626,14 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
             "Cookies",
             "A signed-in browser's cookies for the site, instead of a recorded sign-in: a cookies.txt export "
             "(Netscape format) or a Cookie header's name=value; name=value. They expire as they do in the browser.",
+        ),
+        "code_mailbox": (
+            "Mailbox for codes",
+            "For a sign-in that sends a code by e-mail (the step “type the code from e-mail”): the IMAP mailbox it "
+            "arrives in, one setting per line: host = mail.example.org, user = me@example.org, password = …; also "
+            "port (993), folder (INBOX), and auth = oauth2-google, oauth2-microsoft or oauth2 with token_url, "
+            "client_id, client_secret, refresh_token. Without user and password, the job's Username and Password "
+            "sign in. Read-only: nothing is marked as read.",
         ),
     }
     options = {
@@ -685,9 +721,14 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
         self.driver: Driver | None = None
         self.kept: dict | None = None
         self.sleep: Callable[[float], None] = time.sleep
-        # Told of each listing page the walk reads (survey(): the recipe's test).
-        self.observe: Callable[[dict], None] = lambda event: None
+        # Told of each listing page the walk reads (survey(): the recipe's test; a job's run:
+        # what each level found, watch.Watch). It may answer what went wrong there: the walk then
+        # keeps a picture of the page (noticed), apart from a failure's (shot).
+        self.observe: Callable[[dict], str | None] = lambda event: None
+        self.noticed: dict | None = None
         self._shot: dict | None = None
+        # The picks whose links an alternative selector found in this run (each said once).
+        self.repairs: list[str] = []
         # The pause before each listing page after the first (the recipe's test has none).
         self.page_pause = PAGE_PAUSE
 
@@ -719,6 +760,8 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
                 self.driver = self._start_driver()
             for skipped in getattr(self.driver, "skipped", []):
                 self.report("info", skipped_line(skipped))
+            for line in getattr(self.driver, "repaired", []):
+                self.report("info", line)
         return self.driver
 
     def _start_driver(self) -> Driver:
@@ -735,6 +778,7 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
                 http1=bool(int(self.settings["http1"])),
                 home=self.home,
                 saw=self._saw,
+                viewport=self.recipe.get("viewport"),
                 timezone=self.timezone,
                 downloads=bool(links.get("click")),
             )
@@ -777,6 +821,67 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
 
     def _walk(self, seen: Callable[[str], bool]) -> Iterator[Item]:
         yield from Walk(self, self._driver(), seen).items()
+
+    def listed(self, driver: Driver, page: Any, spec: dict, what: str) -> tuple[list, dict]:
+        """A level's links on the page (address, text and, where the level has values, their
+        texts; _links), and where they were read: a page's address and the selector, or a JSON
+        listing's address and its items' path."""
+        if isinstance(page, jsonlist.JsonPage):
+            return jsonlist.entries(page, spec), {"url": page.url, "selector": spec.get("items") or "(the answer)"}
+        # The values' texts only where the level has values: other recipes read as before.
+        specs = spec.get("values") or []
+        read = (lambda selector: driver.valued_links(page, selector, specs)) if specs else None
+        return self._links(driver, page, spec, what, read), {"url": driver.address(page), "selector": spec["selector"]}
+
+    def _repaired(self, what: str, old: str, new: str) -> None:
+        line = selectors.repair_line(what, old, new)
+        if line not in self.repairs:
+            self.repairs.append(line)
+            self.report("info", line)
+
+    def _links(
+        self, driver: Driver, page: Any, spec: dict, what: str, read: Callable[[str], list] | None = None
+    ) -> list[tuple]:
+        """A pick's links on the page: its selector's, else (none of them matching its pattern)
+        the first alternative's of which the pattern matches any (a repair, said once). read
+        reads a selector's links (with the values' texts, say); driver.links without."""
+        read = read or (lambda selector: driver.links(page, selector))
+        tries = selectors.candidates(spec)
+        links = read(tries[0])
+        pattern = spec.get("pattern") or ""
+        if len(tries) < 2 or any(url and pattern_search(pattern, url) for url, *_ in links):
+            return links
+        for alternative in tries[1:]:
+            try:
+                found = read(alternative)
+            except selectors.SELECTOR_ERRORS:
+                continue  # an engine this driver lacks (the browser's, over HTTP)
+            if any(url and pattern_search(pattern, url) for url, *_ in found):
+                self._repaired(what, tries[0], alternative)
+                return found
+        return links
+
+    def notice(self, page: Any, what: str) -> None:
+        """Keeps a picture of the page where the observer saw something go wrong (noticed)."""
+        self.noticed = snapshot(page, what)
+
+    def next_page(self, driver: Driver, page: Any, after: dict) -> Any:
+        """The page after this one by the next page's selector, else (not on the page) by the
+        first alternative that is (a repair, said once); None at the last page."""
+        tries = selectors.candidates(after)
+        if len(tries) > 1 and not self._finds(driver, page, tries[0]):
+            for alternative in tries[1:]:
+                if self._finds(driver, page, alternative):
+                    self._repaired("next page", tries[0], alternative)
+                    return driver.next(page, alternative)
+        return driver.next(page, tries[0])
+
+    @staticmethod
+    def _finds(driver: Driver, page: Any, selector: str) -> bool:
+        try:
+            return bool(driver.links(page, selector))
+        except selectors.SELECTOR_ERRORS:
+            return False
 
     def item(self, link: str, text: str, page: int, groups: dict, referer: str = "") -> Item:
         """The file of a link: its download URL and path from the link's values (an item that
@@ -825,8 +930,10 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
         pattern matched, the first file links with their file names, and the problems met. It
         ends after that many files or pages, or when stopped (Stopped)."""
         result: dict = {"pages": [], "problems": [], "files": 0, "ended": "complete", "shot": None, "skipped": []}
+        # An observer set before (a job's weekly test) hears of the pages too.
+        outer = self.observe
 
-        def observe(event: dict) -> None:
+        def observe(event: dict) -> str | None:
             if len(result["pages"]) >= pages:
                 raise Stopped("pages")
             where = "the listing" if event["level"] == 0 else f"a level {event['level']} page"
@@ -836,6 +943,7 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
             elif not event["matching"]:
                 result["problems"].append(f"{where}: none of its {event['found']} links matched the pattern")
             result["pages"].append(event | {"files": []})
+            return outer(event)
 
         self.observe = observe
         self.page_pause = 0.0
@@ -854,16 +962,20 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
             result["ended"] = str(stop) if str(stop) in ("pages", "time") else "stopped"
         except (SourceError, PlaywrightError) as error:
             result["ended"] = "failed"
+            # Its kind: a page that asks for a person, or a refused sign-in, is no changed site.
+            result["error"] = type(error).__name__
             result["problems"].append((str(error) or type(error).__name__).splitlines()[0])
         finally:
             # The walk's pages close; a test stopped meanwhile cannot close them (its browser
             # context goes as a whole).
             with contextlib.suppress(Exception):
                 items.close()
-            self.observe = lambda event: None
+            self.observe = outer
         result["shot"] = self.shot
         # The optional steps it went on without: listed apart, no problems of the recipe.
         result["skipped"] = list(self.driver.skipped if self.driver else [])
+        # The selectors alternatives stood in for (the recipe unchanged).
+        result["repaired"] = [*(self.driver.repaired if self.driver else []), *self.repairs]
         return result
 
     def close(self) -> None:

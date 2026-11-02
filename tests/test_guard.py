@@ -1,10 +1,12 @@
 """The browser's guard (harvester.browser.guard): what it lets through and what not, its tunnels
 and plain requests, the home connection behind it, rclone's exception for one browser, its limits,
-and its life with the browser (started and stopped with it).
+its lookups kept and its families remembered, and its life with the browser (started and
+stopped with it; its process: test_guard_process).
 
 The sites are servers on 127.0.0.1 standing in for public addresses: guard.dial, where the guard
 connects, takes them for PUBLIC (what the test names resolve to, conftest) and the stand-in
-proxies; anything else it refuses, so that nothing reaches the network.
+proxies; anything else it refuses, so that nothing reaches the network. What the guard does is
+tested on its Relay, in this process, where the stand-ins reach it.
 """
 
 # pylint: disable=missing-function-docstring,protected-access,redefined-outer-name
@@ -12,6 +14,7 @@ proxies; anything else it refuses, so that nothing reaches the network.
 import asyncio
 import base64
 import dataclasses
+import errno
 import socket
 import threading
 import time
@@ -22,7 +25,7 @@ import pytest
 from conftest import PUBLIC, needs_loopback
 from harvester import browser
 from harvester.browser import guard
-from harvester.browser.guard import Guard
+from harvester.browser.guard import Guard, Relay
 
 
 @dataclasses.dataclass
@@ -85,8 +88,12 @@ async def ask(port: int, head: str) -> tuple[asyncio.StreamReader, asyncio.Strea
     return reader, writer, answer.decode()
 
 
-async def tunnel(port: int, target: str) -> tuple[asyncio.StreamReader, asyncio.StreamWriter, str]:
-    return await ask(port, f"CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n\r\n")
+async def tunnel(
+    port: int, target: str, credentials: tuple[str, str] | None = None
+) -> tuple[asyncio.StreamReader, asyncio.StreamWriter, str]:
+    """A CONNECT to the guard (with a browser's credentials for it, if given)."""
+    login = f"Proxy-Authorization: Basic {guard.basic(credentials)}\r\n" if credentials else ""
+    return await ask(port, f"CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n{login}\r\n")
 
 
 async def echoes(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> bool:
@@ -94,12 +101,20 @@ async def echoes(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> 
     return await asyncio.wait_for(reader.readexactly(5), 5) == b"hello"
 
 
+async def stopped(proxy, reader: asyncio.StreamReader) -> None:
+    """Stops the guard (a Relay or a Guard): within 2 s, its tunnel (reader) ending with it."""
+    started = time.monotonic()
+    await asyncio.to_thread(proxy.stop)
+    assert time.monotonic() - started < 2
+    assert await asyncio.wait_for(reader.read(), 2) == b"", "the tunnel ends with its guard"
+
+
 def checked(host: str, port: int = 443) -> list[str] | str:
     """The guard's check of a destination: the addresses, or why it is refused."""
 
     async def check():
         try:
-            return await Guard().check(host, port)
+            return await Relay().check(host, port)
         except guard.Refused as refused:
             return refused.reason
 
@@ -150,6 +165,54 @@ def test_only_public_addresses_pass(monkeypatch):
     assert checked("news.example", 0) == "no such port"
 
 
+def test_a_names_lookup_serves_for_a_while(monkeypatch):
+    asked: list[str] = []
+    resolving(monkeypatch, {"kept.example": [PUBLIC]}, asked)
+    monkeypatch.setattr(guard, "NAME_TTL", 0.2)
+
+    async def run():
+        relay = Relay()
+        # A page opens several connections to a site at once: one lookup for all of them.
+        found = await asyncio.gather(*(relay.check("kept.example", 443) for _ in range(5)))
+        assert found == [[PUBLIC]] * 5 and asked == ["kept.example"]
+        assert await relay.check("KEPT.example", 80) == [PUBLIC] and len(asked) == 1, "any port, any case"
+        await asyncio.sleep(0.3)
+        assert await relay.check("kept.example", 443) == [PUBLIC] and len(asked) == 2, "expired: again"
+
+    asyncio.run(run())
+
+
+def test_a_refusal_is_kept_briefly_and_stays_a_refusal(monkeypatch):
+    asked: list[str] = []
+    resolving(monkeypatch, {"half.example": [PUBLIC, "10.0.0.5"]}, asked)
+    monkeypatch.setattr(guard, "REFUSAL_TTL", 0.2)
+
+    async def run():
+        relay = Relay()
+        for _ in range(3):
+            with pytest.raises(guard.Refused, match="not a public address"):
+                await relay.check("half.example", 443)
+        assert asked == ["half.example"]
+        await asyncio.sleep(0.3)
+        with pytest.raises(guard.Refused, match="not a public address"):
+            await relay.check("half.example", 443)
+        assert len(asked) == 2
+
+    asyncio.run(run())
+
+
+def test_the_names_kept_are_bounded(monkeypatch):
+    monkeypatch.setattr(guard, "NAMES", 3)
+
+    async def run():
+        relay = Relay()
+        for number in range(5):
+            await relay.check(f"n{number}.example", 443)
+        assert list(relay._names) == ["n2.example", "n3.example", "n4.example"]
+
+    asyncio.run(run())
+
+
 def test_a_name_that_does_not_resolve_is_refused(monkeypatch):
     def fail(*_args, **_kwargs):
         raise socket.gaierror("no such name")
@@ -163,7 +226,7 @@ def test_a_tunnel_goes_to_the_checked_address(sites):
     async def run():
         server = await echo_server()
         sites.routes[(PUBLIC, 443)] = port_of(server)
-        with Guard() as proxy:
+        with Relay() as proxy:
             reader, writer, answer = await tunnel(proxy.port, "news.example:443")
             assert answer.startswith("HTTP/1.1 200")
             assert await echoes(reader, writer)
@@ -178,13 +241,13 @@ def test_a_tunnel_goes_to_the_checked_address(sites):
 def test_a_refused_tunnel_is_answered_and_kept(sites, monkeypatch):
     resolving(monkeypatch, {"127.0.0.1.nip.io": ["127.0.0.1"]})
 
-    async def run(proxy: Guard):
+    async def run(proxy: Relay):
         for target in ("127.0.0.1:9", "10.0.0.1:80", "127.0.0.1.nip.io:443", "[::1]:22"):
             _, writer, answer = await tunnel(proxy.port, target)
             assert answer.startswith("HTTP/1.1 403"), target
             writer.close()
 
-    with Guard() as proxy:
+    with Relay() as proxy:
         asyncio.run(run(proxy))
         assert list(proxy.refused) == [
             "127.0.0.1:9: not a public address",
@@ -202,7 +265,7 @@ def test_a_plain_request_goes_on_in_origin_form(sites):
     async def run():
         server = await http_server(heads)
         sites.routes[(PUBLIC, 8080)] = port_of(server)
-        with Guard() as proxy:
+        with Relay() as proxy:
             reader, writer, answer = await ask(
                 proxy.port,
                 "GET http://news.example:8080/feed?page=2 HTTP/1.1\r\nHost: news.example:8080\r\n"
@@ -221,7 +284,7 @@ def test_a_plain_request_goes_on_in_origin_form(sites):
 
 @needs_loopback
 def test_bad_requests_are_refused():
-    async def run(proxy: Guard):
+    async def run(proxy: Relay):
         for head in (
             "GET https://news.example/ HTTP/1.1\r\n\r\n",
             "GET /relative HTTP/1.1\r\n\r\n",
@@ -232,7 +295,7 @@ def test_bad_requests_are_refused():
             assert answer.startswith("HTTP/1.1 400"), head
             writer.close()
 
-    with Guard() as proxy:
+    with Relay() as proxy:
         asyncio.run(run(proxy))
 
 
@@ -241,9 +304,12 @@ def test_bad_requests_are_refused():
 
 @needs_loopback
 def test_the_name_is_looked_up_once_and_its_checked_address_connected(sites, monkeypatch):
+    """The checked addresses serve the name's connections for NAME_TTL (never the name looked up
+    again as it connects); after that, the name's next answer is checked anew."""
     asked: list[str] = []
     answers = iter([[PUBLIC], ["127.0.0.1"], ["127.0.0.1"]])
     real = socket.getaddrinfo
+    monkeypatch.setattr(guard, "NAME_TTL", 0.5)
 
     def rebinding(host, *args, **kwargs):
         if host == "rebind.test":
@@ -257,10 +323,12 @@ def test_the_name_is_looked_up_once_and_its_checked_address_connected(sites, mon
     async def run():
         server = await echo_server()
         sites.routes[(PUBLIC, 443)] = port_of(server)
-        with Guard() as proxy:
-            reader, writer, answer = await tunnel(proxy.port, "rebind.test:443")
-            assert answer.startswith("HTTP/1.1 200") and await echoes(reader, writer)
-            writer.close()
+        with Relay() as proxy:
+            for _ in range(2):
+                reader, writer, answer = await tunnel(proxy.port, "rebind.test:443")
+                assert answer.startswith("HTTP/1.1 200") and await echoes(reader, writer)
+                writer.close()
+            await asyncio.sleep(0.6)
             # The name's next answer is the loopback: the next connection is refused.
             _, writer, answer = await tunnel(proxy.port, "rebind.test:443")
             assert answer.startswith("HTTP/1.1 403")
@@ -268,8 +336,8 @@ def test_the_name_is_looked_up_once_and_its_checked_address_connected(sites, mon
         server.close()
 
     asyncio.run(run())
-    assert asked == ["rebind.test", "rebind.test"], "one lookup per connection"
-    assert sites.dialed == [f"{PUBLIC}:443"], "the checked address, never the name"
+    assert asked == ["rebind.test", "rebind.test"], "one lookup per NAME_TTL"
+    assert sites.dialed == [f"{PUBLIC}:443"] * 2, "the checked address, never the name"
 
 
 @needs_loopback
@@ -284,12 +352,12 @@ def test_an_address_that_hangs_holds_up_the_next_one_briefly(sites, monkeypatch)
         return await real(host, port, tls)
 
     monkeypatch.setattr(guard, "dial", dial)
-    monkeypatch.setattr(Guard, "check", staticmethod(lambda host, port: guard_check(host)))
+    monkeypatch.setattr(Relay, "check", staticmethod(lambda host, port: guard_check(host)))
 
     async def run():
         server = await echo_server()
         sites.routes[(PUBLIC, 443)] = port_of(server)
-        with Guard() as proxy:
+        with Relay() as proxy:
             started = time.monotonic()
             reader, writer, answer = await tunnel(proxy.port, "dual.example:443")
             assert answer.startswith("HTTP/1.1 200") and await echoes(reader, writer)
@@ -307,6 +375,40 @@ async def guard_check(host: str) -> list[str]:
     return ["2001:db8:1::1", "2001:db8:1::2", PUBLIC]
 
 
+@needs_loopback
+def test_a_family_without_a_route_goes_second_for_a_while(sites, monkeypatch):
+    resolving(monkeypatch, {"dual.example": ["2606:4700::1", PUBLIC]})
+    monkeypatch.setattr(guard, "FAMILY_MEMORY", 0.5)
+    real = guard.dial
+
+    async def dial(host: str, port: int, tls: bool = False):
+        if ":" in host:
+            sites.dialed.append(host)
+            raise OSError(errno.ENETUNREACH, "Network is unreachable")  # a container without IPv6
+        return await real(host, port, tls)
+
+    monkeypatch.setattr(guard, "dial", dial)
+
+    async def connect(proxy: Relay) -> None:
+        reader, writer, answer = await tunnel(proxy.port, "dual.example:443")
+        assert answer.startswith("HTTP/1.1 200") and await echoes(reader, writer)
+        writer.close()
+
+    async def run():
+        server = await echo_server()
+        sites.routes[(PUBLIC, 443)] = port_of(server)
+        with Relay() as proxy:
+            await connect(proxy)
+            await connect(proxy)
+            assert sites.dialed == ["2606:4700::1", f"{PUBLIC}:443", f"{PUBLIC}:443"], "IPv4 first after"
+            await asyncio.sleep(0.6)
+            await connect(proxy)
+            assert sites.dialed[3:] == ["2606:4700::1", f"{PUBLIC}:443"], "IPv6 first again in time"
+        server.close()
+
+    asyncio.run(run())
+
+
 def test_interleaved_families():
     assert guard.interleaved(["a::1", "a::2", "1.1.1.1", "a::3", "2.2.2.2"]) == [
         "a::1",
@@ -320,12 +422,12 @@ def test_interleaved_families():
 
 @needs_loopback
 def test_a_site_that_does_not_answer_is_a_bad_gateway(sites):
-    async def run(proxy: Guard):
+    async def run(proxy: Relay):
         _, writer, answer = await tunnel(proxy.port, "news.example:443")  # no stand-in: refused
         assert answer.startswith("HTTP/1.1 502")
         writer.close()
 
-    with Guard() as proxy:
+    with Relay() as proxy:
         asyncio.run(run(proxy))
     assert sites.dialed == [f"{PUBLIC}:443"]
 
@@ -393,7 +495,7 @@ def test_the_home_connection_gets_the_checked_address_with_credentials(sites):
         sites.routes[(PUBLIC, 443)] = port_of(site)
         sites.routes[(PUBLIC, 80)] = port_of(named)
         sites.routes[("proxy.example", 3128)] = port_of(home)
-        with Guard("http://anna%40home:p%3Ass@proxy.example:3128") as proxy:
+        with Relay("http://anna%40home:p%3Ass@proxy.example:3128") as proxy:
             reader, writer, answer = await tunnel(proxy.port, "news.example:443")
             assert answer.startswith("HTTP/1.1 200") and await echoes(reader, writer)
             writer.close()
@@ -428,7 +530,7 @@ def test_a_proxy_that_refuses_is_told(sites):
     async def run():
         home = await http_proxy([], sites, refuse=True)
         sites.routes[("proxy.example", 3128)] = port_of(home)
-        with Guard("http://proxy.example:3128") as proxy:
+        with Relay("http://proxy.example:3128") as proxy:
             reader, writer, answer = await tunnel(proxy.port, "news.example:443")
             assert answer.startswith("HTTP/1.1 502")
             assert b"the proxy refused (407)" in await asyncio.wait_for(reader.read(), 5)
@@ -474,7 +576,7 @@ def test_a_socks_proxy_gets_the_checked_address_never_the_name(sites):
         site, home = await echo_server(), await socks_proxy(seen, sites)
         sites.routes[(PUBLIC, 443)] = port_of(site)
         sites.routes[("proxy.example", 1080)] = port_of(home)
-        with Guard("socks5h://anna:secret@proxy.example:1080") as proxy:
+        with Relay("socks5h://anna:secret@proxy.example:1080") as proxy:
             reader, writer, answer = await tunnel(proxy.port, "news.example:443")
             assert answer.startswith("HTTP/1.1 200") and await echoes(reader, writer)
             writer.close()
@@ -486,8 +588,9 @@ def test_a_socks_proxy_gets_the_checked_address_never_the_name(sites):
 
 
 def test_an_unknown_proxy_is_refused():
-    with pytest.raises(ValueError):
-        Guard("ftp://proxy.example:21")
+    for kind in (Guard, Relay):
+        with pytest.raises(ValueError):
+            kind("ftp://proxy.example:21")
 
 
 # rclone's sign-in: one local address, for one browser, while allowed
@@ -499,7 +602,7 @@ def test_the_sign_in_browsers_guard_alone_opens_rclones_listener():
     async def run():
         listener = await echo_server()
         port = port_of(listener)
-        signing_in, recording = Guard(), Guard()
+        signing_in, recording = Relay(), Relay()
         signing_in.allow(f"http://127.0.0.1:{port}")
         with signing_in, recording:
             reader, writer, answer = await tunnel(signing_in.port, f"127.0.0.1:{port}")
@@ -538,14 +641,14 @@ def test_the_recorders_exception_reaches_its_guard():
 
 @needs_loopback
 def test_a_head_too_large_is_refused():
-    async def run(proxy: Guard):
+    async def run(proxy: Relay):
         _, writer, answer = await ask(
             proxy.port, "GET http://news.example/ HTTP/1.1\r\nX-Long: " + "a" * guard.HEAD_LIMIT + "\r\n\r\n"
         )
         assert answer.startswith("HTTP/1.1 400")
         writer.close()
 
-    with Guard() as proxy:
+    with Relay() as proxy:
         asyncio.run(run(proxy))
 
 
@@ -556,7 +659,7 @@ def test_connections_beyond_the_limit_are_refused(sites, monkeypatch):
     async def run():
         server = await echo_server()
         sites.routes[(PUBLIC, 443)] = port_of(server)
-        with Guard() as proxy:
+        with Relay() as proxy:
             opened = [await tunnel(proxy.port, "news.example:443") for _ in range(2)]
             assert all(answer.startswith("HTTP/1.1 200") for _, _, answer in opened)
             _, writer, answer = await tunnel(proxy.port, "news.example:443")
@@ -581,7 +684,7 @@ def test_idle_and_silent_connections_are_closed(sites, monkeypatch):
     async def run():
         server = await echo_server()
         sites.routes[(PUBLIC, 443)] = port_of(server)
-        with Guard() as proxy:
+        with Relay() as proxy:
             reader, writer, _ = await tunnel(proxy.port, "news.example:443")
             assert await echoes(reader, writer)
             assert await asyncio.wait_for(reader.read(), 3) == b"", "idle: closed"
@@ -614,7 +717,7 @@ def test_a_slow_reader_holds_the_stream_back(sites):
 
         server = await asyncio.start_server(flood, "127.0.0.1", 0)
         sites.routes[(PUBLIC, 443)] = port_of(server)
-        with Guard() as proxy:
+        with Relay() as proxy:
             _, writer, _ = await tunnel(proxy.port, "news.example:443")
             await asyncio.sleep(1)
             writer.close()
@@ -643,14 +746,11 @@ def test_stopping_frees_the_port_and_closes_the_connections(sites):
     async def run():
         server = await echo_server()
         sites.routes[(PUBLIC, 443)] = port_of(server)
-        proxy = Guard()
+        proxy = Relay()
         port = proxy.start()
         reader, writer, _ = await tunnel(port, "news.example:443")
         assert await echoes(reader, writer) and proxy.connections == 1
-        started = time.monotonic()
-        await asyncio.to_thread(proxy.stop)
-        assert time.monotonic() - started < 2
-        assert await asyncio.wait_for(reader.read(), 2) == b"", "the tunnel ends with its guard"
+        await stopped(proxy, reader)
         writer.close()
         server.close()
         return port, proxy
@@ -658,7 +758,7 @@ def test_stopping_frees_the_port_and_closes_the_connections(sites):
     port, proxy = asyncio.run(run())
     assert refuses(port) and proxy.connections == 0
     proxy.stop()  # again: nothing
-    Guard().stop()  # never started: nothing
+    Relay().stop()  # never started: nothing
     time.sleep(0.2)
     assert threading.active_count() <= threads, "its threads end"
 
@@ -684,9 +784,9 @@ def test_the_jobs_browser_stops_its_guard_on_every_path(monkeypatch):
     ports: list[int] = []
     real = browser.launch_options
 
-    def failing(guard_port: int, http1: bool = False):
+    def failing(guard_port: int, *args):
         ports.append(guard_port)
-        raise RuntimeError(f"no browser ({real(guard_port, http1)['proxy']['server']})")
+        raise RuntimeError(f"no browser ({real(guard_port, *args)['proxy']['server']})")
 
     monkeypatch.setattr(browser, "launch_options", failing)
     with pytest.raises(RuntimeError):
@@ -755,7 +855,7 @@ def test_chromium_goes_through_its_guard_for_everything(sites, monkeypatch):  # 
     server = loop.run_until_complete(http_server(heads))
     threading.Thread(target=loop.run_forever, daemon=True).start()
     sites.routes[(PUBLIC, 80)] = port_of(server)
-    with Guard() as proxy, sync_playwright() as playwright:
+    with Relay() as proxy, sync_playwright() as playwright:
         chromium = playwright.chromium.launch(**browser.launch_options(proxy.port))
         try:
             page = chromium.new_page()

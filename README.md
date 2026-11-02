@@ -68,7 +68,10 @@ the app's browser or taken from a template, not by code.
     environment, as the browser does. Live and upcoming streams are skipped; an entry that
     cannot be had (private, removed) is skipped with a line in the progress log, and tried again
     next run. A video larger than the job's largest file is not downloaded (yt-dlp's
-    `max_filesize`).
+    `max_filesize`). *Impersonate a browser* has yt-dlp present itself as a browser (its own
+    impersonation with `curl_cffi`, for sites behind Cloudflare that answer it with 403);
+    extractors that need it use it anyway. For galleries, the same option is gallery-dl's browser
+    emulation (Chrome's headers and TLS ciphers).
   - `gallery`: images of galleries, albums and profiles on the sites gallery-dl supports;
     gallery-dl lists them, Harvester downloads them with its checks and the page as `Referer`.
   - `remote`: the files in a folder of a WebDAV, SFTP, FTP or S3 server, a Nextcloud public
@@ -104,7 +107,7 @@ the app's browser or taken from a template, not by code.
 - **Recipes** (`ex_app/lib/harvester/recipe.py`): the steps to sign in (replayed in Chromium;
   without steps the pages are fetched over HTTP), the listing to start at, levels of links to
   follow (a year, then its issues), the file links, and the next page's link. Each level has
-  a CSS selector and a pattern: a regular expression on the link's URL whose named groups
+  a selector and a pattern: a regular expression on the link's URL whose named groups
   (`(?P<year>\d{4})`) become values.
 - **Numbered pages:** a listing paged by numbers (`‹ 1 [2] 3 … 9 ›`) instead of one "next" link
   has `"next": {"kind": "number", "selector": <the numbers' container>, "level": 0}`
@@ -141,6 +144,33 @@ the app's browser or taken from a template, not by code.
   its switch **optional**; a click whose text reads like a consent button (*Accept*, *OK*,
   *Alle akzeptieren*, *Zgadzam się*, …) gets the hint **make optional?**, never more.
   **Test the recipe** lists the steps it went on without apart from the problems.
+- **Selectors with alternatives** (`harvester/selectors.py`): recorder.js finds a step's element
+  by every selector that matched it alone when it was recorded, ranked as Playwright's codegen
+  ranks them: a test id (`data-testid`, `data-test`, `data-qa`, `data-cy`), an id that does not
+  look generated (`:r1:`, `ember123`, hashes), its role and accessible name
+  (`internal:role=button[name="Sign in"s]`), `aria-label`, `name`, stable classes, its text
+  (`span:text-is("Accept all")`), its place among its siblings last; within the nearest
+  ancestor with a test id or id when that makes one unique (`#login input[name="user"]`). A
+  role is only written where its name is certain (no pictures, icons from CSS or hidden text
+  inside). The step keeps the best as `"selector"`, the rest as `"alternatives"`. A replay
+  (`selectors.resolve(page_or_frame, step)`) takes the selector once it finds anything; after
+  2 s without, the first alternative that finds exactly one element, within the step's time,
+  and the log says `step 3: selector repaired (#old → [data-testid="go"])`. Levels and the file
+  links keep alternatives that matched the same links (within a stable ancestor, the links'
+  own classes, their file type: `a[href$=".pdf" i]`), tried when the selector's links match
+  none of the pattern (`level 1: selector repaired (…)`, `file links: …`); the next page's link
+  its own, tried when it is not on the page (`next page: …`). The recipe stays as it is, each
+  repair is said once a run and **Test the recipe** lists them. Over HTTP the role selectors of
+  links and buttons and `text-is` work too. Recipes without alternatives run as before. For
+  the next page's link a `rel="next"` comes first, and its place only when nothing else finds
+  it: a pager without classes (`‹ 1 2 ›`) is found by its `›`, never as its first link, which
+  on page 2 is "‹ previous".
+- **The listing where the steps end:** a listing picked on the page the recorded steps lead to
+  (nothing browsed since), whose address carries a token of the visit (`code`, `ticket`,
+  `token`, `sid`, `session`, `state`, `sig`, `signature`, `expires`, `X-Amz-*`, …), is no
+  address in the recipe: the job starts where its steps end. The recorder warns of such tokens
+  in the listing's address and in a step's (an address typed, Back or Forward to a sign-in's
+  return address), as they are likely spent when the job runs.
 - **Values:** the download URL (`{url}/download`), the file's name
   (`{year}/iX {year}-{issue:02d}`) and the tags (`{year}`) are templates of the link's values:
   the pattern's groups and `url`, `text`, `page`, `host`, `filename`, `stem`, `ext`, and in the
@@ -166,29 +196,83 @@ the app's browser or taken from a template, not by code.
   A recipe is checked when the job is saved: the kinds of its parts (text, numbers, lists), the
   actions, credentials (`username`, `password`, `totp`) and keys of its steps (`Enter`, `Tab`,
   `Control+A`, one character, ...), its dates, the next page's level, the key's values.
+- **Values from the page** (`patterns.page_values`): a level of links to follow or the file
+  links may take `"values"` from the page around each link, not only from its address: the
+  link's text, an attribute, or an element near it (`{"name": "date", "closest": "tr",
+  "selector": "td.date", "attribute": "", "regex": "...", "type": "date"}`: the link's row or
+  card, the element in it, its attribute or else its text, narrowed by a pattern whose named
+  groups are values too). A value is `text`, a `number` or a `date`: dates as English, German and
+  Polish pages write them (`2026-11-02`, `02.11.2026`, `2. November 2026`, `2 listopada 2026`,
+  `November 2, 2026`, `listopad 2026`; numbers day first) become `2026-11-02`, with `{year}`,
+  `{month}` and `{day}` where the address's pattern gives none. They name files and tags as the
+  pattern's groups do; a value its element or pattern does not find is missing (a file name
+  naming it fails that file, a tag naming it is left out). Read alike over HTTP and in the
+  browser; a level without values reads its links as before.
+- **Listings in JSON** (`harvester/jsonlist.py`): the file links may be `"kind": "json"`, for a
+  site whose page fetches its listing (an XHR): the request's address (`{year}` and the like from
+  the levels before), the path to its items (`data.items`: JSONPath's dotted form, with `[n]` and
+  `*`), an item's fields for the file's address and its text, values from fields
+  (`{"name": "date", "field": "issued", "type": "date"}`), and a page parameter (`{"param":
+  "page", "first": 1, "step": 1}`: a page number, or an offset) set for each page until one has
+  no items, or the job's *Pages*. The job asks for it as for a file: the guarded HTTP client,
+  with the browser's cookies when it has a browser (not the browser's own `context.request`,
+  which passes by its routes); at most 16 MB, 64 levels deep and 1000 items a page.
+- **Codes by e-mail:** a step `{"action": "mail-code", "selector": ..., "from": ..., "subject":
+  ...}` types a code the site sends by e-mail. The job waits (`"wait"`: 180 s by default, 10 to
+  600) for a message of that sender and subject (patterns, empty: any) that came into the
+  account's **Mailbox for codes** after the step began (with a minute's grace: the click before
+  it sent the message while its page settled), newest first, and types its code: the step's
+  `regex` (its group `code`, else its first group), else the first number of 6 to 8 digits, in
+  the subject, the text or the HTML's text. Read-only (the folder selected read-only,
+  `BODY.PEEK`): nothing is marked; the code is never logged.
 - **Recorder** (`ex_app/lib/harvester/browser/`): a headless Chromium in the app, shown on the
   page and driven from it over a WebSocket. Sign in and go to the listing (recorded as steps),
   browse without recording, then pick the links to follow and the file links: the app proposes
   a pattern with named groups for each (`patterns.propose`), outlines what it matches in the
   page (solid) and what it leaves out (dashed), lists examples with their values, and proposes
-  a file name and tags. Edit a pattern and the outlines follow. Passwords are never recorded:
+  a file name and tags. A proposal leaves out what changes from visit to visit: a fragment
+  (`#page=2`), a token's parameters (above) and tracking ones (`utm_*`, `;jsessionid=`); the
+  pattern takes any or none of them. It reads `Report%202024.pdf` as `Report%20` and the year
+  2024. Links that share a generic name (`download.php?id=N`) are named after their texts
+  (`{text}`), or their groups (`{id}`) when the texts are the same, and the recorder offers
+  `{disposition}`, the server's name for the file. Edit a pattern and the outlines follow, as
+  Python reads it: JavaScript's RegExp outlines with Python's syntax translated (`(?P<n>`,
+  `(?P=n)`, a leading `(?i)`), and with Python's own matches where it cannot (`(?x)`, `(?i:…)`,
+  atomic groups). Passwords are never recorded:
   the job fills in its account. **Back**, **Forward**, **Reload** and the address field's
   **Go** are buttons (Tab and Enter reach them), here and in **Continue in the browser**. They
   are steps only while recording: an address typed, Back and Forward become a step "goto" to the
   page arrived at (a job's browser has no history to go back in), Reload none; browsing and
   picking record nothing. Every pick (each level of links to follow, the file links, the next
-  page) has the same controls: its element (CSS selector) and pattern to edit, **Pick again**
+  page) has the same controls: its element (a selector, its alternatives listed) and pattern to
+  edit (a selector edited drops its alternatives), **Pick again**
   and **Remove** (a removed level's later levels move up); **Undo pick** takes back the last
   change of the picks. The recorder starts with the form's recipe, so its picks can be changed
   there. Picking a number of a numbered pagination as the next page proposes numbered pages,
   showing this page's number and the next one's (**Use the picked link alone** switches back).
   **Add: scroll to load more** (while recording) adds that step and scrolls the page.
+  **Pick a value** (with each pick of links), then a click on a text near one of its links (a
+  date in its row, a title in its card), adds a value: where it is from the link, and a type and
+  pattern proposed from what it reads beside every link (a date's form recognised); the examples
+  show the values, and their names, types and patterns can be changed. **Network** lists the
+  page's answers in JSON to its XHR and fetch() requests (address, size); **Use as the file
+  links** makes one the JSON listing, its items, fields, date and page parameter proposed from
+  the answer, to check and change. In the Steps list a code typed into a field offers **code from
+  e-mail?** (its sender and subject), which makes it the step above. The window's size the steps
+  were recorded and the links picked in is the recipe's `"viewport"`; the job's browser takes it
+  (1280 × 800 without one).
   **Test the recipe** runs it as a job would (the site source's own walk, `Site.survey`, in a
   browser context of its own with the recorder's session, shown on the screen; nothing recorded,
   nothing downloaded) and lists the pages it read with the links matched, the first 20 file
   links with the names the job's *File name* gives them, and the problems: a step that failed
   (with the page it was on), a selector that matched nothing, a pattern none matched. It reads
   at most 30 listing pages and three minutes; **Stop the test** ends it, and its context closes.
+  **Test as the job runs** (a saved job) is the honest one: a new browser context at the
+  recipe's window, without the recorder's session, signed in by the steps with the job's stored
+  account (its one-time code, its mailbox for codes, its cookies; the app reads it, the page never
+  has it), so a sign-in that only the recorder's session got past fails here as in a run; with
+  the form's file types and file names (their extension); and the first 64 KB of the first file
+  fetched, to tell a file of the job's types from a web page (a sign-in page, say).
   A recipe without steps is fetched over HTTP by the job: the test says so. **⛶ Full window** gives
   the browser the whole screen (the browser's full screen, above Nextcloud's header; Esc leaves it):
   it takes the screen's size, pages lay out for it, the controls float over it and the recipe is in
@@ -211,6 +295,35 @@ the app's browser or taken from a template, not by code.
   with the job's Save; in the job's browser after the person confirms (a new account forgets
   the kept session). **Use for this job** (the job's browser) keeps the browser's session for
   the job's next run, as Done does, but the browser stays open and no run starts.
+- **The site changed** (`ex_app/lib/harvester/watch.py`): each run of a website job counts, per
+  level of its recipe (the listing, each level of links to follow, the file links), the pages read,
+  the links its selector found and those its pattern matched, and keeps that summary (the last
+  five good runs', and five of the others). When a level that found links in the good runs before
+  (with the same selector) finds none now, or its links no longer match its pattern, the run ends
+  **Changed** (neither OK nor failed): the job list says which level and how many it found before
+  (*level 1 found nothing (it found 12 before)*), the progress log adds its selector and the first
+  page without a match, with **Show what the browser saw** of that page, and the person is told
+  once, until a run is OK again. A listing that never found anything is no change, nor are a page
+  asking for a person, a refused sign-in or an on-demand job's fetch (another page). Another
+  recipe forgets the summaries. A changed job's row offers **Test the recipe**
+  (`POST /api/jobs/<id>/test`): the recipe's test (`Site.survey`, nothing downloaded) as a job's
+  turn, in the queue as a run (a runner, its site, a browser), its pages and problems in the
+  progress log, judged as a run; a test that finds the site as before ends the warning. A test
+  is no run: the schedule counts from the last run. **Test the recipe weekly** (a website job's
+  option, off by default) tests it so on Sundays, at an hour of the job's own (counted from when
+  it is turned on); a run asked for meanwhile takes the test's place.
+- **Recipes as files** (`ex_app/lib/harvester/recipe_file.py`): **Export recipe** in a job's form
+  downloads `<name>.harvester.json`: `{"format": "harvester-recipe", "version": 1}` with the
+  job's name, source, schedule (`""`: on demand), one-time, tag templates and options (a website's
+  recipe as an object), checked as *Save* checks the form. Never in it: the account (passwords,
+  tokens, cookies, rclone's configuration; a step that fills in the account loses any value), the
+  kept session, the folder and the time zone. **Import a recipe** on the *New job* page reads such
+  a file (256 KB at most): its schema (every field known and of its kind and size, the format's
+  version, a known source, only the source's options), then the checks a saved job passes; the
+  form opens filled in, without a folder, to choose the folder and the account; nothing is saved
+  until *Save*. Nothing in a file runs. **Save as template** keeps the form's job as such a file,
+  the person's own (50 at most, in the app's database): *Your templates* on the *New job* page
+  lists them, each to use (checked as an import) or **Remove**.
 - **Sessions and challenges:** a job keeps its browser session (cookies, local storage; encrypted in
   Nextcloud, like its account) and replays the sign-in only when the listing shows a sign-in (a
   password or user name field, or a sign-in's address). The sign-in is the steps up to the last fill
@@ -322,10 +435,13 @@ the app's browser or taken from a template, not by code.
   view ends: Done, Cancel, another view of the page, closing the page, the time limits, or
   (rclone's sign-in) the wizard's end.
 - **Admin settings:** *Administration settings > Additional settings > Harvester* sets the
-  numbers of jobs and browsers at once (1 to 8 each) and the proxy; the environment's values
-  (`HARVESTER_RUNNERS`, `HARVESTER_BROWSERS`, `HARVESTER_PROXY`, `HARVESTER_PROXY_NAME`) are the
-  defaults. The app reads them each minute, so a change needs no restart: a lowered number lets
-  the running jobs and open browsers finish first.
+  numbers of jobs and browsers at once (1 to 8 each), the proxy, and the **Browser network
+  guard** (on by default; see *Safety*); the environment's values (`HARVESTER_RUNNERS`,
+  `HARVESTER_BROWSERS`, `HARVESTER_PROXY`, `HARVESTER_PROXY_NAME`, `HARVESTER_GUARD`: off with
+  `0`, `false` or `off`) are the defaults. The app reads them each minute, so a change needs no
+  restart: a lowered number lets the running jobs and open browsers finish first, and the guard's
+  setting applies to the browsers started afterwards. Switch the guard off only when the External
+  Apps' network is already firewalled from private networks and the cloud's metadata service.
 - **Proxy:** with a proxy a job may go **Through the proxy**: its downloads, its browser, yt-dlp
   and gallery-dl use it, and sites that refuse servers' addresses see the proxy's. HTTP(S), with
   credentials in the address if it needs them (`http://user:password@host:3128`), or SOCKS5
@@ -340,8 +456,9 @@ the app's browser or taken from a template, not by code.
   through the proxy starts its log with it. Both ask Cloudflare's `cdn-cgi/trace` through the
   same connection the pages and downloads use, so it is the proxy's address only when the proxy
   is really used.
-- **Notifications:** a job that needs a person, or fails, notifies its user; the same failure
-  again on the next runs does not. A one-time job tells what it did as it is deleted.
+- **Notifications:** a job that needs a person, fails, or finds its site changed notifies its
+  user; the same failure (or change) again on the next runs does not. A one-time job tells what
+  it did as it is deleted.
 - **Templates** (`ex_app/lib/harvester/presets/*.json`), jobs with a few parameters, one card
   each on the *New job* page. A parameter may suggest values (`suggestions`: values, or
   `{value, label}` shown by the label, each passing its `check`), offered as buttons on the card:
@@ -369,32 +486,42 @@ the app's browser or taken from a template, not by code.
     host and scheme;
   - **OAuth2** for mail (Gmail, Outlook or any provider's token endpoint): a client ID and secret
     and a refresh token sign in with XOAUTH2; a refresh token the provider replaces is kept.
-- **Safety:** the browser's pages and the downloads reach only http(s) addresses outside local
-  and private networks, checked on the addresses a name resolves to and on every request and
-  redirect (a `file://` page would show the app's secret): a page's WebSockets too (one refused
-  is never connected), its service workers are off, and a file a recorded site links to is
-  downloaded by the app's guarded HTTP client with the browser's cookies, not by the browser.
-  Behind those checks, every connection of a browser goes through its own guard, a proxy in the
-  app on 127.0.0.1 (`browser/guard.py`; for loopback too), which sees what Playwright's routes
-  do not, such as a web worker's WebSockets: it looks the name up once, refuses it unless every
-  address is public, and connects to the address it checked, so a name that changes meanwhile
-  (DNS rebinding) gains nothing; the home connection is asked for that address, not the name.
-  WebRTC sends only through the proxy (no UDP of its own), and WebTransport does not connect
-  through one. rclone's sign-in browser alone may open rclone's listener (`127.0.0.1:53682`),
-  while rclone runs. yt-dlp, gallery-dl, rclone and mail servers connect by themselves (their
-  addresses checked the same way before, not their redirects), as do the guarded HTTP client's
-  downloads after their check: there the External Apps' network rules stay the guard. Pages
-  and feeds are read up to 16 MB, a file in chunks up to the job's largest size. Chromium, its
-  Playwright driver, rclone, gallery-dl and ffmpeg run without the app's secrets in their
-  environment (a proxy's password goes to gallery-dl in a 0600 file), and the app's process is
-  undumpable, so its `/proc` files (its environment) are root's. The app runs as the user
-  `harvester`, frpc as `harvester-frp`, whose configuration (HaRP's key) `harvester` may not
-  read, both without a way back to root (`setpriv --no-new-privs`, `start.sh`). A job's id is
-  never used again. A person's pattern runs with a time limit, in the recorder (2 s for a page)
-  and in the runs (1 s a text: feeds' links, mail's senders, subjects and file names, release
-  files, the wait pattern), letting the other threads go on meanwhile; one that takes longer
-  fails its job with a message, not the app. The recorder's WebSocket takes only Nextcloud's
-  origin (`NEXTCLOUD_URL`, more in `HARVESTER_ORIGINS`).
+  - **a mailbox for codes** (`code_mailbox`, websites): the IMAP mailbox a sign-in's code comes
+    to, `key = value` per line: `host`, `user`, `password`; `port`, `folder`, and `auth` with
+    OAuth2's `client_id`, `client_secret`, `refresh_token` (and `token_url`) as for mail. Without
+    a user and password of its own, the job's username and password sign in to it.
+- **Safety:** the browser's pages and the downloads reach only http(s) addresses outside local and
+  private networks, checked on the addresses a name resolves to and on every request and redirect (a
+  `file://` page would show the app's secret): a page's WebSockets too (one refused is never
+  connected), its service workers are off, and a file a recorded site links to is downloaded by the
+  app's guarded HTTP client with the browser's cookies, not by the browser. Behind those checks,
+  every connection of a browser goes through its own guard, a proxy on 127.0.0.1 in a process of its
+  own (`browser/guard.py`; for loopback too; without the app's secrets, undumpable, ending with the
+  app; one that fails closes its port, and the browser's connections fail; each browser has
+  credentials of its own for its guard, so one that reaches another browser's guard, on a crashed
+  guard's port, say, is refused there), which sees what Playwright's routes do not, such as a web
+  worker's WebSockets: it looks the name up (its checked addresses kept for a minute), refuses it
+  unless every address is public, and connects to an address it checked, so a name that changes
+  meanwhile (DNS rebinding) gains nothing; the home connection is asked for that address, not the
+  name. With the admin's *Browser network guard* off, the browsers connect by themselves (the home
+  connection given to Chromium): the routes still check what Playwright sees, but a web worker's
+  WebSockets and a name that changes after its check (DNS rebinding) are then kept off the private
+  network by the External Apps' firewall alone. WebRTC sends only through the proxy (no UDP of its
+  own), and WebTransport does not connect through one. rclone's sign-in browser alone may open
+  rclone's listener (`127.0.0.1:53682`), while rclone runs (without a guard, by the routes' check
+  alone). yt-dlp, gallery-dl, rclone and mail servers connect by themselves (their addresses checked
+  the same way before, not their redirects), as do the guarded HTTP client's downloads after their
+  check: there the External Apps' network rules stay the guard. Pages and feeds are read up to 16
+  MB, a file in chunks up to the job's largest size. Chromium, its Playwright driver, rclone,
+  gallery-dl and ffmpeg run without the app's secrets in their environment (a proxy's password goes
+  to gallery-dl in a 0600 file), and the app's process is undumpable, so its `/proc` files (its
+  environment) are root's. The app runs as the user `harvester`, frpc as `harvester-frp`, whose
+  configuration (HaRP's key) `harvester` may not read, both without a way back to root (`setpriv
+  --no-new-privs`, `start.sh`). A job's id is never used again. A person's pattern runs with a time
+  limit, in the recorder (2 s for a page) and in the runs (1 s a text: feeds' links, mail's senders,
+  subjects and file names, release files, the wait pattern), letting the other threads go on
+  meanwhile; one that takes longer fails its job with a message, not the app. The recorder's
+  WebSocket takes only Nextcloud's origin (`NEXTCLOUD_URL`, more in `HARVESTER_ORIGINS`).
 
 ## Development
 

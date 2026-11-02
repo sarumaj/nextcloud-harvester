@@ -8,6 +8,9 @@ A run asks the server for few things: a sender that is a plain address or domain
 by the server, the headers come a hundred messages at a time, and a message whose attachments
 were all handled (or that is not the job's) is remembered and not read again, until the job's
 filters change.
+
+The same access reads a code a website sends by e-mail for its sign-in (code_from_mail, the site
+source's step "mail-code"): read-only too, and the code is never logged.
 """
 
 import base64
@@ -19,9 +22,12 @@ import imaplib
 import posixpath
 import re
 import ssl
+import time
 from collections.abc import Callable, Iterator
 from email.message import EmailMessage
 from typing import Any, BinaryIO, ClassVar
+
+from bs4 import BeautifulSoup
 
 from .. import browser, patterns
 from . import download
@@ -360,6 +366,34 @@ class Mail(Source):
                 if all(seen(key) for key in keys):
                     self.remember(done(uid))
 
+    def newest_code(self, imap: Any, after: float, pattern: str) -> str:
+        """The code in the newest message of the sender and subject asked for that came in after
+        the time (code_from_mail), or ""; read with BODY.PEEK, nothing is marked."""
+        uids = self.search(imap)[:CODE_MESSAGES]
+        if not uids:
+            return ""
+        status, data = imap.uid("FETCH", uid_set(uids), "(UID INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM SUBJECT)])")
+        if status != "OK":
+            raise SourceError(f"the IMAP server could not give the messages' headers in {self.settings['folder']}")
+        found = []
+        for index, part in enumerate(data or []):
+            if not (isinstance(part, tuple) and len(part) > 1):
+                continue
+            after_part = data[index + 1] if index + 1 < len(data) and isinstance(data[index + 1], bytes) else b""
+            meta = part[0] + b" " + after_part
+            uid = re.search(rb"UID (\d+)", meta)
+            header = email.message_from_bytes(part[1], policy=email.policy.default)
+            if uid and arrived(meta) >= after and self.matches(header):  # type: ignore[arg-type]
+                found.append((arrived(meta), int(uid.group(1)), uid.group(1)))
+        for _, _, uid in sorted(found, reverse=True):
+            status, data = imap.uid("FETCH", uid, "(BODY.PEEK[])")
+            if status != "OK":
+                continue
+            code = code_in(email.message_from_bytes(fetched_bytes(data), policy=email.policy.default), pattern)  # type: ignore[arg-type]
+            if code:
+                return code
+        return ""
+
     def address(self, uid: str) -> str:
         """A message's address, for the progress log."""
         return f"imap://{self.settings['host']}/{self.settings['folder']};UID={uid}"
@@ -477,3 +511,115 @@ class Mail(Source):
                 pass
             self.imap = None
         self.current = None
+
+
+# A step "type the code from e-mail": the code when the step names no pattern (the first number of
+# 6 to 8 digits), how long it waits for the message by default (s), how often it looks, and the
+# grace before the step began a message may have come in: the step before it (the click that sent
+# the code) waits for its page to settle, up to some 15 s, while the message may arrive already.
+CODE_PATTERN = r"(?<![\d#])\d{6,8}(?!\d)"
+CODE_WAIT = 180
+CODE_POLL = 5
+CODE_GRACE = 60
+# The newest messages looked at in each round.
+CODE_MESSAGES = 20
+# What the account's "code_mailbox" may set, besides its sign-in (the user, the password, OAuth2's).
+MAILBOX_SETTINGS = ("host", "port", "folder", "auth", "token_url")
+MAILBOX_SECRETS = {
+    "user": "username",
+    "username": "username",
+    "password": "password",
+    "client_id": "client_id",
+    "client_secret": "client_secret",
+    "refresh_token": "refresh_token",
+}
+INTERNALDATE = re.compile(rb'INTERNALDATE "([^"]+)"')
+
+
+def code_mailbox(secrets: dict[str, str]) -> tuple[dict, dict[str, str]]:
+    """The code mailbox's settings and sign-in from the account's "code_mailbox": "key = value" (or
+    "key: value") per line. Without a user and password of its own (nor OAuth2's), the account's
+    username and password sign in (a site whose login is the mailbox's)."""
+    settings: dict = {}
+    sign_in: dict[str, str] = {}
+    for line in secrets.get("code_mailbox", "").splitlines():
+        key, separator, value = line.partition("=") if "=" in line else line.partition(":")
+        key, value = key.strip().lower(), value.strip()
+        if not separator or not value:
+            continue
+        if key in MAILBOX_SETTINGS:
+            settings[key] = value
+        elif key in MAILBOX_SECRETS:
+            sign_in[MAILBOX_SECRETS[key]] = value
+    if not settings.get("host"):
+        raise AuthError("the sign-in sends a code by e-mail: set the mailbox for codes in the job's account")
+    if not sign_in.get("username"):
+        sign_in["username"] = secrets.get("username", "")
+    if not sign_in.get("password") and not sign_in.get("refresh_token"):
+        sign_in["password"] = secrets.get("password", "")
+    return settings, sign_in
+
+
+def arrived(meta: bytes) -> float:
+    """When a message came into the mailbox (its INTERNALDATE in a FETCH's answer), as a time();
+    0 when the answer has none."""
+    found = INTERNALDATE.search(meta)
+    if not found:
+        return 0.0
+    try:
+        return email.utils.parsedate_to_datetime(found.group(1).decode().replace("-", " ", 2)).timestamp()
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def code_in(message: EmailMessage, pattern: str) -> str:
+    """The code in the message: the pattern's group "code", else its first group, else its match;
+    searched in the subject, then the plain text, then the HTML's text (without styles and
+    scripts, whose colours look like codes). "" when there is none."""
+    texts = [str(message.get("Subject", ""))]
+    for kind in ("plain", "html"):
+        part = message.get_body(preferencelist=(kind,))
+        if part is None or part.get_content_subtype() != kind:
+            continue
+        content = str(part.get_content())
+        if kind == "html":
+            page = BeautifulSoup(content, "html.parser")
+            for hidden in page(["style", "script", "head"]):
+                hidden.decompose()
+            content = page.get_text(" ")
+        texts.append(content)
+    for text in texts:
+        match = pattern_search(pattern, text)
+        if match:
+            groups = match.groupdict()
+            return str(groups.get("code") or (match.group(1) if match.re.groups else match.group(0)))
+    return ""
+
+
+def code_from_mail(step: dict, secrets: dict[str, str], began: float, pause: Callable[[float], None]) -> str:
+    """The code of a step "mail-code": the newest message of the step's sender and subject
+    (patterns, empty: any) that came into the code mailbox (code_mailbox) after the step began
+    (less CODE_GRACE), read-only, its code found with the step's regex (CODE_PATTERN without).
+    Waits for it up to the step's "wait" seconds, looking every CODE_POLL (pause: the run's or the
+    test's wait, which a stop ends); SourceError when none comes. The code is in no message."""
+    settings, sign_in = code_mailbox(secrets)
+    filters = {"from_pattern": str(step.get("from") or ""), "subject_pattern": str(step.get("subject") or "")}
+    with download.guarded_client() as client:
+        mailbox = Mail(settings | filters | {"since_days": 1}, sign_in, client)
+        deadline = time.monotonic() + int(step.get("wait") or CODE_WAIT)
+        try:
+            imap = mailbox.open()
+            while True:
+                code = mailbox.newest_code(imap, began - CODE_GRACE, str(step.get("regex") or CODE_PATTERN))
+                if code:
+                    return code
+                if time.monotonic() >= deadline:
+                    raise SourceError(
+                        f"no code came by e-mail to {settings['host']} within {int(step.get('wait') or CODE_WAIT)} s "
+                        "(of the step's sender and subject)"
+                    )
+                pause(CODE_POLL)
+                # New messages show after a command; NOOP asks the server for them.
+                imap.noop()
+        finally:
+            mailbox.close()

@@ -4,14 +4,17 @@ recipe's levels of links to the file links, page after page, and the files not k
 Known files end it once the site went through completely (stop_at_seen); a link whose values
 disagree with the levels above it is another listing's; a next page read already ends its
 listing (a loop); a page that should list something and shows a sign-in, an error or another
-page is a gap, which keeps the run from counting as a complete pass.
+page is a gap, which keeps the run from counting as a complete pass. The file links may be a
+JSON listing instead of a page's (near.json_pages), and a level's links may carry values read
+from the page around them (patterns.page_values).
 """
 
 import dataclasses
 from collections.abc import Callable, Generator, Iterator
 from typing import Any
 
-from .. import patterns
+from .. import jsonlist, patterns
+from . import near
 from .base import ChallengeError, Item, SourceError, pattern_search
 
 # The seen key a run records once it has gone through the whole site (not stopped by
@@ -43,7 +46,20 @@ class Walk:  # pylint: disable=too-many-instance-attributes
 
     def items(self) -> Iterator[Item]:
         """The walk from the recipe's start (None: the page its steps ended on)."""
-        yield from self.walk(self.recipe.get("start") or None, 0, {}, {"found": False, "new": False})
+        yield from self.listing(self.recipe.get("start") or None, 0, {}, {"found": False, "new": False})
+
+    def listing(self, url: str | None, level: int, values: dict, outcome: dict) -> Iterator[Item]:
+        """The listing at the level: its pages, or the JSON listing that holds the file links."""
+        if level == len(self.follow) and self.recipe["links"].get("kind") == "json":
+            return self.json_files(level, values, outcome)
+        return self.walk(url, level, values, outcome)
+
+    def json_files(self, level: int, values: dict, outcome: dict) -> Iterator[Item]:
+        """A JSON listing's pages, read one after another while its files go on."""
+        pages = near.json_pages(self.recipe["links"], self.site.settings, self.driver, values)
+        for number, page in enumerate(pages, 1):
+            if (yield from self.files(page, number, values, outcome, level)):
+                return
 
     def known(self, item: Item) -> bool:
         """Whether the item is known; a key recorded before keys were made stable (or before the
@@ -63,25 +79,41 @@ class Walk:  # pylint: disable=too-many-instance-attributes
         pattern matches and that were not taken yet, with their groups; a click link's pattern
         is searched in its text, and its place among the elements kept (_click)."""
         clicked = spec is self.recipe["links"] and bool(spec.get("click"))
-        links = self.candidates(page, spec["selector"], clicked)
-        found = []
-        for index, (url, text) in enumerate(links):
-            groups = self.groups(spec, text if clicked else url, values)
-            taken = f"{patterns.stable_url(url)}#{text}" if clicked else patterns.stable_url(url)
-            if groups is not None and taken not in self.visited:
-                self.visited.add(taken)
-                found.append((url, text, groups | ({"_click": index} if clicked else {})))
-        event = {"level": where[0], "page": where[1], "url": self.driver.address(page), "selector": spec["selector"]}
+        links, event = self.candidates(page, spec, clicked, where[0])
+        found = [entry for index, link in enumerate(links) if (entry := self.take(spec, link, values, clicked, index))]
         kind = "follow" if spec is not self.recipe["links"] else "links"
-        self.site.observe(event | {"kind": kind, "found": len(links), "matching": len(found)})
+        event |= {"level": where[0], "page": where[1], "kind": kind}
+        what = self.site.observe(event | {"found": len(links), "matching": len(found)})
+        # A JSON listing has no page to picture.
+        if what and not isinstance(page, jsonlist.JsonPage):
+            self.site.notice(page, what)
         return found
 
-    def candidates(self, page: Any, selector: str, clicked: bool) -> list[tuple[str, str]]:
-        """The page's links of the selector (address and text); a click link's address is the
-        page's own, as it has none."""
+    def candidates(self, page: Any, spec: dict, clicked: bool, level: int) -> tuple[list, dict]:
+        """The level's links on the page (address, text, the values' texts where it has values;
+        Site.listed: a selector's alternative if need be), and where they were read; a click
+        link's address is the page's own, as it has none."""
         if clicked:
-            return [(self.driver.address(page), text) for text in self.driver.targets(page, selector)]
-        return self.driver.links(page, selector)
+            address = self.driver.address(page)
+            texts = self.driver.targets(page, spec["selector"])
+            return [(address, text) for text in texts], {"url": address, "selector": spec["selector"]}
+        what = "file links" if spec is self.recipe["links"] else f"level {level + 1}"
+        return self.site.listed(self.driver, page, spec, what)
+
+    def take(self, spec: dict, link: tuple, values: dict, clicked: bool, index: int) -> tuple | None:
+        """A link (address, text, the values' texts) as the level takes it, with its values
+        (a click link's place among the elements as _click); None when its pattern does not
+        match, its values belong to another listing, or it was taken already."""
+        url, text, *texts = link
+        groups = self.groups(spec, text if clicked else url, values)
+        taken = f"{patterns.stable_url(url)}#{text}" if clicked else patterns.stable_url(url)
+        if groups is None or taken in self.visited:
+            return None
+        self.visited.add(taken)
+        if spec.get("values"):
+            # A date's year, month and day where the link's pattern gives none.
+            groups |= patterns.page_values(spec["values"], texts[0], pattern_search, groups)
+        return url, text, groups | ({"_click": index} if clicked else {})
 
     @staticmethod
     def groups(spec: dict, text: str, values: dict) -> dict | None:
@@ -102,12 +134,13 @@ class Walk:  # pylint: disable=too-many-instance-attributes
         """A page without the links it should have may be asking for a person instead; the start
         page without any is a signed-out session or a changed site, not an empty listing. A
         deeper page that shows a sign-in, an error or another page is a gap of the pass."""
-        found = self.driver.challenge(page)
+        json = isinstance(page, jsonlist.JsonPage)
+        found = None if json else self.driver.challenge(page)
         if found:
             raise ChallengeError(*found)
         if level == 0 and number == 1:
             raise StartEmpty("the start page has none of the recipe's links: signed out, or the site changed?")
-        why = self.driver.trouble(page)
+        why = "" if json else self.driver.trouble(page)
         if why:
             self.site.gaps += 1
             where = "the listing" if level == 0 else f"a level {level} page"
@@ -117,7 +150,8 @@ class Walk:  # pylint: disable=too-many-instance-attributes
         """The file of a link (Site.item) with its listing as Referer; a click link's with what
         clicks it; keyed by the recipe's key template if it has one."""
         index = values.pop("_click", None)
-        made = self.site.item(link, text, number, values, self.driver.address(page))
+        referer = page.url if isinstance(page, jsonlist.JsonPage) else self.driver.address(page)
+        made = self.site.item(link, text, number, values, referer)
         if index is not None:
             trigger = (page, self.recipe["links"]["selector"], index, text)
             made = dataclasses.replace(made, trigger=trigger, key=f"{patterns.stable_url(link)}#{text}")
@@ -144,7 +178,7 @@ class Walk:  # pylint: disable=too-many-instance-attributes
     def known_listing(self, link: str, level: int, values: dict, outcome: dict) -> Generator[Item, None, bool]:
         """A followed link's listing; True when it holds files, all known."""
         child = {"found": False, "new": False}
-        yield from self.walk(link, level + 1, values, child)
+        yield from self.listing(link, level + 1, values, child)
         outcome["found"] |= child["found"]
         outcome["new"] |= child["new"]
         return child["found"] and not child["new"]
@@ -191,7 +225,7 @@ class Walk:  # pylint: disable=too-many-instance-attributes
             return None
         if self.after.get("kind") == "number":
             return self.paced(self.driver.numbered, page, self.after["selector"], number)
-        return self.paced(self.driver.next, page, self.after["selector"])
+        return self.paced(self.site.next_page, self.driver, page, self.after)
 
     def walk(self, url: str | None, level: int, values: dict, outcome: dict) -> Iterator[Item]:
         """A listing at the level, page after page; outcome tells whether it found files and

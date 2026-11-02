@@ -4,6 +4,11 @@
 
 ### Added
 
+- **Impersonate a browser** (videos and galleries): yt-dlp's own impersonation (`curl_cffi`,
+  now in the image: extractors that need it, Dailymotion's say, use it by themselves) for all of
+  a job's requests and the generic extractor (`generic:impersonate`), for sites behind
+  Cloudflare's bot check that answer yt-dlp with 403; gallery-dl's browser emulation (Chrome's
+  headers and TLS ciphers). A yt-dlp error asking for impersonation names the option.
 - **Steps in frames:** the recorder records what is done inside frames, cross-origin ones (a
   consent banner, a sign-in) and frames in frames included; such a step keeps the frame's path
   (`"frame"`: each frame's element, its address without the query, its name), and a replay
@@ -22,9 +27,47 @@
   into the job's *Cookies* field (saved with the form, or stored after a confirmation in the
   job's browser); *Use for this job* keeps the session for the job without ending the browser.
   A cookies.txt keeps the HttpOnly mark when read and written.
-
-### Added (runs and replay)
-
+- **Values from the page:** a level of links or the file links may take values from the page
+  around each link (its text, an attribute, an element of its row or card), narrowed by a
+  pattern, as text, numbers or dates (English, German and Polish forms, with year, month and
+  day), for file names and tags. The recorder's **Pick a value** proposes them from a click near a
+  link and shows them in the examples.
+- **Listings in JSON:** the file links may be the items of a JSON answer (a site's XHR), with the
+  fields of each file's address, text and values and a page parameter; read over the guarded
+  HTTP client with the job's cookies, with size, depth and item caps. The recorder's **Network**
+  panel lists the page's JSON answers and proposes a listing from the one chosen.
+- **Codes by e-mail:** a step types a code the site sends by e-mail, from a new message of a
+  sender and subject in the account's *Mailbox for codes* (IMAP, read-only; the job's own
+  username and password without one of its own), waiting up to 3 minutes; the code is never
+  logged.
+- **Test as the job runs:** *Test the recipe* of a saved job can run as the job does: a new
+  browser context at the recipe's window (recorded with it; jobs use it too), the job's stored
+  account resolved by the app, the form's file types and names, and the first 64 KB of the first
+  file fetched to tell a file from a sign-in page.
+- **The site changed:** a website job's runs keep what each level of the recipe found; a level
+  that found links before and finds none, or whose links no longer match its pattern, ends the
+  run *Changed* with the level, its selector and a picture of its page, and its person is told
+  once. *Test the recipe* from a changed job's row runs the recipe's test as a job's turn
+  (nothing downloaded), and the option *Test the recipe weekly* does so on Sundays.
+- **Recipes as files:** *Export recipe* in a job's form downloads its recipe and settings
+  (without the account, session or folder); *Import a recipe* on the *New job* page checks such a
+  file and opens the form filled in; *Save as template* keeps it as a template of one's own.
+- **Browser network guard** in the admin's settings (and `HARVESTER_GUARD`): on by default; off,
+  the browsers connect by themselves as before the guard (the home connection given to
+  Chromium), the routes still checking what Playwright sees, while a web worker's WebSockets and
+  DNS rebinding are left to the External Apps' firewall. For the browsers started afterwards;
+  switch it off only when that network is already firewalled from private networks and the
+  cloud's metadata service.
+- **Selectors with alternatives:** the recorder finds each step's element by several selectors
+  that matched it alone (a test id, a stable id, its role and name, `aria-label`, `name`,
+  stable classes, its text, its place last), keeps the best and the others as
+  `"alternatives"`; picks keep alternatives that matched the same links. A replay tries them
+  in turn when the selector finds nothing, and the log says `step 3: selector repaired (old →
+  new)` (levels, file links, the next page alike; **Test the recipe** lists them). The recipe
+  is not changed; recipes without alternatives run as before. The pick panels list a pick's
+  alternatives.
+- **Tokens in addresses:** the recorder warns of a step's or the listing's address carrying a
+  token of the visit (`code`, `ticket`, `sid`, a signature, …), likely spent when the job runs.
 - **Kept sessions:** a kept session skips the sign-in only (the steps up to the last credential
   and what sends it); the steps from there to the listing always run. A session that no longer
   reaches the listing is given up for a sign-in anew, in a browser of its own, and forgotten if
@@ -41,8 +84,36 @@
   6266 and 5987), made safe; the listing as `Referer`; a page standing in for the file (a meta
   refresh, one download link) followed once.
 
+### Changed
+
+- **The browser's guard is fast under load:** it runs in a process of its own (without the
+  app's secrets, ending with the app), so it no longer waits for the interpreter while runners
+  and recordings keep the app busy; it relays in larger chunks with one idle timer per
+  connection, keeps a name's checked addresses for a minute (one lookup for the connections a
+  page opens at once; it still connects only to addresses it checked), and tries an address
+  family that did not connect (IPv6 without a route) second for a while. Under load, a download
+  through the guard went from about 2 MB/s to some 1.4 GB/s, and a page from 50 sites from 10 s
+  to a quarter of a second.
+- **Each browser's guard serves that browser alone:** it asks for credentials of the browser's
+  own (Proxy-Authorization, which Playwright answers), so a browser that reaches another
+  browser's guard, one that took the port of a guard that crashed, say, is refused there.
+
 ### Fixed
 
+- The recorder's "Sites see …" check asked Cloudflare through the browser's own request context,
+  so Cloudflare's cookie (`__cf_bm`) landed in the recording and in the job's kept session; it
+  asks through a request context of its own now, on the browser's way out.
+- The next page's link of a pager without classes was its first link, "‹ previous" on page 2:
+  a `rel="next"` or the link's text (`›`, *Next*) comes first now.
+- A listing reached through the recorded steps kept its address with a sign-in's spent
+  `?code=` or `?ticket=`: the job starts where the steps end then.
+- Proposed patterns held a session's id (`&sid=abc`) and never matched a link with a fragment
+  (`1.pdf#page=1`); volatile and tracking parameters and fragments are no part of them now.
+- `Report%202024.pdf` was proposed with the number 202024 instead of the year 2024.
+- Links of one script (`download.php?id=N`) were all proposed the file name `download.php`:
+  their text or their groups now, with `{disposition}` offered.
+- The recorder outlined a pattern as JavaScript reads it: Python's own syntax (`(?P=name)`, a
+  leading `(?i)`, `(?x)`) outlined wrongly or not at all.
 - Steps after the sign-in that lead to the listing (a tab, *Show all*, a filter) were skipped
   with a kept session, and a username-first or single sign-on page was taken for the listing.
 - A listing page that was gone (404), failed (500) or asked to wait (429, 503) failed the whole

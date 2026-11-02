@@ -19,13 +19,30 @@ The messages are JSON over the page's WebSocket:
   target, level}, {type: next-kind, kind (link, number)}, {type: undo} (the last step), {type:
   undo-pick} (the last change of the picks), {type: scroll} (a step: scroll to load more),
   {type: optional, step (its index), optional} (a step best effort, or required again), {type:
-  test, recipe, settings}, {type: test-stop}, {type: clear}, and the cookies panel's (jar.py).
+  test, recipe, settings, as_job, job} (as_job: the app adds the saved job's account, main.py),
+  {type: test-stop}, {type: clear}, and the cookies panel's (jar.py);
+- values from the page: {type: mode, mode: value, target, level} (pick a value near the level's
+  links), {type: value, target, level, index, changes (name, regex, type, attribute, closest,
+  selector, field)} (one changed), {type: value-add, target, level, field} (a JSON item's field as one),
+  {type: value-remove, target, level, index};
+- JSON listings: to the page {type: requests, items: [{id, url, size, status}]} (the page's
+  XHR and fetch answers in JSON, the Network panel); from it {type: json-pick, id} (one as the
+  file links), {type: json-edit, changes} (its address, items, fields, pages, pattern);
+- {type: mail-code, step, from, subject} (a filled code becomes "type the code from e-mail"; off:
+  true takes it back).
 
 Navigation (Back, Forward, Reload, an address) is never a step outside the mode record. In it,
 an address typed, Back and Forward are a step "goto" to the page arrived at (a job's browser has
 no history to go back in); Reload is none (the same page). Scrolling is no step: positions
 depend on the window's size; a listing that loads more as it is scrolled gets the step "scroll"
 (scroll to its end until no more comes), added with its button.
+
+recorder.js finds each step's element and each pick by several selectors (harvester.selectors):
+the step or the pick keeps the best and the others as alternatives. The listing (the recipe's
+start) is the page picked on, or, when that page is where the recorded steps lead and its
+address carries a token of the visit (?code=, ?ticket=, …), where the steps end: the recipe
+has no start then. The recorder warns of such tokens in the steps' addresses and the listing's
+({type: recipe, warnings}).
 
 recorder.js runs in every frame of the page. A step done inside a frame keeps the frame's path
 from the page down (recipe: "frame"), made here from the frame the report came from: each
@@ -36,6 +53,7 @@ can be opened and picked on directly).
 
 import asyncio
 import base64
+import contextlib
 import copy
 import json
 import re
@@ -59,10 +77,11 @@ from playwright.async_api import (
 )
 
 from .. import browser, pagination, patterns
-from ..recipe import SCROLL_ROUNDS, frame_address, steps_from_events, uses_browser
+from ..recipe import SCROLL_ROUNDS, frame_address, steps_from_events, token_warnings, uses_browser
 from ..sources import site
 from ..sources.base import SourceError
 from . import jar, trial
+from .datapicks import DATA_MESSAGES, DataPicks, search_all
 from . import (
     SCRIPT,
     TRACE_URL,
@@ -77,9 +96,9 @@ from . import (
 )
 from .guard import Guard
 
-# record: steps; browse: go somewhere unrecorded; follow, links, next: pick links.
-MODES = ("record", "browse", "follow", "links", "next")
-EXAMPLES = 8
+# record: steps; browse: go somewhere unrecorded; follow, links, next: pick links; value: pick a
+# value near a level's links.
+MODES = ("record", "browse", "follow", "links", "next", "value")
 # Text up to this long is typed key by key; longer (a paste) is inserted at once.
 TYPED = 200
 # Seconds closing the browser may take.
@@ -87,23 +106,36 @@ CLOSE_TIMEOUT = 10
 # Tries to start a page's screencast while it is being attached, and the pause between them.
 SCREENCAST_TRIES = 10
 SCREENCAST_PAUSE = 0.2
-# How long a person's pattern may take (s): on the links of a page, all together; on a page's
-# address. A pattern that backtracks without end ((a|aa)+$) would otherwise hold the app: it runs
-# with the regex module's time limit, in a thread that leaves the event loop free (concurrent).
-PATTERN_TIMEOUT = 2.0
 DEPTH_TIMEOUT = 0.2
 # The changes of the picks Undo can take back.
 PICKS_KEPT = 50
 # What the page sends to the browser's page itself: ignored while the recipe's test runs there.
 INPUT = frozenset({"goto", "back", "forward", "reload", "mouse", "wheel", "key", "text", "scroll"})
-# The job's settings the recipe's test takes from the form: the file names and the pages.
-TRIAL_SETTINGS = ("path", "download_url", "max_pages", "browser")
-HIGHLIGHT = "([selector, pattern]) => window.__harvester ? window.__harvester.highlight(selector, pattern) : null"
+# The job's settings the recipe's test takes from the form: the file names, the pages, and what a
+# download accepts (the file's extension comes from its type).
+TRIAL_SETTINGS = (
+    "path",
+    "download_url",
+    "max_pages",
+    "browser",
+    "http1",
+    "file_type",
+    "min_size",
+    "max_size",
+    "wait_pattern",
+)
+# The links' outlines: the pattern as JavaScript reads it (patterns.js_regex) or, where it cannot,
+# the matches Python found (one per element, in their order).
+HIGHLIGHT = (
+    "([selector, pattern, hits]) => window.__harvester ? window.__harvester.highlight(selector, pattern, hits) : null"
+)
 MATCHES = "els => els.map(e => [e.href || '', (e.innerText || '').trim().slice(0, 80)])"
 FRAME_SELECTOR = (
     "el => window.__harvester && window.__harvester.frameSelector ? window.__harvester.frameSelector(el) : ''"
 )
 SET_MODE = "mode => window.__harvester && (window.__harvester.mode = mode)"
+# The links a value is picked near (mode value): recorder.js finds the one the picked text belongs to.
+SET_VALUE_LINKS = "s => window.__harvester && (window.__harvester.valueLinks = s)"
 
 
 # The cursors the page's screen may take (CSS keywords), as the page under the mouse shows them.
@@ -113,18 +145,10 @@ CURSORS = frozenset(
 )
 
 
-def search_all(pattern: str, texts: list[str]) -> list:
-    """The pattern's match in each text (None for none or an empty text), within PATTERN_TIMEOUT
-    for all of them (else TimeoutError)."""
-    compiled = regex.compile(pattern)
-    deadline = time.monotonic() + PATTERN_TIMEOUT
-    found = []
-    for text in texts:
-        left = deadline - time.monotonic()
-        if left <= 0:
-            raise TimeoutError("the pattern took too long")
-        found.append(compiled.search(text, timeout=left, concurrent=True) if text else None)
-    return found
+def recipe_size(recipe: dict) -> tuple[object, object]:
+    """The window a recipe was recorded in (its "viewport"), else the jobs' default."""
+    size = recipe.get("viewport") if isinstance(recipe.get("viewport"), dict) else VIEWPORT
+    return size.get("width"), size.get("height")
 
 
 async def frame_path(frame) -> list[dict]:
@@ -158,7 +182,7 @@ def frame_place(frame) -> dict | None:
     return {"host": urlparse(frame.url).hostname or "", "url": frame_address(frame.url), "level": level}
 
 
-class Recorder:  # pylint: disable=too-many-instance-attributes
+class Recorder(DataPicks):  # pylint: disable=too-many-instance-attributes
     """One recording: a browser, the page shown and the recipe so far."""
 
     def __init__(self, send: Callable[[dict], Awaitable[None]]):
@@ -174,6 +198,8 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         # The steps (their indexes) the person made optional, and where they act now.
         self.optional: set[int] = set()
         self._where: dict | None = None
+        # Whether the page shown is where the recorded steps lead (no browsing since the last).
+        self._at_steps_end = False
         # The window's size: the page's, as the person makes the view larger or smaller.
         self.viewport = dict(VIEWPORT)
         self._playwright: Playwright | None = None
@@ -188,12 +214,24 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         # The picks before each change (Undo), and the level of links to follow being picked again.
         self._picks: list[tuple] = []
         self.repick: int | None = None
+        # The level a value is picked for (mode value): ("links", 0) or ("follow", level).
+        self.value_for: tuple[str, int] | None = None
+        # The page's answers in JSON (Network), and the one chosen as the listing: (url, data).
+        self.requests: list[dict] = []
+        self._json: tuple[str, object] | None = None
+        # The filled steps (their indexes) whose code comes by e-mail: {from, subject} each.
+        self.mail_codes: dict[int, dict] = {}
         # The running test's stop, and the test itself.
         self._trial_stop: threading.Event | None = None
         self._trial: asyncio.Task | None = None
         self._trial_context: BrowserContext | None = None
+        # The test's window (as the job runs: the recipe's), and whether the browser goes through
+        # the home connection (the test's requests over HTTP take it too).
+        self._trial_size: dict | None = None
+        self._home = False
         # The browser's connections all go through its guard (started with the browser).
         self._gate: Guard | None = None
+        self._proxy: dict | None = None
         self._loopback = ""
 
     @property
@@ -223,6 +261,10 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
     def recipe(self) -> dict:
         """The recipe so far."""
         steps = steps_from_events(self.events)
+        for index, code in self.mail_codes.items():
+            if index < len(steps) and steps[index]["action"] == "fill":
+                framed = {"frame": steps[index]["frame"]} if steps[index].get("frame") else {}
+                steps[index] = {"action": "mail-code", "selector": steps[index]["selector"], **code, **framed}
         for index in self.optional:
             if index < len(steps):
                 steps[index]["optional"] = True
@@ -230,18 +272,30 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         recipe["links"] = self.links
         if self.next:
             recipe["next"] = self.next
+        # The window the steps were recorded and the links picked in: the job's browser takes it.
+        if self.events or self._picks:
+            recipe["viewport"] = dict(self.viewport)
         return recipe
 
     async def start(self, session: dict | None = None, url: str = "", http1: bool = False, home: bool = False) -> None:
         """Starts the browser with an empty page, or with a job's session at a page of it (the one
         that asked for a person); http1 for the sites that cut HTTP/2 connections, home through
         the home connection."""
-        # The guard with the home connection, if chosen, and this browser's local exception.
-        self._gate = Guard(browser.PROXY if home else "")
-        self._gate.allow(self.loopback)
-        port = await asyncio.to_thread(self._gate.start)
+        self._home = home
+        # The guard (unless the admin switched it off) with the home connection, if chosen, and
+        # this browser's local exception; without one, the routes alone let that address through.
+        port = 0
+        if browser.GUARD:
+            self._gate = Guard(browser.PROXY if home else "")
+            self._gate.allow(self.loopback)
+            port = await asyncio.to_thread(self._gate.start)
         self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(**launch_options(port, http1))
+        credentials = self._gate.credentials if self._gate else None
+        options = launch_options(port, http1, home, credentials)
+        # The browser's way out (its guard, the home connection, or none), for asking which address
+        # sites see without the browser's cookies (_tell_address).
+        self._proxy = options.get("proxy")
+        self._browser = await self._playwright.chromium.launch(**options)
         self._context = await self._new_context(session)
         await self._context.expose_binding("__harvesterReport", self._report)
         await self._context.add_init_script(SCRIPT)
@@ -251,13 +305,13 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         if url and (self.opens_loopback(url) or await asyncio.to_thread(allowed_url, url)) and self._page:
             await self._page.goto(url, wait_until="domcontentloaded")
 
-    async def _new_context(self, session: dict | None) -> BrowserContext:
-        """A browser context with the session, guarded as every one of the recorder's (its
-        own, and the recipe's test's): the routes here, and the browser's guard (its proxy) for
-        all of them alike."""
+    async def _new_context(self, session: dict | None, viewport: dict | None = None) -> BrowserContext:
+        """A browser context with the session (and a window of the size, the recorder's without),
+        guarded as every one of the recorder's (its own, and the recipe's test's): the routes
+        here, and the browser's guard (its proxy) for all of them alike."""
         assert self._browser is not None
         context = await self._browser.new_context(
-            **context_options(self._browser.version, self.viewport),
+            **context_options(self._browser.version, viewport or self.viewport),
             accept_downloads=False,
             storage_state=session or None,  # type: ignore[arg-type]
         )
@@ -269,14 +323,22 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         """Tells the page which address sites see this browser come from, asked through the
         browser's own connection (its proxy, if any), and whether that is the proxy."""
         via = browser.PROXY_NAME if proxied else "directly"
+        # A request context of its own on the browser's way out: the context's own (context.request)
+        # shares the browser's cookies, and Cloudflare answers with one (__cf_bm), which would
+        # land in the person's recording and the job's kept session.
+        requests = None
         try:
-            assert self._context is not None
-            answer = await self._context.request.get(TRACE_URL, timeout=15000)
+            assert self._playwright is not None
+            requests = await self._playwright.request.new_context(proxy=self._proxy)  # type: ignore[arg-type]
+            answer = await requests.get(TRACE_URL, timeout=15000)
             seen = seen_address(await answer.text())
         except Exception as error:  # pylint: disable=broad-exception-caught
             text = (str(error) or type(error).__name__).splitlines()[0]
             await self.send({"type": "network", "via": via, "proxied": proxied, "error": text})
             return
+        finally:
+            if requests is not None:
+                await requests.dispose()
         await self.send({"type": "network", "via": via, "proxied": proxied, **seen})
 
     async def session(self) -> dict:
@@ -331,11 +393,21 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
             self._watched.add(page)
             page.on("domcontentloaded", lambda _: asyncio.ensure_future(self._loaded()))
             page.on("framenavigated", lambda frame: asyncio.ensure_future(self._navigated(frame)))
-        if page.viewport_size != self.viewport:
-            await page.set_viewport_size(self.viewport)  # type: ignore[arg-type]
+            page.on("response", lambda response: asyncio.ensure_future(self._response(page, response)))
+        # A page of the test as the job runs keeps the job's window.
+        size = self._size(page)
+        if page.viewport_size != size:
+            await page.set_viewport_size(size)  # type: ignore[arg-type]
         self._cdp = await page.context.new_cdp_session(page)
         self._cdp.on("Page.screencastFrame", lambda frame: asyncio.ensure_future(self._frame(frame)))
         await self._screencast()
+
+    def _size(self, page: Page | None) -> dict:
+        """The window of the page: the test's (as the job runs) for its pages, else the recorder's."""
+        testing = self._trial_context
+        if page is not None and testing is not None and self._trial_size and page.context == testing:
+            return self._trial_size
+        return self.viewport
 
     async def _screencast(self) -> None:
         """The page's screen as frames, at the window's size. A page still being attached (just
@@ -350,8 +422,8 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
                     {
                         "format": "jpeg",
                         "quality": 60,
-                        "maxWidth": self.viewport["width"],
-                        "maxHeight": self.viewport["height"],
+                        "maxWidth": self._size(self._page)["width"],
+                        "maxHeight": self._size(self._page)["height"],
                     },
                 )
             except Exception:  # pylint: disable=broad-exception-caught
@@ -393,6 +465,8 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
 
     async def _navigated(self, frame) -> None:
         if self._page and frame == self._page.main_frame:
+            if self.mode != "record":
+                self._at_steps_end = False
             await self.send({"type": "url", "url": frame.url})
 
     async def _apply_mode(self) -> None:
@@ -403,9 +477,23 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
                 await frame.evaluate(SET_MODE, self.mode)
             except Exception:  # pylint: disable=broad-exception-caught
                 pass  # navigated meanwhile
+        if self._page and self.mode == "value":
+            # The page's own links only: picks in frames are refused.
+            with contextlib.suppress(Exception):
+                await self._page.evaluate(
+                    SET_VALUE_LINKS, self._spec(*self.value_for).get("selector", "") if self.value_for else ""
+                )
+
+    def _record(self, event: dict) -> None:
+        """A step's event: the page is where the steps lead now."""
+        self.events.append(event)
+        self._at_steps_end = True
 
     async def _update(self) -> None:
-        await self.send({"type": "recipe", "recipe": self.recipe, "proposals": self.proposals})
+        recipe = self.recipe
+        await self.send(
+            {"type": "recipe", "recipe": recipe, "proposals": self.proposals, "warnings": token_warnings(recipe)}
+        )
 
     def depth(self, url: str) -> int:
         """How deep the page is: 0 for the listing, n for a page the nth level's links lead to (a
@@ -444,12 +532,14 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
                     f"reads the page's own links. Open the frame's address to pick there: {frame.url}",
                 }
             )
+        elif action == "pick" and event.get("target") == "value":
+            await self._pick_value(event)
         elif action == "pick":
             await self._pick(event)
         elif self.mode == "record":
             if inside:
                 event["frame"] = await frame_path(frame)
-            self.events.append(event)
+            self._record(event)
             await self._update()
         return None
 
@@ -463,9 +553,10 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
             await self._pick_next(event, level)
             return
         if level == 0:
-            self.start_url = url
-        proposal = patterns.propose([href for href, _ in event.get("matches", [])])
-        spec = {"selector": event["selector"], "pattern": proposal["pattern"]}
+            self.start_url = "" if self._starts_at_steps_end(url) else url
+        matches = event.get("matches", [])
+        proposal = patterns.propose([href for href, _ in matches], [text for _, text in matches])
+        spec = {"selector": event["selector"], "pattern": proposal["pattern"]} | self._alternatives(event)
         if target == "follow" and self.repick is not None and self.repick < len(self.follow):
             # Picked again: this level's links change, the levels after it stay.
             level, self.repick = self.repick, None
@@ -481,11 +572,24 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         self.proposals[key] = {**proposal, "level": level}
         await self._describe(key)
 
+    def _starts_at_steps_end(self, url: str) -> bool:
+        """Whether the listing picked on is better the page the steps end on than its address: the
+        steps lead there (they open a page, nothing browsed since) and the address carries a token
+        of this visit (a sign-in's ?code=, say), spent when the job runs."""
+        opens = any(event.get("action") == "goto" for event in self.events)
+        return self._at_steps_end and opens and bool(patterns.token_parameters(url))
+
+    @staticmethod
+    def _alternatives(event: dict) -> dict:
+        """The pick's alternative selectors recorder.js found, if any."""
+        alternatives = [str(value) for value in event.get("alternatives") or [] if value]
+        return {"alternatives": alternatives} if alternatives else {}
+
     async def _pick_next(self, event: dict, level: int) -> None:
         """The next page's link picked: the link itself, or, when it is a number among numbers
         (recorder.js found their container), numbered pages (harvester.pagination), proposed
         with what this page shows: its number and the next one's."""
-        link = {"selector": event["selector"], "level": level}
+        link = {"selector": event["selector"], "level": level} | self._alternatives(event)
         container = str((event.get("numbered") or {}).get("selector") or "")
         if not container:
             self.next = link
@@ -509,7 +613,7 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
             "current": current,
             "following": following[0] if following else None,
         }
-        await self._page.evaluate(HIGHLIGHT, [container, ""])
+        await self._page.evaluate(HIGHLIGHT, [container, None, None])
         await self._update()
 
     def _remember(self) -> None:
@@ -560,17 +664,21 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         level = int(message.get("level", 0) or 0)
         if not selector:
             return
+        # The alternatives found the picked links: another selector is the person's own.
         if target == "next" and self.next:
             self._remember()
             self.next["selector"] = selector
+            self.next.pop("alternatives", None)
             await self._update()
         elif target == "links" and self.links:
             self._remember()
             self.links["selector"] = selector
+            self.links.pop("alternatives", None)
             await self._describe("links")
         elif target == "follow" and 0 <= level < len(self.follow):
             self._remember()
             self.follow[level]["selector"] = selector
+            self.follow[level].pop("alternatives", None)
             await self._describe(f"follow{level}")
 
     async def _next_kind(self, kind: object) -> None:
@@ -592,7 +700,8 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
             self.follow = copy.deepcopy(follow)
         for name in ("links", "next"):
             spec = recipe.get(name)
-            if isinstance(spec, dict) and spec.get("selector"):
+            # A JSON listing has no element: its address and fields (the answer is chosen anew).
+            if isinstance(spec, dict) and (spec.get("selector") or (name == "links" and spec.get("kind") == "json")):
                 setattr(self, name, copy.deepcopy(spec))
         if isinstance(recipe.get("start"), str):
             self.start_url = recipe["start"]
@@ -610,7 +719,7 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         else:
             await page.go_forward(wait_until="domcontentloaded")
         if self.mode == "record" and page.url != before and allowed_url(page.url):
-            self.events.append({"action": "goto", "url": page.url})
+            self._record({"action": "goto", "url": page.url})
             await self._update()
 
     async def _scroll(self) -> None:
@@ -618,34 +727,43 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         in a thread with the page handed over); in the mode record, it is the step."""
         assert self._page is not None
         if self.mode == "record":
-            self.events.append({"action": "scroll"})
+            self._record({"action": "scroll"})
         page = trial.Blocking(self._page, asyncio.get_running_loop(), threading.Event(), time.monotonic() + 90)
         await asyncio.to_thread(site.scroll_to_load, page, SCROLL_ROUNDS)
         await self._update()
 
-    async def _test(self, message: dict) -> None:
-        """Starts the recipe's test (trial.py) unless one runs; its result goes to the page."""
+    async def test(self, message: dict, account: dict[str, str] | None = None) -> None:
+        """Starts the recipe's test (trial.py) unless one runs; its result goes to the page. With
+        the job's account (given by the app, never by the page) the test runs as the job does:
+        a fresh context at the recipe's window, the account's secrets and cookies, the first file
+        probed."""
         if self._trial and not self._trial.done():
             return
         recipe = message.get("recipe") if isinstance(message.get("recipe"), dict) else self.recipe
         given = message.get("settings") if isinstance(message.get("settings"), dict) else {}
         settings = {key: given[key] for key in TRIAL_SETTINGS if given.get(key) not in (None, "")}
-        self._trial = asyncio.ensure_future(self._run_test(recipe, settings))
+        self._trial = asyncio.ensure_future(self._run_test(recipe, settings, account))
 
-    async def _run_test(self, recipe: dict, settings: dict) -> None:
+    async def _run_test(self, recipe: dict, settings: dict, account: dict[str, str] | None = None) -> None:
         """The test in a context of its own, shown on the screen; afterwards its context closes
         and the screen shows the recorder's page again."""
-        assert self._context is not None
+        assert self._context is not None and self._browser is not None
         home, context = self._page, None
         stop = self._trial_stop = threading.Event()
+        as_job = account is not None
         try:
-            source = site.Site({**settings, "recipe": json.dumps(recipe)}, {}, None)
-            session = await self._context.storage_state()
-            context = self._trial_context = await self._new_context(session)  # type: ignore[arg-type]
+            source = site.Site({**settings, "recipe": json.dumps(recipe)}, account or {}, None)
+            # As the job runs: no session (the sign-in is replayed), the recipe's window.
+            session = None if as_job else await self._context.storage_state()
+            self._trial_size = browser.fitted_viewport(*recipe_size(recipe)) if as_job else None
+            context = self._trial_context = await self._new_context(session, self._trial_size)  # type: ignore[arg-type]
             context.on("page", lambda page: asyncio.ensure_future(self._show_trial(page, context, home)))
             blocking = trial.Blocking(context, asyncio.get_running_loop(), stop, time.monotonic() + trial.TRIAL_SECONDS)
-            await self.send({"type": "test-started"})
-            result = await asyncio.to_thread(trial.survey, source, blocking, recipe, session)  # type: ignore[arg-type]
+            await self.send({"type": "test-started", "as_job": as_job})
+            # The test's requests over HTTP as the browser's: its user agent, its connection.
+            via = (browser.user_agent(self._browser.version), browser.PROXY if self._home else "")
+            result = await asyncio.to_thread(trial.survey, source, blocking, recipe, session, as_job, *via)  # type: ignore[arg-type]
+            result["as_job"] = as_job
             # Stopped by the person: what the stop cut short is no failure of the recipe.
             if stop.is_set() and result.get("ended") == "failed":
                 result["ended"] = "stopped"
@@ -655,13 +773,11 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         except SourceError as error:
             result = {"pages": [], "problems": [str(error)], "files": 0, "ended": "failed", "shot": None}
         except Exception as error:  # pylint: disable=broad-exception-caught
-            text = (str(error) or type(error).__name__).splitlines()[0]
-            ended = "stopped" if stop.is_set() else "failed"
             result = {
                 "pages": [],
-                "problems": [] if stop.is_set() else [text],
+                "problems": [] if stop.is_set() else [(str(error) or type(error).__name__).splitlines()[0]],
                 "files": 0,
-                "ended": ended,
+                "ended": "stopped" if stop.is_set() else "failed",
                 "shot": None,
             }
         finally:
@@ -671,7 +787,7 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
                     await asyncio.wait_for(context.close(), CLOSE_TIMEOUT)
                 except Exception:  # pylint: disable=broad-exception-caught
                     pass  # the browser is closing as a whole
-            self._trial_stop = self._trial_context = None
+            self._trial_stop = self._trial_context = self._trial_size = None
         shot = result.pop("shot", None)
         if shot:
             result["shot"] = {**shot, "image": base64.b64encode(shot["image"]).decode()}
@@ -709,6 +825,9 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         page = self._page
         assert page is not None
         proposal = self.proposals.setdefault(key, {})
+        if spec.get("kind") == "json":
+            await self._describe_json(proposal)
+            return
         try:
             pattern = re.compile(spec.get("pattern", ""))
         except re.error as error:
@@ -726,17 +845,17 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
             )
             await self._update()
             return
-        examples = []
-        for (href, text), match in zip(found, matches):
-            if match and len(examples) < EXAMPLES:
-                examples.append({"url": href, "text": text, "values": patterns.group_values(match)})
+        examples, problem = await self._examples(page, spec, found, matches)
         matching = sum(1 for match in matches if match)
-        proposal.update(error="", examples=examples, matching=matching, found=len(found), pattern=pattern.pattern)
+        proposal.update(error=problem, examples=examples, matching=matching, found=len(found), pattern=pattern.pattern)
         proposal["groups"] = list(pattern.groupindex)
+        # JavaScript outlines by the pattern where it reads it as Python does, else by Python's
+        # matches (a page that changed meanwhile may then be outlined slightly off).
+        hits = [bool(match) for match in matches]
         try:
-            await page.evaluate(HIGHLIGHT, [spec["selector"], spec.get("pattern", "")])
+            await page.evaluate(HIGHLIGHT, [spec["selector"], patterns.js_regex(pattern.pattern), hits])
         except Exception:  # pylint: disable=broad-exception-caught
-            pass  # a pattern JavaScript reads otherwise only outlines nothing
+            pass  # the page navigated meanwhile
         await self._update()
 
     async def handle(self, message: dict) -> None:  # pylint: disable=too-many-branches
@@ -755,7 +874,7 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
                 await self.send({"type": "error", "message": f"The browser may not open {url}."})
                 return
             if self.mode == "record":
-                self.events.append({"action": "goto", "url": url})
+                self._record({"action": "goto", "url": url})
             await page.goto(url, wait_until="domcontentloaded")
             await self._update()
         elif kind == "mouse":
@@ -779,16 +898,18 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
             self.mode = message["mode"]
             level = message.get("level")
             self.repick = int(level) if self.mode == "follow" and isinstance(level, int) else None
+            self.value_for = self._value_target(message) if self.mode == "value" else None
             await self._apply_mode()
         elif kind == "pattern":
             await self._edit_pattern(message)
         elif kind == "undo" and self.events:
             self.events.pop()
-            # A step undone is no longer optional (one recorded in its place is required).
-            self.optional = {index for index in self.optional if index < len(steps_from_events(self.events))}
+            self._forget_undone()
             await self._update()
         elif kind in ("back", "forward", "reload"):
             await self._navigate(kind)
+        elif kind in DATA_MESSAGES:
+            await self.handle_data(kind, message)
         elif kind in jar.COMMANDS and self._context is not None:
             # The cookies panel: the recorder's own context (never the recipe's test's).
             for answer in await jar.handle(self._context, page.url, message):
@@ -816,7 +937,9 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         elif kind == "optional":
             await self._optional(message)
         elif kind == "test":
-            await self._test(message)
+            # The page's own test: the recorder's session (as the job runs only with the account
+            # the app adds, test()).
+            await self.test(message)
         elif kind == "test-stop" and self._trial_stop:
             # The call under way ends with its pages (it may wait for a step's whole time else).
             self._trial_stop.set()
@@ -827,18 +950,21 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         elif kind == "clear":
             self._remember()
             self.start_url, self.follow, self.links, self.next, self.proposals = "", [], {}, {}, {}
-            await page.evaluate(HIGHLIGHT, ["", ""])
+            await page.evaluate(HIGHLIGHT, ["", None, None])
             await self._update()
+
+    def _forget_undone(self) -> None:
+        """A step undone is no longer optional, nor a code from e-mail (one recorded in its place
+        is required, and typed as recorded)."""
+        steps = len(steps_from_events(self.events))
+        self.optional = {index for index in self.optional if index < steps}
+        self.mail_codes = {index: code for index, code in self.mail_codes.items() if index < steps}
 
     async def _optional(self, message: dict) -> None:
         """A recorded step made optional (best effort) or required again; the steps the form held
         before (none recorded here) the page changes itself."""
-        index = message.get("step")
-        if (
-            not isinstance(index, int)
-            or isinstance(index, bool)
-            or not 0 <= index < len(steps_from_events(self.events))
-        ):
+        index = self._step_index(message)
+        if index is None:
             return
         if message.get("optional"):
             self.optional.add(index)
