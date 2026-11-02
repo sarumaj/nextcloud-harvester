@@ -288,11 +288,14 @@ the app's browser or taken from a template, not by code.
   redirect (a `file://` page would show the app's secret): a page's WebSockets too (one refused
   is never connected), its service workers are off, and a file a recorded site links to is
   downloaded by the app's guarded HTTP client with the browser's cookies, not by the browser.
-  Behind those checks, every connection of a browser goes through its own guard, a proxy in the
-  app on 127.0.0.1 (`browser/guard.py`; for loopback too), which sees what Playwright's routes
-  do not, such as a web worker's WebSockets: it looks the name up once, refuses it unless every
-  address is public, and connects to the address it checked, so a name that changes meanwhile
-  (DNS rebinding) gains nothing; the home connection is asked for that address, not the name.
+  Behind those checks, every connection of a browser goes through its own guard, a proxy on
+  127.0.0.1 in a process of its own (`browser/guard.py`; for loopback too; without the app's
+  secrets, undumpable, ending with the app; one that fails closes its port, and the browser's
+  connections fail), which sees what Playwright's routes do not, such as a web worker's
+  WebSockets: it looks the name up (its checked addresses kept for a minute), refuses it unless
+  every address is public, and connects to an address it checked, so a name that changes
+  meanwhile (DNS rebinding) gains nothing; the home connection is asked for that address, not
+  the name.
   WebRTC sends only through the proxy (no UDP of its own), and WebTransport does not connect
   through one. rclone's sign-in browser alone may open rclone's listener (`127.0.0.1:53682`),
   while rclone runs. yt-dlp, gallery-dl, rclone and mail servers connect by themselves (their

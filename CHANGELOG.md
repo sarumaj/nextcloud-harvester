@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **The browser's guard is fast under load:** it runs in a process of its own (without the
+  app's secrets, ending with the app), so it no longer waits for the interpreter while runners
+  and recordings keep the app busy; it relays in larger chunks with one idle timer per
+  connection, keeps a name's checked addresses for a minute (one lookup for the connections a
+  page opens at once; it still connects only to addresses it checked), and tries an address
+  family that did not connect (IPv6 without a route) second for a while. Under load, a download
+  through the guard went from about 2 MB/s to some 1.4 GB/s, and a page from 50 sites from 10 s
+  to a quarter of a second.
+
 ## 0.10.0 - 2026-11-02
 
 ### Added
