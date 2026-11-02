@@ -1,13 +1,16 @@
 """The app's page (harvester-main.js) in Chromium against a stubbed API and WebSocket: the
 recorder's navigation, the same controls for every pick (Pick again, the element, Remove), Undo
 of a pick, numbered pages, scroll to load more and the recipe's test; a failed step's picture
-from the progress log, with the job's browser opened at its page; and the queue's status with
-why a job waits."""
+from the progress log, with the job's browser opened at its page; the queue's status with why a
+job waits; and on-demand jobs: Fetch a URL…, the waiting addresses, the form's On demand, and the
+Send to Harvester bookmarklet with the page it opens (?fetch=)."""
 
 # pylint: disable=missing-function-docstring
 
 import json
 import pathlib
+import re
+from urllib.parse import quote
 
 import pytest
 from test_browser import needs_chromium
@@ -74,6 +77,24 @@ QUEUED = JOB | {
     "queued": True,
     "waiting": "2. in the queue: waits for a runner, all 2 busy (1 job ahead)",
 }
+# An on-demand job without an address of its own, one address being fetched and one waiting.
+CLIPS = JOB | {
+    "id": 3,
+    "name": "Clips",
+    "source": "media",
+    "target": "/Clips",
+    "schedule": "",
+    "once": True,
+    "options": {"url": ""},
+    "last_status": None,
+    "queued": True,
+    "running": True,
+    "fetches": [
+        {"id": 6, "url": "https://v.example/watch?v=1", "at": 1, "running": True},
+        {"id": 7, "url": "https://v.example/watch?v=2", "at": 2, "running": False},
+    ],
+}
+SENT = "https://v.example/watch?v=3"
 STATUS = {"runners": {"busy": 2, "total": 2}, "browsers": {"jobs": 2, "recordings": 1, "total": 3}, "queued": 3}
 LOG = {
     "lines": [
@@ -106,9 +127,19 @@ def fixture_page(request):
         "/presets": main.list_presets(),
         "/jobs": jobs,
         # The log's polls agree with the list (else the page draws the list again each time).
-        "/log": LOG | {"queued": [job["id"] for job in jobs if job["queued"] and not job["running"]]},
+        "/log": LOG
+        | {
+            "running": [job["id"] for job in jobs if job["running"]],
+            "queued": [job["id"] for job in jobs if job["queued"] and not job["running"]],
+            "fetches": {
+                str(job["id"]): [fetch["id"] for fetch in job["fetches"]] for job in jobs if job.get("fetches")
+            },
+        },
         "/jobs/1/shot": SHOT,
         "/status": STATUS,
+        "POST /jobs/3/fetch": {"id": 8, "url": SENT, "at": 3, "new": True},
+        "POST /jobs": CLIPS | {"id": 9, "name": "v.example", "once": False, "fetches": []},
+        "POST /jobs/9/fetch": {"id": 10, "url": SENT, "at": 3, "new": True},
     }
     CALLS.clear()
 
@@ -133,7 +164,7 @@ def fixture_page(request):
             "**/main.js",
             lambda route: route.fulfill(status=200, content_type="text/javascript; charset=utf-8", body=SCRIPT),
         )
-        page.route(PAGE, document)
+        page.route(re.compile(r"^https://nc\.example/(\?.*)?$"), document)
         page.goto(PAGE)
         page.wait_for_selector("table.harvester-jobs")
         yield page
@@ -267,3 +298,88 @@ def test_the_queues_status_and_why_a_job_waits(page):
     assert "2. in the queue: waits for a runner, all 2 busy (1 job ahead)" in row.inner_text()
     assert row.locator("button").all_inner_texts() == ["Run now", "Edit", "Delete"]
     assert row.get_by_role("button", name="Run now").is_disabled(), "queued already"
+
+
+@needs_chromium
+@pytest.mark.parametrize("page", [[JOB, CLIPS]], indirect=True)
+def test_an_on_demand_job_fetches_an_address(page):
+    row = page.locator("tbody tr").nth(1)
+    assert row.locator("td").nth(2).locator(".harvester-chip").all_inner_texts() == ["On demand", "once"]
+    fetches = row.locator(".harvester-fetches li")
+    assert fetches.all_inner_texts() == ["https://v.example/watch?v=1 fetching", "https://v.example/watch?v=2Cancel"]
+    # Running: Pause and Stop; no Run now without an address of its own.
+    assert row.locator("td.harvester-actions button").all_inner_texts() == [
+        "Pause",
+        "Stop",
+        "Fetch a URL…",
+        "Edit",
+        "Delete",
+    ]
+    row.get_by_role("button", name="Cancel the fetch of https://v.example/watch?v=2").click()
+    page.wait_for_function("document.querySelector('tbody tr:nth-child(2) .harvester-fetches')")
+    assert ("DELETE", "/jobs/3/fetch/7", None) in CALLS
+    page.locator("tbody tr").nth(1).get_by_role("button", name="Fetch a URL…").click()
+    page.get_by_role("textbox", name="The address Clips fetches").fill(SENT)
+    page.get_by_role("button", name="Fetch", exact=True).click()
+    page.wait_for_function("!document.querySelector('.harvester-fetch-row')")
+    assert ("POST", "/jobs/3/fetch", {"url": SENT}) in CALLS
+
+
+@needs_chromium
+@pytest.mark.parametrize("page", [[JOB, CLIPS]], indirect=True)
+def test_the_form_of_an_on_demand_job(page):
+    page.locator("tbody tr").nth(1).get_by_role("button", name="Edit").click()
+    form = page.locator("#harvester-job-form")
+    on_demand, once = form.locator("[data-field=on-demand]"), form.locator("[data-field=once]")
+    assert on_demand.is_checked() and once.is_checked() and once.is_visible()
+    schedule = page.locator('label.harvester-field:has(> span:text-is("Schedule")) input')
+    assert schedule.is_hidden()
+    on_demand.uncheck()
+    assert schedule.is_visible() and schedule.input_value() == "0 6 * * *" and once.is_hidden()
+    on_demand.check()
+    page.get_by_role("button", name="Save", exact=True).click()
+    page.wait_for_selector("table.harvester-jobs")
+    method, path, body = [call for call in CALLS if call[0] == "PUT"][-1]
+    assert (method, path) == ("PUT", "/jobs/3") and body and body["schedule"] == "" and body["once"] is True
+    # A source without an address has no On demand.
+    page.get_by_role("button", name="New job").click()
+    page.locator(".harvester-kind", has_text="Email attachments").get_by_role("button", name="Start").click()
+    assert page.locator("#harvester-job-form [data-field=on-demand]").count() == 0
+
+
+@needs_chromium
+@pytest.mark.parametrize("page", [[JOB, CLIPS]], indirect=True)
+def test_the_bookmarklet_sends_the_page_to_an_on_demand_job(page):
+    page.get_by_text("Send to Harvester from any page").click()
+    link = page.get_by_role("link", name="Send to Harvester")
+    code = link.get_attribute("href") or ""
+    assert (
+        code.startswith("javascript:") and "https://nc.example/apps/app_api/embedded/harvester/harvester?fetch=" in code
+    )
+    page.goto(f"{PAGE}?fetch={quote(SENT, safe='')}#top")
+    page.wait_for_selector(".harvester-sent")
+    assert page.locator(".harvester-sent").inner_text() == SENT
+    assert page.evaluate("location.search + location.hash") == "#top", "a reload shows the jobs"
+    choices = page.get_by_role("combobox", name="On-demand job").locator("option").all_inner_texts()
+    assert choices == ["Clips (/Clips)"], "on-demand jobs only"
+    page.get_by_role("button", name="Fetch", exact=True).click()
+    page.wait_for_selector("table.harvester-jobs")
+    assert ("POST", "/jobs/3/fetch", {"url": SENT}) in CALLS
+
+
+@needs_chromium
+def test_a_new_job_from_a_sent_address(page):
+    page.goto(f"{PAGE}?fetch={quote(SENT, safe='')}")
+    page.wait_for_selector(".harvester-sent")
+    assert "No on-demand job yet" in page.locator("#harvester").inner_text()
+    kinds = page.locator(".harvester-send-kinds button").all_inner_texts()
+    assert kinds == ["Website (recipe)", "Feed or podcast", "Videos and audio (yt-dlp)", "Image galleries (gallery-dl)"]
+    page.get_by_role("button", name="Videos and audio (yt-dlp)").click()
+    form = page.locator("#harvester-job-form")
+    assert form.locator("[data-field=on-demand]").is_checked()
+    assert page.locator('label.harvester-field:has(> span:text-is("Page")) input').input_value() == SENT
+    page.get_by_role("button", name="Save", exact=True).click()
+    page.wait_for_selector("table.harvester-jobs")
+    created = [call for call in CALLS if call[:2] == ("POST", "/jobs")][-1][2]
+    assert created and created["schedule"] == "" and created["options"]["url"] == SENT
+    assert ("POST", "/jobs/9/fetch", {"url": SENT}) in CALLS, "the new job fetches the address sent"

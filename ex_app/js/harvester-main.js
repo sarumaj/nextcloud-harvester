@@ -1,7 +1,8 @@
 // The app's page in Nextcloud: the user's jobs, a job's form (blank or from a template) with
-// its account, and the recorder (the app's browser, shown and driven from here), which proposes
-// the links' patterns and shows what they match. Plain JavaScript, no build: Nextcloud loads
-// it into the page AppAPI renders for the top menu.
+// its account, the recorder (the app's browser, shown and driven from here), which proposes
+// the links' patterns and shows what they match, and the addresses sent to on-demand jobs (Fetch
+// a URL…, or ?fetch=<address> from the Send to Harvester bookmarklet). Plain JavaScript, no
+// build: Nextcloud loads it into the page AppAPI renders for the top menu.
 (function () {
 	'use strict'
 
@@ -27,6 +28,26 @@
 	let presets = []
 	// What a job's button met (a refused Stop, say), shown in its row once the list is drawn again.
 	const notices = {}
+	// Harvester's page in Nextcloud, which the bookmarklet opens with ?fetch=<the page's address>.
+	const PAGE = `${location.origin}${OC.generateUrl('/apps/app_api/embedded/harvester/harvester')}`
+	// Whether a job runs only when sent an address (no schedule), and whether its source has one.
+	const onDemand = (job) => !job.schedule
+	const addressOf = (source) => (sources.find((s) => s.name === source) || {}).address || ''
+	// The options of a new job of the source whose address is the one given (a website's: its
+	// recipe's listing).
+	const withAddress = (source, url) => addressOf(source) === 'recipe'
+		? { recipe: JSON.stringify({ start: url }, null, 2) }
+		: { [addressOf(source)]: url }
+	// The job's own address, if it has one (an on-demand job's may be empty: each fetch brings one).
+	function ownAddress(job) {
+		const option = addressOf(job.source)
+		if (option !== 'recipe') return String(job.options[option] || '').trim()
+		try {
+			return String(JSON.parse(job.options.recipe || '{}').start || '').trim()
+		} catch (e) {
+			return ''
+		}
+	}
 
 	async function api(method, path, body) {
 		const response = await fetch(API + path, {
@@ -154,7 +175,10 @@
 					// Not "paused": that is a running job held by Pause.
 					job.enabled ? '' : el('span', { class: 'harvester-chip', text: 'off', title: 'Not enabled: runs only with Run now' })),
 				el('td', { class: 'harvester-muted', text: job.target }),
-				el('td', {}, el('code', { text: job.schedule })),
+				el('td', {}, onDemand(job)
+					? el('span', { class: 'harvester-chip harvester-on-demand', text: 'On demand', title: 'No schedule: runs when you send it an address' })
+					: el('code', { text: job.schedule }),
+				job.once ? el('span', { class: 'harvester-chip', text: 'once', title: 'Deleted after a run that went through; its files stay' }) : ''),
 				el('td', {}, ...job.tags.map((tag) => el('span', { class: 'harvester-chip', text: tag }))),
 				el('td', {},
 					el('span', { class: `harvester-status harvester-status-${state}`, text: label }),
@@ -165,7 +189,8 @@
 							: job.queued ? job.waiting || 'Waiting for its site or a free runner'
 								: job.last_run ? `${when(job.last_run)} · ${job.last_message || ''}` : '',
 					}),
-					notices[job.id] ? el('div', { class: 'harvester-error harvester-message', role: 'alert', text: notices[job.id] }) : ''),
+					notices[job.id] ? el('div', { class: 'harvester-error harvester-message', role: 'alert', text: notices[job.id] }) : '',
+					fetchList(job, act)),
 				el('td', { class: 'harvester-actions' },
 					state === 'challenge' ? el('button', { class: 'primary', text: 'Continue in the browser', onclick: () => openSession(root, job) }) : '',
 					// While it runs: pause (or resume) and stop instead of Run now; a stopped run
@@ -175,9 +200,11 @@
 							el('button', { text: job.paused ? 'Resume' : 'Pause', onclick: act(job, job.paused ? '/resume' : '/pause') }),
 							el('button', { text: 'Stop', onclick: act(job, '/stop') }),
 						]
-						: [job.queued
-							? el('button', { text: 'Run now', disabled: '', title: 'Queued already: it runs once its turn comes' })
-							: el('button', { text: 'Run now', onclick: act(job, '/run') })]),
+						: [onDemand(job) && !ownAddress(job) ? ''
+							: job.queued
+								? el('button', { text: 'Run now', disabled: '', title: 'Queued already: it runs once its turn comes' })
+								: el('button', { text: 'Run now', onclick: act(job, '/run') })]),
+					onDemand(job) ? el('button', { text: 'Fetch a URL…', 'aria-expanded': 'false', onclick: (event) => fetchForm(event.currentTarget, job) }) : '',
 					el('button', { text: 'Edit', onclick: () => renderForm(root, job) }),
 					el('button', {
 						class: 'error',
@@ -202,7 +229,123 @@
 			jobs.length ? table : el('div', { class: 'harvester-empty' },
 				el('p', { text: 'No jobs yet.' }),
 				el('p', { class: 'harvester-muted', text: 'A job fetches the files of one site: record it in the browser, or start from a template.' })),
-			jobs.length ? progressPanel(root, jobs) : '')
+			jobs.length ? progressPanel(root, jobs) : '',
+			sendHelp())
+	}
+
+	// An on-demand job's waiting addresses below its message, oldest first: the one being fetched
+	// (Stop ends it), the others each with Cancel.
+	function fetchList(job, act) {
+		if (!(job.fetches || []).length) return ''
+		return el('ul', { class: 'harvester-fetches', 'aria-label': `Addresses ${job.name} waits to fetch` },
+			...job.fetches.map((fetch) => el('li', {},
+				el('code', { text: fetch.url }),
+				fetch.running
+					? el('span', { class: 'harvester-muted', text: ' fetching' })
+					: el('button', { class: 'harvester-link', text: 'Cancel', 'aria-label': `Cancel the fetch of ${fetch.url}`, onclick: act(job, `/fetch/${fetch.id}`, 'DELETE') }))))
+	}
+
+	// Fetch a URL…: a row below the job's with the address to fetch; Fetch queues it (checked
+	// first, as the job's source checks its own) and draws the list again.
+	function fetchForm(button, job) {
+		const row = button.closest('tr')
+		const open = row.nextElementSibling && row.nextElementSibling.classList.contains('harvester-fetch-row')
+		if (open) {
+			row.nextElementSibling.remove()
+			button.setAttribute('aria-expanded', 'false')
+			return
+		}
+		button.setAttribute('aria-expanded', 'true')
+		const root = button.closest('#harvester')
+		const input = el('input', { type: 'url', required: '', placeholder: 'https://…', 'aria-label': `The address ${job.name} fetches`, spellcheck: 'false' })
+		const error = el('p', { class: 'harvester-error', role: 'alert' })
+		const form = el('form', {
+			class: 'harvester-fetch',
+			onsubmit: async (event) => {
+				event.preventDefault()
+				error.textContent = ''
+				try {
+					await sendTo(job, input.value)
+				} catch (e) {
+					error.textContent = e.message
+					return
+				}
+				show(root)
+			},
+		},
+		input,
+		el('button', { class: 'primary', type: 'submit', text: 'Fetch' }),
+		el('button', { type: 'button', text: 'Cancel', onclick: () => fetchForm(button, job) }))
+		row.after(el('tr', { class: 'harvester-fetch-row' }, el('td', { colspan: '6' }, form,
+			el('small', { class: 'harvester-muted', text: 'Fetched in place of the job’s own address, for this run alone; files it fetched before are not fetched again.' }), error)))
+		input.focus()
+	}
+
+	// Queues the address for the on-demand job; the error says why it was refused.
+	async function sendTo(job, url) {
+		const answer = await api('POST', `/jobs/${job.id}/fetch`, { url: url.trim() })
+		if (!answer.new) notices[job.id] = 'That address waits to be fetched already.'
+		return answer
+	}
+
+	// Send to Harvester: a bookmarklet that opens this page with the page one is on (?fetch=).
+	function sendHelp() {
+		const code = `javascript:void window.open('${PAGE}?fetch='+encodeURIComponent(location.href))`
+		return el('details', { class: 'harvester-send' },
+			el('summary', { text: 'Send to Harvester from any page' }),
+			el('p', { text: 'Drag this link to your bookmarks bar. On a page with a video, gallery, feed or files, click the bookmark: Harvester opens and asks which on-demand job fetches the page (or makes a new one from it).' }),
+			el('a', {
+				class: 'harvester-bookmarklet',
+				href: code,
+				title: 'Drag it to your bookmarks bar',
+				// Nextcloud's page runs no script from a link: here it is only dragged.
+				onclick: (event) => event.preventDefault(),
+			}, 'Send to Harvester'))
+	}
+
+	// The page opened with ?fetch=<address> (the bookmarklet): which on-demand job fetches it, or
+	// a new job of a source with an address, filled with it.
+	async function renderSend(root, url) {
+		const jobs = (await api('GET', '/jobs')).filter((job) => onDemand(job) && addressOf(job.source))
+		const error = el('p', { class: 'harvester-error', role: 'alert' })
+		const select = el('select', { 'aria-label': 'On-demand job' },
+			...jobs.map((job) => el('option', { value: String(job.id), text: `${job.name} (${job.target})` })))
+		const fetchButton = el('button', {
+			class: 'primary',
+			text: 'Fetch',
+			onclick: async () => {
+				fetchButton.disabled = true
+				error.textContent = ''
+				try {
+					await sendTo(jobs.find((job) => String(job.id) === select.value), url)
+				} catch (e) {
+					error.textContent = e.message
+					fetchButton.disabled = false
+					return
+				}
+				show(root)
+			},
+		})
+		// A new job: one card per source with an address, its form filled with this one.
+		let host = ''
+		try {
+			host = new URL(url).hostname
+		} catch (e) { /* not an address: the server says so on Fetch */ }
+		const kinds = sources.filter((source) => source.address).map((source) => el('button', {
+			class: 'harvester-with-icon',
+			onclick: () => renderForm(root, null, { ...BLANK, name: host, source: source.name, schedule: '', options: withAddress(source.name, url) }, url),
+		}, icon(source.name), el('span', { text: source.title })))
+		root.replaceChildren(
+			el('div', { class: 'harvester-header' },
+				el('div', {}, el('h2', { text: 'Send to Harvester' }), el('p', {}, el('code', { class: 'harvester-sent', text: url }))),
+				el('button', { text: 'Back to the jobs', onclick: () => show(root) })),
+			jobs.length
+				? el('div', { class: 'harvester-card' }, field('Fetch it with', select, 'An on-demand job: the address takes the place of its own, for this run alone.'), fetchButton, error)
+				: el('p', { class: 'harvester-muted', text: 'No on-demand job yet: make one from this address.' }),
+			el('div', { class: 'harvester-card' },
+				el('h3', { text: 'New job from this address' }),
+				el('div', { class: 'harvester-send-kinds' }, ...kinds)))
+		;(jobs.length ? fetchButton : root.querySelector('.harvester-send-kinds button')).focus()
 	}
 
 	// The jobs' progress log: what the runs do, live while one runs, of all jobs or of one.
@@ -223,6 +366,9 @@
 		let timer = null
 		const running = jobs.filter((job) => job.running).map((job) => job.id)
 		const queued = jobs.filter((job) => job.queued && !job.running).map((job) => job.id)
+		// The on-demand jobs' waiting addresses, as the log's polls give them (by job, in order).
+		const sorted = (fetches) => JSON.stringify(Object.keys(fetches).sort().map((id) => [id, fetches[id]]))
+		const fetches = sorted(Object.fromEntries(jobs.filter((job) => (job.fetches || []).length).map((job) => [String(job.id), job.fetches.map((fetch) => fetch.id)])))
 		const clock = (at) => {
 			const date = new Date(at * 1000)
 			return date.toDateString() === new Date().toDateString() ? date.toLocaleTimeString() : date.toLocaleString()
@@ -246,7 +392,7 @@
 				// Another view opened while the log was asked for (a job's form): it is not replaced.
 				if (!document.body.contains(panel)) return
 				const waiting = (data.queued || []).filter((id) => !data.running.includes(id))
-				if (String(data.running) !== String(running) || String(waiting) !== String(queued)) {
+				if (String(data.running) !== String(running) || String(waiting) !== String(queued) || sorted(data.fetches || {}) !== fetches) {
 					show(root)
 					return
 				}
@@ -1199,7 +1345,8 @@
 		return null
 	}
 
-	function renderForm(root, job, prefill) {
+	// The job's form; with sent (an address from ?fetch=), the new job fetches it once saved.
+	function renderForm(root, job, prefill, sent) {
 		const value = job || prefill || BLANK
 		// The job saved so far: a new one is, after its first Save, saved again with PUT.
 		let current = job
@@ -1207,7 +1354,8 @@
 		const zone = job ? job.timezone || 'UTC' : ZONE
 		const name = el('input', { value: value.name, required: '' })
 		const target = el('input', { value: value.target })
-		const schedule = el('input', { value: value.schedule })
+		// An on-demand job keeps a schedule to go back to in the field, unused.
+		const schedule = el('input', { value: value.schedule || BLANK.schedule })
 		// The schedule in words and its next runs in the person's time, as it is typed (the
 		// server reads it as the executor does).
 		const scheduleHint = el('p', { class: 'harvester-schedule', 'aria-live': 'polite' })
@@ -1236,11 +1384,17 @@
 		const tags = el('input', { value: value.tags.join(', ') })
 		const enabled = el('input', { type: 'checkbox' })
 		enabled.checked = value.enabled !== false
+		// On demand (sources with an address): no schedule, and maybe deleted after its run.
+		const onDemandBox = el('input', { type: 'checkbox', 'data-field': 'on-demand' })
+		onDemandBox.checked = !value.schedule
+		const once = el('input', { type: 'checkbox', 'data-field': 'once' })
+		once.checked = Boolean(value.once)
 		const options = el('fieldset', {})
 		const credentials = el('div', { class: 'harvester-credentials' })
 		const error = el('p', { class: 'harvester-error' })
 		const chosen = sources.find((s) => s.name === value.source) || sources[0]
 		const optionInputs = {}
+		const demanded = () => Boolean(chosen.address) && onDemandBox.checked
 		let page
 
 		// The recorder's proposals, when the person chose to use them.
@@ -1316,7 +1470,8 @@
 					name: name.value,
 					source: chosen.name,
 					target: target.value,
-					schedule: schedule.value,
+					schedule: demanded() ? '' : schedule.value,
+					once: demanded() && once.checked,
 					timezone: zone,
 					tags: tags.value.split(','),
 					enabled: enabled.checked,
@@ -1342,17 +1497,38 @@
 					save.disabled = false
 					return
 				}
+				// Made from an address sent to Harvester: it fetches that address now.
+				if (sent && onDemand(current)) {
+					try {
+						await sendTo(current, sent)
+					} catch (e) {
+						notices[current.id] = `The address is not fetched: ${e.message}`
+					}
+				}
 				show(root)
 			},
 		},
 		el('h2', { class: 'harvester-with-icon' }, icon(chosen.name), heading),
 		field('Name', name),
 		field('Folder', target, 'In your files, e.g. /Magazines/iX.'),
-		field('Schedule', schedule, `Cron: minute hour day month weekday, in ${zone === ZONE ? 'your time zone' : 'the job’s time zone'} (${zone}). 0 6 * * * is daily at 06:00.`),
-		scheduleHint,
+		chosen.address ? el('label', { class: 'harvester-check' }, onDemandBox,
+			el('span', {}, el('strong', { text: 'On demand' }), el('br'),
+				el('small', { class: 'harvester-muted', text: 'No schedule: it runs when you send it an address (Fetch a URL…, or Send to Harvester from any page), in place of its own, which may stay empty.' }))) : '',
+		el('div', { class: 'harvester-scheduled' },
+			field('Schedule', schedule, `Cron: minute hour day month weekday, in ${zone === ZONE ? 'your time zone' : 'the job’s time zone'} (${zone}). 0 6 * * * is daily at 06:00.`),
+			scheduleHint),
+		el('label', { class: 'harvester-check harvester-once' }, once,
+			el('span', { text: 'Delete the job after a run that went through (its files stay; one that failed keeps it, to say why)' })),
 		field('Tags', tags, 'Comma-separated; may use the link’s values, e.g. {year}. A tag whose value a file lacks is left out.'),
-		el('label', { class: 'harvester-check' }, enabled, el('span', { text: 'Enabled: runs on its schedule' })),
+		el('label', { class: 'harvester-check harvester-scheduled' }, enabled, el('span', { text: 'Enabled: runs on its schedule' })),
 		options)
+		// A schedule's fields, or (on demand) whether it goes after its run.
+		const showMode = () => {
+			for (const part of form.querySelectorAll('.harvester-scheduled')) part.hidden = demanded()
+			form.querySelector('.harvester-once').hidden = !demanded()
+		}
+		onDemandBox.addEventListener('change', showMode)
+		showMode()
 		// Below the field, now that it is in its label.
 		schedule.after(suggestionChips(schedule, SCHEDULES))
 		// Save and Back below the account, which Save stores with the job; Enter in the account's
@@ -1456,6 +1632,15 @@
 		#harvester .harvester-error { color: var(--color-error-text, var(--color-error)); }
 		#harvester .harvester-credentials { margin-top: 24px; max-width: 760px; }
 		#harvester .harvester-load { margin: -8px 0 12px; font-variant-numeric: tabular-nums; }
+		#harvester .harvester-fetches { list-style: none; margin: 4px 0 0; padding: 0; max-width: 420px; overflow-wrap: anywhere; }
+		#harvester .harvester-fetch { display: flex; gap: 8px; align-items: center; max-width: 760px; }
+		#harvester .harvester-fetch input { flex: 1; margin: 0; }
+		#harvester .harvester-send { margin-top: 24px; max-width: 760px; }
+		#harvester .harvester-send summary { cursor: pointer; font-weight: bold; }
+		#harvester .harvester-bookmarklet { display: inline-block; padding: 4px 12px; border: 1px dashed var(--color-primary-element); border-radius: var(--border-radius-pill, 999px); cursor: grab; }
+		#harvester .harvester-sent { overflow-wrap: anywhere; }
+		#harvester .harvester-send-kinds { display: flex; flex-wrap: wrap; gap: 8px; }
+		#harvester [hidden] { display: none !important; }
 		#harvester .harvester-wizard h3 { margin-top: 0; }
 		#harvester .harvester-wizard-help { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--color-text-maxcontrast); }
 		#harvester .harvester-wizard pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px 12px; background: var(--color-background-dark); border-radius: var(--border-radius); }
@@ -1522,6 +1707,20 @@
 		} catch (e) {
 			// Without the sources no form can be drawn: say why instead of an empty page.
 			root.replaceChildren(el('p', { class: 'harvester-error', text: `Harvester: ${e.message}` }))
+			return
+		}
+		// Opened by the bookmarklet: the address is asked about once, and the page's own address
+		// loses it (a reload shows the jobs).
+		const sent = new URLSearchParams(location.search).get('fetch')
+		if (sent) {
+			const rest = new URLSearchParams(location.search)
+			rest.delete('fetch')
+			history.replaceState(history.state, '', `${location.pathname}${rest.toString() ? `?${rest}` : ''}${location.hash}`)
+			try {
+				await renderSend(root, sent)
+			} catch (e) {
+				root.replaceChildren(el('p', { class: 'harvester-error', text: `Harvester: ${e.message}` }))
+			}
 			return
 		}
 		show(root)
