@@ -92,6 +92,10 @@ the app's browser or taken from a template, not by code.
   300-600 MB): each running website job takes one, recordings the others, so people record side
   by side and while jobs run. When all are taken, the recorder's screen says so instead of staying
   empty.
+- **Admin settings:** *Administration settings > Additional settings > Harvester* sets both
+  numbers (1 to 8 each); the environment's values are the defaults. The app reads them each
+  minute, so a change needs no restart: a lowered number lets the running jobs and open browsers
+  finish first.
 - **Home connection:** with `HARVESTER_PROXY` (an HTTP proxy at the family's home, e.g.
   `http://192.168.178.33:3128`, reached through the WireGuard tunnel) a job may go **Through the
   home connection**: its downloads, its browser, yt-dlp and gallery-dl use the proxy, and sites

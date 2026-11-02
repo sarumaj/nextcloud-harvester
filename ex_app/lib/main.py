@@ -15,9 +15,9 @@ from nc_py_api import AsyncNextcloudApp
 from nc_py_api.ex_app import AppAPIAuthMiddleware, anc_app, persistent_storage, run_app, set_handlers
 from pydantic import BaseModel, Field, field_validator
 
-from harvester import browser, schedule
+from harvester import browser, schedule, settings
 from harvester.browser.recorder import Recorder
-from harvester.executor import Executor, credential_key, load_session, save_session, session_key
+from harvester.executor import RUNNERS, Executor, credential_key, load_session, save_session, session_key
 from harvester.presets import PRESETS, make_job
 from harvester.runner import COMMON_OPTIONS
 from harvester.sources import FULL_PASS, SOURCES, SourceError
@@ -389,12 +389,14 @@ async def save_answer(job: Job, session: dict, nc: AsyncNextcloudApp) -> None:
 
 
 async def enabled_handler(enabled: bool, nc: AsyncNextcloudApp) -> str:
-    """Adds the app's entry to the top menu, with its page's script."""
+    """Adds the app's entry to the top menu, with its page's script, and the admin's settings."""
     if enabled:
         await nc.ui.resources.set_script("top_menu", "harvester", "js/harvester-main")
         await nc.ui.top_menu.register("harvester", "Harvester", "img/app.svg")
+        await nc.ui.settings.register_form(settings.form(RUNNERS, browser.BROWSERS))
     else:
         await nc.ui.top_menu.unregister("harvester")
+        await nc.ui.settings.unregister_form("harvester_admin")
     return ""
 
 

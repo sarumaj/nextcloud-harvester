@@ -173,3 +173,83 @@ def test_the_home_connection_goes_to_the_browser_and_the_downloads(monkeypatch):
     assert media.base()["proxy"] == "http://192.168.178.33:3128"
     monkeypatch.setattr(browser, "PROXY", "")
     assert "proxy" not in browser.launch_options(home=True), "no home connection set up: none"
+
+
+def test_the_browsers_limit_changes_while_they_are_in_use():
+    from harvester.browser import Slots  # pylint: disable=import-outside-toplevel
+
+    slots = Slots(2)
+    assert slots.acquire(blocking=False) and slots.acquire(blocking=False)
+    slots.limit = 1
+    slots.release()
+    assert not slots.acquire(blocking=False), "lowered: one is still open, which is the limit"
+    slots.limit = 3
+    assert slots.acquire(blocking=False) and slots.free() == 1
+    waiting = threading.Thread(target=slots.acquire)
+    slots.acquire()
+    waiting.start()
+    time.sleep(0.1)
+    assert waiting.is_alive(), "all taken: it waits"
+    slots.limit = 4
+    waiting.join(2)
+    assert not waiting.is_alive(), "raised: it gets one"
+
+
+def test_the_admins_settings_change_the_runners_and_browsers(tmp_path, monkeypatch):
+    from harvester import browser, settings  # pylint: disable=import-outside-toplevel
+
+    class Record:  # pylint: disable=too-few-public-methods
+        """A stored value, as nc_py_api's CfgRecord."""
+
+        def __init__(self, key, value):
+            self.key, self.value = key, value
+
+    class Config:  # pylint: disable=too-few-public-methods
+        """The app's stored values (appconfig_ex)."""
+
+        values: dict[str, str] = {}
+
+        async def get_values(self, keys):
+            return [Record(key, self.values[key]) for key in keys if key in self.values]
+
+    class Nc:  # pylint: disable=too-few-public-methods
+        """The app's client, with its stored values only."""
+
+        appconfig_ex = Config()
+
+    monkeypatch.setattr(browser, "SLOTS", browser.Slots(3))
+    executor = Executor(Store(str(tmp_path / "db")), connect=Nc, runners=2)
+    executor.read_settings()
+    assert (executor.runners, browser.SLOTS.limit) == (2, browser.BROWSERS), "unset: the environment's"
+    Config.values = {settings.RUNNERS: "4", settings.BROWSERS: "1"}
+    executor.read_settings()
+    assert (executor.runners, browser.SLOTS.limit) == (4, 1)
+    Config.values = {settings.RUNNERS: "99", settings.BROWSERS: "x"}
+    executor.read_settings()
+    assert (executor.runners, browser.SLOTS.limit) == (settings.MAX_RUNNERS, browser.BROWSERS)
+
+
+def test_a_runner_beyond_the_setting_waits(tmp_path, monkeypatch):
+    store = Store(str(tmp_path / "db"))
+    ran: list[int] = []
+    monkeypatch.setattr(Executor, "run", lambda _self, job: ran.append(job.id))
+    executor = Executor(store, runners=1)
+    threading.Thread(target=executor._runner, args=(1,), daemon=True).start()
+    queued = store.save(Job(user="u", name="a", source="feed", target="/a", schedule="", options={}))
+    executor.request(queued.id or 0)
+    time.sleep(1)
+    assert not ran, "runner 1 is beyond one runner"
+    executor.runners = 2
+    began = time.monotonic()
+    while not ran and time.monotonic() - began < 10:
+        time.sleep(0.1)
+    assert ran == [queued.id]
+
+
+def test_the_admins_form_offers_the_environments_values():
+    from harvester import settings  # pylint: disable=import-outside-toplevel
+
+    fields = {field["id"]: field for field in settings.form(2, 3).to_dict()["fields"]}
+    assert fields[settings.RUNNERS]["default"] == "2" and fields[settings.BROWSERS]["default"] == "3"
+    assert settings.form(2, 3).section_type == "admin"
+    assert settings.number(None, 2, 8) == 2 and settings.number("0", 2, 8) == 1

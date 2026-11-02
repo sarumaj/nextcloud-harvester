@@ -1,5 +1,5 @@
-"""Runs the jobs when their schedule says, and when a user asks; a few at once (RUNNERS), never
-one twice, and one per site at a time."""
+"""Runs the jobs when their schedule says, and when a user asks; a few at once (RUNNERS, or the
+admin's setting), never one twice, and one per site at a time."""
 
 import asyncio
 import datetime
@@ -17,7 +17,7 @@ from urllib.parse import urlparse
 from croniter import croniter
 from nc_py_api import AsyncNextcloudApp
 
-from . import browser, runner
+from . import browser, runner, settings
 from .nextcloud import NextcloudLibrary
 from .sources import SOURCES, AuthError, ChallengeError, Stopped
 from .sources.download import guarded_client
@@ -29,8 +29,9 @@ LOG = logging.getLogger("harvester.executor")
 RUN_LIMIT = 2 * 3600
 # A paused run that nobody resumes ends after this long (it holds the browser meanwhile).
 PAUSE_LIMIT = 6 * 3600
-# How many jobs run at once (each a thread; a website job also takes one of the browsers).
-RUNNERS = max(1, int(os.environ.get("HARVESTER_RUNNERS", "2")))
+# How many jobs run at once (each a thread; a website job also takes one of the browsers): the
+# default, which the admin's setting changes.
+RUNNERS = min(max(1, int(os.environ.get("HARVESTER_RUNNERS", "2"))), settings.MAX_RUNNERS)
 ADDRESS = re.compile(r"https?://[^\s\"'<>]+")
 
 
@@ -160,10 +161,25 @@ class Executor:
             return sorted(self.controls)
 
     def start(self) -> None:
-        """Starts the schedule's thread and the runners."""
+        """Starts the schedule's thread and as many runners as the setting allows; those beyond
+        self.runners wait until it is raised."""
         threading.Thread(target=self._schedule, name="schedule", daemon=True).start()
-        for number in range(self.runners):
-            threading.Thread(target=self._runner, name=f"runner-{number}", daemon=True).start()
+        for number in range(settings.MAX_RUNNERS):
+            threading.Thread(target=self._runner, args=(number,), name=f"runner-{number}", daemon=True).start()
+
+    def read_settings(self) -> None:
+        """Takes the admin's settings (runners, browsers); unset, the environment's stay."""
+        nc = self.connect()
+        values = {
+            record.key: record.value
+            for record in self.call(nc.appconfig_ex.get_values([settings.RUNNERS, settings.BROWSERS]))
+        }
+        runners = settings.number(values.get(settings.RUNNERS), RUNNERS, settings.MAX_RUNNERS)
+        browsers = settings.number(values.get(settings.BROWSERS), browser.BROWSERS, settings.MAX_BROWSERS)
+        if (runners, browsers) != (self.runners, browser.SLOTS.limit):
+            LOG.info("%s jobs and %s browsers at once", runners, browsers)
+        self.runners = runners
+        browser.SLOTS.limit = browsers
 
     def request(self, job_id: int) -> None:
         """Runs the job as soon as a runner and its site are free (once, if asked twice)."""
@@ -214,8 +230,13 @@ class Executor:
         return asyncio.run_coroutine_threadsafe(wait(), self._events).result()
 
     def _schedule(self) -> None:
-        """Each minute, the jobs that are due go into the queue (unless running or queued)."""
+        """Each minute, the admin's settings are read and the jobs that are due go into the queue
+        (unless running or queued)."""
         while True:
+            try:
+                self.read_settings()
+            except Exception:  # pylint: disable=broad-exception-caught
+                LOG.warning("the settings could not be read, the last ones stay", exc_info=True)
             # Whatever goes wrong here (the database, a bug), the thread goes on: else no job
             # would run again until the app restarts, and nobody would be told.
             try:
@@ -226,11 +247,18 @@ class Executor:
                 LOG.exception("the schedule's turn failed")
             time.sleep(60)
 
-    def _runner(self) -> None:
-        """Takes the queued jobs one after another; one whose site is busy waits its turn."""
+    def _runner(self, number: int = 0) -> None:
+        """Takes the queued jobs one after another; one whose site is busy waits its turn. A
+        runner numbered beyond the setting (self.runners) waits until it is raised."""
         while True:
+            if number >= self.runners:
+                time.sleep(5)
+                continue
             try:
-                job_id = self.requests.get()
+                job_id = self.requests.get(timeout=5)
+            except queue.Empty:
+                continue
+            try:
                 # Read again just before its run: it may have been changed, disabled or deleted.
                 job = self.store.job(job_id)
                 if not job:

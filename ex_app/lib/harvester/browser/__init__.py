@@ -1,8 +1,8 @@
 """The browser: what the recorder and the browser source share.
 
-A few Chromiums at a time (SLOTS, HARVESTER_BROWSERS, 3 by default): each recording takes one
-while a person records, and the running job of the browser source one (jobs run one at a time),
-so people record side by side and while a job runs. The browser may open only http(s) addresses outside the local
+A few Chromiums at a time (SLOTS: HARVESTER_BROWSERS, 3 by default, or the admin's setting):
+each recording takes one while a person records, and each running job of the browser source
+one, so people record side by side and while jobs run. The browser may open only http(s) addresses outside the local
 and private networks: a file:// page would show the container's files and environment (the
 app's secret among them), and the network rules of the External Apps keep it off the private
 network in any case.
@@ -17,13 +17,59 @@ import time
 from pathlib import Path
 from urllib.parse import urlparse
 
+
+class Slots:
+    """A semaphore whose number can change while it is in use (the admin's setting): lowered,
+    the browsers open now stay until they close, and no new one starts until fewer are open."""
+
+    def __init__(self, limit: int):
+        self._limit = max(1, limit)
+        self._taken = 0
+        self._changed = threading.Condition()
+
+    @property
+    def limit(self) -> int:
+        """How many browsers may be open at once."""
+        return self._limit
+
+    @limit.setter
+    def limit(self, value: int) -> None:
+        with self._changed:
+            self._limit = max(1, value)
+            self._changed.notify_all()
+
+    def acquire(self, blocking: bool = True, timeout: float | None = None) -> bool:
+        """Takes a slot, waiting for one (up to timeout) unless not blocking."""
+        with self._changed:
+            if blocking and not self._changed.wait_for(lambda: self._taken < self._limit, timeout):
+                return False
+            if self._taken >= self._limit:
+                return False
+            self._taken += 1
+            return True
+
+    def release(self) -> None:
+        """Gives a slot back."""
+        with self._changed:
+            if self._taken == 0:
+                raise ValueError("released more slots than taken")
+            self._taken -= 1
+            self._changed.notify()
+
+    def free(self) -> int:
+        """How many browsers may start now."""
+        with self._changed:
+            return max(0, self._limit - self._taken)
+
+
 # Each Chromium takes some 300-600 MB: the slots keep their number within what the host has.
-SLOTS = threading.BoundedSemaphore(max(1, int(os.environ.get("HARVESTER_BROWSERS", "3"))))
+BROWSERS = max(1, int(os.environ.get("HARVESTER_BROWSERS", "3")))
+SLOTS = Slots(BROWSERS)
 
 
 def free_browsers() -> int:
     """How many browsers may start now (SLOTS not taken)."""
-    return SLOTS._value  # type: ignore[attr-defined]  # pylint: disable=protected-access
+    return SLOTS.free()
 
 
 SCRIPT = (Path(__file__).parent / "recorder.js").read_text(encoding="utf-8")
