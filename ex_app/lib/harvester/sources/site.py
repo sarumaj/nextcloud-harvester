@@ -185,7 +185,7 @@ class BrowserDriver(Driver):
         saw: Callable[[dict], None] | None = None,
     ):
         self.saw = saw
-        if not browser.SLOTS.acquire(timeout=LOCK_TIMEOUT):  # pylint: disable=consider-using-with
+        if not browser.SLOTS.acquire(timeout=LOCK_TIMEOUT, kind="job"):  # pylint: disable=consider-using-with
             raise SourceError("no browser came free (recordings use them all)")
         self._playwright = None
         self._browser = None
@@ -323,7 +323,7 @@ class BrowserDriver(Driver):
                 if self._guard:
                     self._guard.stop()
             finally:
-                browser.SLOTS.release()
+                browser.SLOTS.release("job")
 
 
 def guard(route: Route) -> None:

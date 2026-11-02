@@ -22,11 +22,16 @@ from urllib.parse import urlparse
 
 class Slots:
     """A semaphore whose number can change while it is in use (the admin's setting): lowered,
-    the browsers open now stay until they close, and no new one starts until fewer are open."""
+    the browsers open now stay until they close, and no new one starts until fewer are open.
+    Each slot is taken for a kind ("job": a running job's browser; "recording": the recorder,
+    a session continued in the browser, rclone's sign-in), so the page can say what holds them
+    without saying whose they are."""
 
     def __init__(self, limit: int):
         self._limit = max(1, limit)
-        self._taken = 0
+        self._taken: dict[str, int] = {"job": 0, "recording": 0}
+        # The threads waiting for a slot (a running job's): their job waits for a browser.
+        self._waiting: set[int] = set()
         self._changed = threading.Condition()
 
     @property
@@ -40,28 +45,43 @@ class Slots:
             self._limit = max(1, value)
             self._changed.notify_all()
 
-    def acquire(self, blocking: bool = True, timeout: float | None = None) -> bool:
-        """Takes a slot, waiting for one (up to timeout) unless not blocking."""
+    def acquire(self, blocking: bool = True, timeout: float | None = None, kind: str = "recording") -> bool:
+        """Takes a slot for the kind, waiting for one (up to timeout) unless not blocking."""
         with self._changed:
-            if blocking and not self._changed.wait_for(lambda: self._taken < self._limit, timeout):
+            if blocking:
+                self._waiting.add(threading.get_ident())
+                try:
+                    if not self._changed.wait_for(lambda: sum(self._taken.values()) < self._limit, timeout):
+                        return False
+                finally:
+                    self._waiting.discard(threading.get_ident())
+            if sum(self._taken.values()) >= self._limit:
                 return False
-            if self._taken >= self._limit:
-                return False
-            self._taken += 1
+            self._taken[kind] = self._taken.get(kind, 0) + 1
             return True
 
-    def release(self) -> None:
-        """Gives a slot back."""
+    def release(self, kind: str = "recording") -> None:
+        """Gives a slot of the kind back."""
         with self._changed:
-            if self._taken == 0:
+            if self._taken.get(kind, 0) == 0:
                 raise ValueError("released more slots than taken")
-            self._taken -= 1
+            self._taken[kind] -= 1
             self._changed.notify()
 
     def free(self) -> int:
         """How many browsers may start now."""
         with self._changed:
-            return max(0, self._limit - self._taken)
+            return max(0, self._limit - sum(self._taken.values()))
+
+    def taken(self) -> dict[str, int]:
+        """How many browsers are open, by kind: {"job": 2, "recording": 1}."""
+        with self._changed:
+            return dict(self._taken)
+
+    def waiting(self, thread: int) -> bool:
+        """Whether the thread (a runner's) waits for a slot now."""
+        with self._changed:
+            return thread in self._waiting
 
 
 # Each Chromium takes some 300-600 MB: the slots keep their number within what the host has.

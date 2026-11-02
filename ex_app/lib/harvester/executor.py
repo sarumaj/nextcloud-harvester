@@ -48,6 +48,15 @@ def site_of(job: Job) -> str:
     return f"job:{job.id}"
 
 
+def browsers_in_use() -> str:
+    """The browsers open, by what holds them, without whose: "all 3 in use (2 by jobs, 1 by
+    recordings)"."""
+    taken = browser.SLOTS.taken()
+    jobs, recordings = taken.get("job", 0), taken.get("recording", 0)
+    held = "all" if jobs + recordings >= browser.SLOTS.limit else f"{jobs + recordings} of"
+    return f"{held} {browser.SLOTS.limit} in use ({jobs} by jobs, {recordings} by recordings)"
+
+
 class Control:
     """A running job's controls from the page: paused (it waits before its next file) and
     stopped (it ends there, and at once in a wait); the time paused does not count against
@@ -57,6 +66,8 @@ class Control:
         self.paused = threading.Event()
         self.stopped = threading.Event()
         self.paused_for = 0.0
+        # The thread the run is in, once it started (0 before).
+        self.thread = 0
 
     def nap(self, seconds: float) -> None:
         """The run's waits (between files, retries, what a site asks for): ended at once by a
@@ -168,7 +179,9 @@ class Executor:
         # The running jobs' controls, and their sites; changed under _lock.
         self.controls: dict[int, Control] = {}
         self._sites: dict[int, str] = {}
-        self._queued: set[int] = set()
+        # The queued jobs in the order they were asked for (a dict keeps it): their places in the
+        # queue, which the page shows.
+        self._queued: dict[int, None] = {}
         # The queued jobs that are to run (the schedule, Run now), not only to bring their tags
         # to their files: a job's tags before a change are the database's (Store.retag_from),
         # and its next turn brings the files' tags up to date first.
@@ -188,6 +201,51 @@ class Executor:
         """The jobs waiting for a runner or their site (asked for, not running yet)."""
         with self._lock:
             return sorted(self._queued)
+
+    def status(self) -> dict:
+        """What everyone's jobs and recordings hold, without whose they are: the runners busy,
+        the browsers open (for jobs, for recordings and sign-ins) and the jobs queued."""
+        with self._lock:
+            busy, queued = len(self.controls), len(self._queued)
+        taken = browser.SLOTS.taken()
+        return {
+            "runners": {"busy": busy, "total": self.runners},
+            "browsers": {
+                "jobs": taken.get("job", 0),
+                "recordings": taken.get("recording", 0),
+                "total": browser.SLOTS.limit,
+            },
+            "queued": queued,
+        }
+
+    def waits(self, jobs: list[Job]) -> dict[int, str]:
+        """Why each of the jobs (those a user may see) waits, if it does: its place in the queue
+        and what it waits for (a runner, its own site, a browser). Nothing of other people's jobs
+        but how many there are: the site named is the job's own."""
+        with self._lock:
+            order = list(self._queued)
+            busy_sites = set(self._sites.values())
+            running = {job_id: control.thread for job_id, control in self.controls.items()}
+        reasons: dict[int, str] = {}
+        for job in jobs:
+            job_id = job.id or 0
+            if job_id in running:
+                if running[job_id] and browser.SLOTS.waiting(running[job_id]):
+                    reasons[job_id] = f"Waits for a browser: {browsers_in_use()}"
+                continue
+            if job_id not in order:
+                continue
+            ahead = order.index(job_id)
+            place = f"{ahead + 1}. in the queue"
+            site = site_of(job)
+            if site in busy_sites and not site.startswith("job:"):
+                reasons[job_id] = f"{place}: waits for its site ({site}), used by another job"
+            elif len(running) >= self.runners:
+                plural = "s" if ahead != 1 else ""
+                reasons[job_id] = f"{place}: waits for a runner, all {self.runners} busy ({ahead} job{plural} ahead)"
+            else:
+                reasons[job_id] = f"{place}: starts in a moment"
+        return reasons
 
     def start(self) -> None:
         """Starts the schedule's thread and as many runners as the setting allows; those beyond
@@ -224,7 +282,7 @@ class Executor:
                 self._wanted.add(job_id)
             if job_id in self._queued:
                 return
-            self._queued.add(job_id)
+            self._queued[job_id] = None
         self.requests.put(job_id)
 
     def retag(self, job_id: int, previous: list[str]) -> None:
@@ -308,7 +366,7 @@ class Executor:
                 job = self.store.job(job_id)
                 if not job:
                     with self._lock:
-                        self._queued.discard(job_id)
+                        self._queued.pop(job_id, None)
                         self._wanted.discard(job_id)
                     continue
                 if not self._claim(job):
@@ -338,7 +396,7 @@ class Executor:
                 return False
             self.controls[job.id] = Control()
             self._sites[job.id] = site
-            self._queued.discard(job.id)
+            self._queued.pop(job.id, None)
             return True
 
     def run(self, job: Job, wanted: bool = True) -> None:  # pylint: disable=too-many-locals
@@ -352,6 +410,8 @@ class Executor:
         # Its controls: a runner made them when it took the job; a direct call (tests) makes them.
         with self._lock:
             control = self.controls.setdefault(job_id, Control())
+        # The run's thread: while it waits for a browser, the page says so (waits).
+        control.thread = threading.get_ident()
         self._begin(job_id, control, wanted, previous is not None)
         nc = self.connect()
         source = None
