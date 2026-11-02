@@ -78,6 +78,21 @@ the app's browser or taken from a template, not by code.
   follow (a year, then its issues), the file links, and the next page's link. Each level has
   a CSS selector and a pattern: a regular expression on the link's URL whose named groups
   (`(?P<year>\d{4})`) become values.
+- **Numbered pages:** a listing paged by numbers (`‹ 1 [2] 3 … 9 ›`) instead of one "next" link
+  has `"next": {"kind": "number", "selector": <the numbers' container>, "level": 0}`
+  (`harvester/pagination.py`). On each page the walk takes the current page's number (the one
+  marked with `aria-current` or a class like `active`, `current` or `selected`; else the one
+  number that is no link; else `?page=`, `/page/3` in the address; else its own count) and
+  follows the number one higher: a link, or a button it clicks (`"buttons": true`, which needs
+  the browser). It ends at the last number, after *Pages*, or at known files, as with a link.
+  A next without `kind` is the single link it always was.
+- **Scroll to load more:** the step `{"action": "scroll"}` (`"rounds"`: at most 1 to 100, 20 by
+  default) scrolls the page to its end until it stops growing (no new links, elements or
+  height two rounds in a row, or after a minute), for a listing that loads more as it is
+  scrolled. The listing the steps end on is read in their tab, as they left it; with a kept
+  session the sign-in is skipped but the scroll steps at the steps' end still run. Ordinary
+  scrolling is never recorded: a position depends on the window's size and the page's state,
+  and replays wrongly in a job's window; a **Load more** button is a click, recorded as one.
 - **Values:** the download URL (`{url}/download`), the file's name
   (`{year}/iX {year}-{issue:02d}`) and the tags (`{year}`) are templates of the link's values:
   the pattern's groups and `url`, `text`, `page`, `host`, `filename`, `stem`, `ext`.
@@ -87,20 +102,43 @@ the app's browser or taken from a template, not by code.
   a pattern with named groups for each (`patterns.propose`), outlines what it matches in the
   page (solid) and what it leaves out (dashed), lists examples with their values, and proposes
   a file name and tags. Edit a pattern and the outlines follow. Passwords are never recorded:
-  the job fills in its account. **⛶ Full window** gives the browser the whole screen (the
-  browser's full screen, above Nextcloud's header; Esc leaves it): it takes the screen's size,
-  pages lay out for it, the controls float over it and the recipe is in a drawer. When the browser
-  cannot start, the page says why instead of showing an empty screen. The screen takes the cursor
-  the page shows under the mouse (a crosshair while picking); the wheel's movement goes to the
-  browser once a frame, in pixels.
+  the job fills in its account. **Back**, **Forward**, **Reload** and the address field's
+  **Go** are buttons (Tab and Enter reach them), here and in **Continue in the browser**. They
+  are steps only while recording: an address typed, Back and Forward become a step "goto" to the
+  page arrived at (a job's browser has no history to go back in), Reload none; browsing and
+  picking record nothing. Every pick (each level of links to follow, the file links, the next
+  page) has the same controls: its element (CSS selector) and pattern to edit, **Pick again**
+  and **Remove** (a removed level's later levels move up); **Undo pick** takes back the last
+  change of the picks. The recorder starts with the form's recipe, so its picks can be changed
+  there. Picking a number of a numbered pagination as the next page proposes numbered pages,
+  showing this page's number and the next one's (**Use the picked link alone** switches back).
+  **Add: scroll to load more** (while recording) adds that step and scrolls the page.
+  **Test the recipe** runs it as a job would (the site source's own walk, `Site.survey`, in a
+  browser context of its own with the recorder's session, shown on the screen; nothing recorded,
+  nothing downloaded) and lists the pages it read with the links matched, the first 20 file
+  links with the names the job's *File name* gives them, and the problems: a step that failed
+  (with the page it was on), a selector that matched nothing, a pattern none matched. It reads
+  at most 30 listing pages and three minutes; **Stop the test** ends it, and its context closes.
+  A recipe without steps is fetched over HTTP by the job: the test says so. **⛶ Full window** gives
+  the browser the whole screen (the browser's full screen, above Nextcloud's header; Esc leaves it):
+  it takes the screen's size, pages lay out for it, the controls float over it and the recipe is in
+  a drawer. When the browser cannot start, the page says why instead of showing an empty screen. The
+  screen takes the cursor the page shows under the mouse (a crosshair while picking); the wheel's
+  movement goes to the browser once a frame, in pixels.
 - **Sessions and challenges:** a job keeps its browser session (cookies, local storage;
   encrypted in Nextcloud, like its account) and replays the sign-in only when the listing shows
   a login form. When a site asks for a person instead (reCAPTCHA, hCaptcha, Cloudflare, "verify
   you are human") the run stops, the job shows **Needs you** and its user gets a notification;
   scheduled runs wait. **Continue in the browser** opens the recorder's browser with the job's
   session at that page: the person answers it, **Done** keeps the session and runs the job.
-  Harvester never answers a challenge itself. A new value for any of the job's account forgets
-  its kept session (the cookies, a refresh token the provider replaced): those are the old
+  Harvester never answers a challenge itself. When a step fails or a page asks for a person,
+  the job keeps what its browser showed (a JPEG of the window, at most 400 KB, with the page's
+  address and title; in the app's database, the newest per job, deleted with the job): its
+  line in the progress log gets **Show what the browser saw** (`GET /api/jobs/<id>/shot`, the
+  job's owner only), and from there **Open in the browser** opens the job's browser with its
+  session at that page. A failed step's line names its element when it has no text
+  (`step 2 (click a.overlay-b:nth-of-type(6)) failed`). A new value for any of the job's account
+  forgets its kept session (the cookies, a refresh token the provider replaced): those are the old
   account's, and would be used instead.
 - **A person's browser:** sites' bot protection (Cloudflare, ...) refuses a browser that says it is
   automated, or cuts its connection (`ERR_HTTP2_PROTOCOL_ERROR`). Chromium runs as the full browser
