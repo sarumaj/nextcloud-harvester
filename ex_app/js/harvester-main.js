@@ -107,6 +107,7 @@
 
 	function describe(step) {
 		if (step.action === 'goto') return `Open ${step.url}`
+		if (step.action === 'scroll') return `Scroll to load more${step.rounds ? ` (at most ${step.rounds} times)` : ''}`
 		if (step.action === 'click') return `Click ${step.text ? `“${step.text}”` : step.selector}`
 		if (step.action === 'press') return `Press ${step.key} in ${step.selector}`
 		if (step.credential === 'totp') return `Fill in the current one-time code (${step.selector})`
@@ -215,7 +216,15 @@
 		const line = (entry) => el('li', { class: `harvester-log-${entry.level}` },
 			el('time', { text: clock(entry.at) }),
 			select.value ? '' : el('span', { class: 'harvester-log-job', text: entry.name }),
-			el('span', { class: 'harvester-log-text', text: entry.message }))
+			el('span', { class: 'harvester-log-text', text: entry.message },
+				// The job's browser's picture of the failed step (or of the page asking for a
+				// person): kept for its newest failure only, so an older line's may be gone.
+				entry.shot ? el('button', {
+					type: 'button',
+					class: 'harvester-link',
+					text: 'Show what the browser saw',
+					onclick: () => showShot(root, jobs.find((job) => job.id === entry.job) || { id: entry.job, name: entry.name }),
+				}) : ''))
 		async function poll() {
 			if (!document.body.contains(panel)) return
 			try {
@@ -572,13 +581,22 @@
 		return panel
 	}
 
-	// One picked level in the recorder's panel: its pattern (editable), what it matches on the
-	// page, examples with their values, and the proposed file name and tags.
-	function renderLevel(title, spec, proposal, send, target, level, suggestions) {
-		const pattern = el('input', { class: 'harvester-pattern', value: spec.pattern || '' })
+	// One pick in the recorder's panel (a level of links to follow, the file links, the next
+	// page): its element (a CSS selector) and its pattern, both editable, what it matches on the
+	// page, examples with their values, the proposed file name and tags; and the same controls for
+	// each: Pick again (repick) and Remove.
+	function renderLevel(title, spec, proposal, send, target, level, suggestions, repick) {
+		const selector = el('input', { class: 'harvester-pattern', value: spec.selector || '', spellcheck: 'false' })
+		selector.addEventListener('change', () => send({ type: 'selector', target, level, selector: selector.value }))
+		const box = el('div', { class: 'harvester-level', 'data-target': target, 'data-level': String(level) },
+			el('div', { class: 'harvester-level-head' }, el('h4', { text: title }),
+				el('button', { type: 'button', text: 'Pick again', title: 'Pick this on the page again (in its picking mode)', onclick: () => repick(target, level) }),
+				el('button', { type: 'button', class: 'error', text: 'Remove', title: target === 'follow' ? 'Remove this level (the levels after it move up)' : 'Remove this pick', onclick: () => send({ type: 'remove', target, level }) })),
+			field(target === 'next' && spec.kind === 'number' ? 'The numbers’ container (CSS selector)' : 'Element (CSS selector)', selector))
+		if (target === 'next') return renderNext(box, spec, proposal, send)
+		const pattern = el('input', { class: 'harvester-pattern', value: spec.pattern || '', spellcheck: 'false' })
 		pattern.addEventListener('change', () => send({ type: 'pattern', target, level, pattern: pattern.value }))
-		const box = el('div', { class: 'harvester-level' }, el('h4', { text: title }),
-			el('small', { text: spec.selector }), field('Pattern (named groups become values)', pattern))
+		box.append(field('Pattern (named groups become values)', pattern))
 		if (!proposal) return box
 		if (proposal.error) box.append(el('p', { class: 'harvester-error', text: proposal.error }))
 		box.append(el('p', { text: `On this page: ${proposal.matching} of ${proposal.found} links match (solid outline; dashed: left out).` }))
@@ -591,6 +609,55 @@
 			if (proposal.tags.length) {
 				box.append(el('p', { text: `Proposed tags: ${proposal.tags.join(', ')}` }), use('Use them', () => { suggestions.tags = proposal.tags }))
 			}
+		}
+		return box
+	}
+
+	// The next page: one link, or numbered pages (‹ 1 [2] 3 ›: the number one higher than the
+	// current page's), with what this page shows and the switch between the two when both fit.
+	function renderNext(box, spec, proposal, send) {
+		const where = `On ${Number(spec.level || 0) === 0 ? 'the listing' : `the pages of level ${spec.level}`}.`
+		if (spec.kind === 'number') {
+			box.append(el('p', { text: `Numbered pages: the number after the current page’s is followed. ${where}` }))
+			if (proposal && proposal.kind === 'number') {
+				box.append(el('p', {
+					text: `On this page: numbers ${proposal.numbers.join(' ')}; this is page ${proposal.current}, the next is ${proposal.following ?? 'none (the last page)'}.`,
+				}))
+			}
+			if (spec.buttons) box.append(el('p', { class: 'harvester-muted', text: 'The numbers are buttons: the job clicks them in the browser.' }))
+			if (proposal && proposal.link) box.append(el('button', { type: 'button', text: 'Use the picked link alone', onclick: () => send({ type: 'next-kind', kind: 'link' }) }))
+		} else {
+			box.append(el('p', { text: `The link to the next page. ${where}` }))
+			if (proposal && proposal.number) box.append(el('button', { type: 'button', text: 'Use numbered pages', onclick: () => send({ type: 'next-kind', kind: 'number' }) }))
+		}
+		return box
+	}
+
+	// What the recipe's test found: the listing pages it read with the links matched, the first
+	// file links with the file names the job would give them, the problems, and the page the
+	// browser showed when a step failed.
+	function renderTest(result) {
+		const ended = {
+			complete: 'It went through the whole site.',
+			files: 'It stopped at the first file links (a test lists a few).',
+			pages: 'It stopped after its pages (a test reads a few).',
+			time: 'It stopped: its time was up.',
+			stopped: 'Stopped.',
+			failed: 'It failed.',
+		}[result.ended] || ''
+		const box = el('div', { class: 'harvester-test', 'aria-live': 'polite' },
+			el('h3', { text: 'Test' }),
+			el('p', { text: `${result.files} file links on ${result.pages.length} pages. ${ended}` }))
+		if (result.http) box.append(el('p', { class: 'harvester-muted', text: 'The job reads these pages without the browser (no steps): a page built by JavaScript may show it fewer links than here. Turn on “Use the browser” then.' }))
+		if (result.problems.length) box.append(el('ul', { class: 'harvester-error' }, ...result.problems.map((problem) => el('li', { text: problem }))))
+		box.append(el('ol', { class: 'harvester-test-pages' }, ...result.pages.map((page) => el('li', {},
+			el('span', { text: `${page.level === 0 ? 'Listing' : `Level ${page.level}`}, page ${page.page}: ${page.matching} of ${page.found} ${page.kind === 'follow' ? 'links to follow' : 'file links'} ` }),
+			el('code', { text: page.url }),
+			page.files.length ? el('ul', {}, ...page.files.map((file) => el('li', {},
+				file.problem ? el('span', { class: 'harvester-error', text: `${file.url}: ${file.problem}` }) : el('span', { text: file.path, title: file.url })))) : ''))))
+		if (result.shot) {
+			box.append(el('p', { text: `${result.shot.what}: ${result.shot.title || ''} ` }, el('code', { text: result.shot.url })),
+				el('img', { class: 'harvester-shot-image', src: `data:image/jpeg;base64,${result.shot.image}`, alt: 'What the browser showed then' }))
 		}
 		return box
 	}
@@ -781,13 +848,48 @@
 		return line
 	}
 
-	// A job that met a page asking for a person: the browser opens there with the job's session;
-	// the person answers it, and "Done" keeps the session and runs the job again.
-	function openSession(root, job) {
-		const socket = new WebSocket(`${RECORDER}?job=${job.id}`)
+	// What a job's browser showed when a step failed or a page asked for a person: the picture,
+	// the page's address and title; from here the browser opens live at that page.
+	async function showShot(root, job) {
+		const view = el('div', { class: 'harvester-shot' }, el('p', { class: 'harvester-muted', text: 'Loading…' }))
+		root.replaceChildren(view)
+		let shot
+		try {
+			shot = await api('GET', `/jobs/${job.id}/shot`)
+		} catch (e) {
+			view.replaceChildren(el('p', { class: 'harvester-error', text: e.message }),
+				el('button', { text: 'Back', onclick: () => show(root) }))
+			return
+		}
+		if (!root.contains(view)) return
+		view.replaceChildren(
+			el('div', { class: 'harvester-header' },
+				el('div', {},
+					el('h2', { text: `${job.name}: what the browser saw` }),
+					el('p', { class: 'harvester-muted', text: `${shot.what} · ${when(shot.at)}` })),
+				el('div', { class: 'harvester-actions' },
+					el('button', { class: 'primary', text: 'Open in the browser', title: 'The job’s browser at this page, with its session, to look live', onclick: () => openSession(root, job, 'shot') }),
+					el('button', { text: 'Back', onclick: () => show(root) }))),
+			el('p', {}, el('strong', { text: shot.title || '(no title)' }), el('br'), el('code', { text: shot.url })),
+			el('img', { class: 'harvester-shot-image', src: `data:image/jpeg;base64,${shot.image}`, alt: `The page ${shot.url} as the job’s browser showed it` }))
+	}
+
+	// The remote browser's navigation: Back, Forward and Reload, buttons as any other (Tab and
+	// Enter or Space reach them); the server records none of them outside the mode record.
+	function navigation(send) {
+		return [['back', 'Back', 'The page before'], ['forward', 'Forward', 'The page after'], ['reload', 'Reload', 'Load this page again']]
+			.map(([type, text, title]) => el('button', { type: 'button', text, title, onclick: () => send({ type }) }))
+	}
+
+	// A job's browser with the job's session: at the page that asked for a person (the person
+	// answers it), or with at 'shot' at the page of its last failed step (to look live). "Done"
+	// keeps the session and runs the job again.
+	function openSession(root, job, at = '') {
+		const socket = new WebSocket(`${RECORDER}?job=${job.id}${at ? `&at=${encodeURIComponent(at)}` : ''}`)
 		const send = (message) => socket.readyState === WebSocket.OPEN && socket.send(JSON.stringify(message))
 		const screen = el('img', { class: 'harvester-screen', tabindex: '0', alt: 'The job’s browser' })
-		const url = el('input', { class: 'harvester-url', readonly: '', value: job.challenge_url || '' })
+		const url = el('input', { class: 'harvester-url', value: job.challenge_url || '', 'aria-label': 'Address' })
+		url.addEventListener('keydown', (event) => { if (event.key === 'Enter') send({ type: 'goto', url: url.value }) })
 		const message = el('p', { class: 'harvester-muted', text: 'Starting the browser…' })
 		const network = networkLine()
 		const done = el('button', {
@@ -815,10 +917,17 @@
 		container.append(
 			el('div', { class: 'harvester-header' },
 				el('div', {},
-					el('h2', { text: `${job.name}: continue in the browser` }),
-					el('p', { class: 'harvester-muted', text: 'The site asks for a person. Answer it here as you would in your own browser (and sign in, if it asks); then press Done. The job keeps this session and runs again.' }))),
+					el('h2', { text: `${job.name}: ${at === 'shot' ? 'in the job’s browser' : 'continue in the browser'}` }),
+					el('p', {
+						class: 'harvester-muted',
+						text: at === 'shot'
+							? 'The job’s browser with its session, at the page where it stopped. Look around (nothing is recorded); Done keeps this session and runs the job again, Cancel leaves it as it was.'
+							: 'The site asks for a person. Answer it here as you would in your own browser (and sign in, if it asks); then press Done. The job keeps this session and runs again.',
+					}))),
 			overlay(
-				el('div', { class: 'harvester-toolbar' }, url, fullWindow(container, box, send), done,
+				el('div', { class: 'harvester-toolbar' }, ...navigation(send), url,
+					el('button', { type: 'button', text: 'Go', onclick: () => send({ type: 'goto', url: url.value }) }),
+					fullWindow(container, box, send), done,
 					el('button', { text: 'Cancel', onclick: () => { socket.close(); show(root) } })),
 				network, message),
 			el('div', { class: 'harvester-stage' }, box))
@@ -826,13 +935,16 @@
 		screen.focusKeys()
 	}
 
-	// The recorder: the browser's screen, the person's mouse and keys to it, and the recipe so far.
-	function openRecorder(root, page, textarea, apply) {
+	// The recorder: the browser's screen, the person's mouse and keys to it, and the recipe so far;
+	// settings() gives the form's settings the recipe's test uses (the file names, the pages).
+	function openRecorder(root, page, textarea, apply, settings = () => ({})) {
 		let recipe = {}
 		try {
 			recipe = JSON.parse(textarea.value || '{}')
 		} catch (e) {}
 		let proposals = {}
+		let testing = false
+		let tested = null
 		const suggestions = {}
 		// The form's "HTTP/1.1 only", known before the browser starts.
 		const http1 = page.querySelector('[data-option="http1"]')
@@ -841,39 +953,77 @@
 		const socket = new WebSocket(query ? `${RECORDER}?${query}` : RECORDER)
 		const send = (message) => socket.readyState === WebSocket.OPEN && socket.send(JSON.stringify(message))
 		const screen = el('img', { class: 'harvester-screen', tabindex: '0', alt: 'The recorder’s browser' })
-		const url = el('input', { class: 'harvester-url', placeholder: 'https://… the site’s first page' })
+		const url = el('input', { class: 'harvester-url', placeholder: 'https://… the site’s first page', 'aria-label': 'Address' })
 		const message = el('p', { class: 'harvester-error' })
 		const network = networkLine()
 		const panel = el('div', { class: 'harvester-steps' })
 		const modes = el('div', { class: 'harvester-modes' })
 		const help = {
-			record: 'Use the site as usual: sign in and go to the listing. Clicks, typing and pages opened here are recorded.',
+			record: 'Use the site as usual: sign in and go to the listing. Clicks, typing, addresses typed and Back or Forward are recorded; scrolling is not (add “scroll to load more” for a listing that grows as it is scrolled).',
 			browse: 'Go anywhere without recording (into a year, an issue, …) to pick there.',
 			follow: 'Click one link that leads to a further listing (a year, a category): similar links are picked with it.',
 			links: 'Click one file link: the similar ones are picked with it, and a pattern is proposed.',
-			next: 'Click the link to the next page of this listing (if there is one).',
+			next: 'Click the link to the next page of this listing (if there is one); for numbered pages (1 2 3 …), click the number of the next page.',
 		}
 		const modeHelp = el('small', { text: help.record })
+		const scroll = el('button', {
+			type: 'button',
+			text: 'Add: scroll to load more',
+			title: 'A step: scroll to the end of the page until no more comes (a listing that loads more as it is scrolled)',
+			onclick: () => send({ type: 'scroll' }),
+		})
+		const radios = {}
 		const labels = [['record', 'Record steps'], ['browse', 'Browse'], ['follow', 'Pick links to follow'], ['links', 'Pick file links'], ['next', 'Pick next-page link']]
+		const choose = (mode, text, level) => {
+			radios[mode].checked = true
+			send(level === undefined ? { type: 'mode', mode } : { type: 'mode', mode, level })
+			modeHelp.textContent = text || help[mode]
+			scroll.disabled = mode !== 'record'
+			screen.focusKeys()
+		}
 		for (const [mode, label] of labels) {
 			const radio = el('input', { type: 'radio', name: 'harvester-mode', value: mode })
 			radio.checked = mode === 'record'
-			radio.addEventListener('change', () => { send({ type: 'mode', mode }); modeHelp.textContent = help[mode]; screen.focusKeys() })
+			radio.addEventListener('change', () => choose(mode))
+			radios[mode] = radio
 			modes.append(el('label', {}, radio, ` ${label} `))
 		}
+		// Pick again: the pick's mode; a level's links replace that level's, the later ones stay.
+		const repick = (target, level) => {
+			if (target === 'follow') {
+				const where = level === 0 ? 'the listing' : `a page of level ${level}`
+				choose('follow', `Go to ${where} (Browse) and click one of the links to follow: they replace level ${level + 1}’s.`, level)
+			} else choose(target)
+		}
+		const test = el('button', {
+			type: 'button',
+			text: 'Test the recipe',
+			title: 'Run the recipe as the job would, here, without downloading: the pages, the file links and their names',
+			onclick: () => {
+				if (testing) send({ type: 'test-stop' })
+				else send({ type: 'test', recipe, settings: settings() })
+			},
+		})
 
 		function renderPanel() {
+			test.textContent = testing ? 'Stop the test' : 'Test the recipe'
 			panel.replaceChildren(
-				el('h3', { text: 'Steps' }),
+				el('div', { class: 'harvester-level-head' }, el('h3', { text: 'Steps' })),
 				el('ol', {}, ...(recipe.steps || []).map((step) => el('li', { text: describe(step) }))),
-				el('h3', { text: 'Listing' }),
+				el('div', { class: 'harvester-level-head' }, el('h3', { text: 'Listing' }),
+					el('button', { type: 'button', text: 'Undo pick', title: 'Take back the last change of the picks', onclick: () => send({ type: 'undo-pick' }) })),
 				el('p', { text: recipe.start || '(the page where you pick)' }),
 				...(recipe.follow || []).map((spec, level) =>
-					renderLevel(`Level ${level + 1}: links to follow`, spec, proposals[`follow${level}`], send, 'follow', level, suggestions)),
+					renderLevel(`Level ${level + 1}: links to follow`, spec, proposals[`follow${level}`], send, 'follow', level, suggestions, repick)),
 				recipe.links && recipe.links.selector
-					? renderLevel('File links', recipe.links, proposals.links, send, 'links', 0, suggestions)
+					? renderLevel('File links', recipe.links, proposals.links, send, 'links', 0, suggestions, repick)
 					: el('p', { text: 'File links: not picked yet.' }),
-				el('p', { text: `Next page: ${recipe.next ? `${recipe.next.selector} (level ${recipe.next.level})` : 'none'}` }))
+				recipe.next && recipe.next.selector
+					? renderLevel('Next page', recipe.next, proposals.next, send, 'next', Number(recipe.next.level || 0), suggestions, repick)
+					: el('p', { text: 'Next page: none.' }),
+				el('div', { class: 'harvester-level-head' }, test),
+				testing ? el('p', { class: 'harvester-muted', 'aria-live': 'polite', text: 'Testing: the browser shows the job’s way through the site…' }) : '',
+				tested && !testing ? renderTest(tested) : '')
 		}
 
 		function close(keep) {
@@ -885,6 +1035,8 @@
 			root.replaceChildren(page)
 		}
 
+		// The recorder starts with the form's picks, to change or remove them there.
+		socket.addEventListener('open', () => send({ type: 'load', recipe }))
 		socket.addEventListener('message', (event) => {
 			const data = JSON.parse(event.data)
 			if (data.type === 'frame') { if (!left(screen, socket)) screen.frame(data.data) }
@@ -893,16 +1045,13 @@
 			else if (data.type === 'error') { message.textContent = data.message; screen.say(data.message) }
 			else if (data.type === 'viewport') screen.resized(data)
 			else if (data.type === 'network') network.show(data)
+			else if (data.type === 'test-started') { testing = true; tested = null; renderPanel() }
+			else if (data.type === 'test') { testing = false; tested = data.result; renderPanel() }
 			else if (data.type === 'recipe') {
-				// What an earlier recording picked stays unless picked again.
-				recipe = {
-					...data.recipe,
-					steps: data.recipe.steps.length ? data.recipe.steps : recipe.steps || [],
-					start: data.recipe.start || recipe.start || '',
-					follow: data.recipe.follow.length ? data.recipe.follow : recipe.follow || [],
-					links: data.recipe.links && data.recipe.links.selector ? data.recipe.links : recipe.links || {},
-					next: data.recipe.next || recipe.next,
-				}
+				// The picks are the recorder's (it started with the form's); the steps an earlier
+				// recording made stay until new ones are recorded.
+				recipe = { ...recipe, ...data.recipe, steps: data.recipe.steps.length ? data.recipe.steps : recipe.steps || [] }
+				if (!data.recipe.next) delete recipe.next
 				proposals = data.proposals
 				message.textContent = ''
 				renderPanel()
@@ -920,19 +1069,19 @@
 		})
 		container.append(
 			el('h2', { text: 'Recorder' }),
-			el('p', { text: 'Sign in and go to the listing as you would (passwords are not recorded: the job uses its account). Then pick the links to follow (if the files are a level deeper) and the file links: their patterns are proposed, the matches outlined.' }),
+			el('p', { text: 'Sign in and go to the listing as you would (passwords are not recorded: the job uses its account). Then pick the links to follow (if the files are a level deeper) and the file links: their patterns are proposed, the matches outlined. Test the recipe to see what the job would find.' }),
 			overlay(
 				el('div', { class: 'harvester-toolbar' },
+					...navigation(send),
 					url,
-					el('button', { text: 'Go', onclick: () => send({ type: 'goto', url: url.value }) }),
-					el('button', { text: 'Back', onclick: () => send({ type: 'back' }) }),
-					el('button', { text: 'Undo step', onclick: () => send({ type: 'undo' }) }),
-					el('button', { text: 'Clear picks', onclick: () => { recipe = { steps: recipe.steps }; send({ type: 'clear' }) } }),
+					el('button', { type: 'button', text: 'Go', onclick: () => send({ type: 'goto', url: url.value }) }),
+					el('button', { type: 'button', text: 'Undo step', onclick: () => send({ type: 'undo' }) }),
+					el('button', { type: 'button', text: 'Clear picks', onclick: () => { recipe = { steps: recipe.steps }; send({ type: 'clear' }) } }),
 					fullWindow(container, box, send),
 					drawer,
 					el('button', { class: 'primary', text: 'Done', onclick: () => close(true) }),
 					el('button', { text: 'Cancel', onclick: () => close(false) })),
-				modes, modeHelp, network, message),
+				modes, el('div', { class: 'harvester-toolbar' }, modeHelp, scroll), network, message),
 			el('div', { class: 'harvester-stage' }, box, panel))
 		root.replaceChildren(container)
 		renderPanel()
@@ -1087,7 +1236,12 @@
 				textarea.value = current
 				optionInputs[key] = textarea
 				options.append(field(option.title, textarea, option.description),
-					el('button', { type: 'button', text: 'Record in the browser', onclick: () => openRecorder(root, page, textarea, applySuggestions) }))
+					el('button', {
+						type: 'button',
+						text: 'Record in the browser',
+						onclick: () => openRecorder(root, page, textarea, applySuggestions, () => Object.fromEntries(
+							['path', 'download_url', 'max_pages', 'browser'].filter((name) => optionInputs[name]).map((name) => [name, optionInputs[name].value]))),
+					}))
 			} else {
 				if (option.kind === 'flag') {
 					// On or off, kept as 1 or 0 (as the jobs saved before the checkbox).
@@ -1325,6 +1479,11 @@
 		#harvester .harvester-wide-switch[aria-pressed="true"] { background: var(--color-primary-element-light); }
 		#harvester .harvester-steps { flex: 1; min-width: 300px; max-height: 80vh; overflow: auto; overflow-wrap: anywhere; font-size: 90%; }
 		#harvester .harvester-level { border-inline-start: 3px solid var(--color-primary-element); padding-inline-start: 8px; margin: 8px 0; }
+		#harvester .harvester-level-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+		#harvester .harvester-level-head h3, #harvester .harvester-level-head h4 { margin-inline-end: auto; }
+		#harvester .harvester-test-pages { padding-inline-start: 20px; }
+		#harvester .harvester-shot-image { display: block; max-width: 100%; height: auto; border: 1px solid var(--color-border); border-radius: var(--border-radius); }
+		#harvester .harvester-link { border: none; background: none; min-height: 0; padding: 0 0 0 8px; color: var(--color-primary-element); text-decoration: underline; cursor: pointer; }
 		#harvester .harvester-value { background: var(--color-primary-element-light); border-radius: 4px; padding: 0 4px; margin-inline-end: 4px; font-family: var(--font-face-monospace, monospace); }
 	`))
 
