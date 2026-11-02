@@ -1,8 +1,10 @@
 """Templates of jobs for known sites (presets/<id>.json), with a few parameters.
 
 A template has a title, a description, its parameters ({name: {title, default, check (a
-regular expression the value must match), description}}) and the job, in whose strings
-${name} stands for a parameter's value. Its recipe is an object here; the job gets it as JSON.
+regular expression the value must match), description, suggestions}}) and the job, in whose
+strings ${name} stands for a parameter's value. Suggestions are the values the template's
+card offers to pick, each a value or {value, label} shown by its label, and each passing the
+check; the field takes others too. Its recipe is an object here; the job gets it as JSON.
 """
 
 import json

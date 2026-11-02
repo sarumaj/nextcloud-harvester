@@ -89,3 +89,68 @@ def test_a_templates_address_may_have_any_letter_but_no_space(preset_id, name):
     assert make_job(preset_id, {name: "https://www.sounds.example/shows/s"})
     with pytest.raises(ValueError):
         make_job(preset_id, {name: "https://example.org/a b"})
+
+
+# Each suggestion of a template's parameter: (template, parameter, value).
+SUGGESTIONS = sorted(
+    (preset_id, name, suggestion["value"] if isinstance(suggestion, dict) else suggestion)
+    for preset_id, preset in PRESETS.items()
+    for name, parameter in preset.get("parameters", {}).items()
+    for suggestion in parameter.get("suggestions", [])
+)
+
+
+@pytest.mark.parametrize(("preset_id", "name", "value"), SUGGESTIONS)
+def test_a_templates_suggestions_pass_its_check_and_make_a_job(preset_id, name, value):
+    from harvester.sources import SOURCES  # pylint: disable=import-outside-toplevel
+
+    parameter = PRESETS[preset_id]["parameters"][name]
+    assert re.fullmatch(parameter.get("check", ".*"), value), f"{preset_id}: {name} suggests {value}"
+    given = {key: sample for key, sample in SAMPLES.items() if key in PRESETS[preset_id]["parameters"]}
+    job = make_job(preset_id, given | {name: value})
+    SOURCES[job["source"]](job["options"], {}, None).close()
+
+
+def test_a_templates_suggestions_are_several_and_labelled_ones_have_a_label():
+    # One value alone is what the person complained of: a list that offers nothing to choose.
+    for preset_id, preset in PRESETS.items():
+        for name, parameter in preset.get("parameters", {}).items():
+            suggestions = parameter.get("suggestions", [])
+            assert len(suggestions) != 1, f"{preset_id}: {name} suggests one value"
+            for suggestion in suggestions:
+                assert not isinstance(suggestion, dict) or (suggestion["value"] and suggestion["label"])
+
+
+def test_the_schedules_templates_suggest_are_valid_cron():
+    from harvester import schedule  # pylint: disable=import-outside-toplevel
+
+    for preset_id, name, value in SUGGESTIONS:
+        if name == "schedule":
+            assert schedule.describe(value), f"{preset_id}: {value}"
+
+
+def test_media_templates_choose_their_quality():
+    video = make_job("video-channel", {"url": SAMPLES["url"], "quality": "bv*[height<=720]+ba/b[height<=720]"})
+    assert video["options"]["format"] == "bv*[height<=720]+ba/b[height<=720]"
+    assert make_job("channel-audio", {"url": SAMPLES["url"]})["options"]["format"] == "ba[ext=m4a]/ba"
+    with pytest.raises(ValueError):
+        make_job("video-channel", {"url": SAMPLES["url"], "quality": "${name}"})
+
+
+def test_options_offer_several_values_that_they_accept():
+    from harvester.runner import COMMON_OPTIONS  # pylint: disable=import-outside-toplevel
+    from harvester.sources import SOURCES  # pylint: disable=import-outside-toplevel
+
+    for source in SOURCES.values():
+        for key, option in (source.options | COMMON_OPTIONS).items():
+            assert len(option.choices) != 1 and len(option.suggestions) != 1, f"{source.name}: {key}"
+            assert option.default in option.choices or not option.choices
+            for value in option.suggestions:
+                if isinstance(option.default, int):
+                    number = int(value)
+                    assert option.minimum is None or number >= option.minimum, f"{source.name}: {key} {value}"
+                    assert option.maximum is None or number <= option.maximum, f"{source.name}: {key} {value}"
+                if option.kind == "regex":
+                    re.compile(value)
+                if option.kind == "template":
+                    assert render_path(value, dict.fromkeys(option.values, 1)), f"{source.name}: {key} {value}"

@@ -85,18 +85,26 @@ class Media(Source):
         ),
         "format": Option(
             "Format",
-            "best[acodec!=none][vcodec!=none]/best",
-            "yt-dlp's format selection; formats that come as one file only (joining streams needs ffmpeg, "
-            "which the app does not have).",
+            "bv*+ba/b",
+            "yt-dlp's format selection: bv*+ba/b joins the best video and the best audio (into mp4 where the "
+            "codecs allow, mkv otherwise), [height<=1080] caps the picture, ba takes the audio alone.",
             suggestions=(
+                "bv*+ba/b",
+                "bv*[height<=1080]+ba/b[height<=1080]",
+                "bv*[height<=720]+ba/b[height<=720]",
+                "bv*[height<=480]+ba/b[height<=480]",
+                "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b",
                 "best[acodec!=none][vcodec!=none]/best",
-                "best[height<=1080][acodec!=none][vcodec!=none]/best[height<=1080]",
-                "best[height<=720][acodec!=none][vcodec!=none]/best[height<=720]",
-                "bestaudio[ext=m4a]/bestaudio",
+                "ba[ext=m4a]/ba/b",
+                "ba/b",
             ),
         ),
         "max_entries": Option(
-            "Entries per run", 30, "The newest entries of a playlist or channel looked at.", minimum=1
+            "Entries per run",
+            30,
+            "The newest entries of a playlist or channel looked at.",
+            minimum=1,
+            suggestions=("5", "15", "30", "100"),
         ),
         "path": Option(
             "File name",
@@ -105,6 +113,12 @@ class Media(Source):
             "{day}.",
             kind="template",
             values=("uploader", "channel", "title", "id", "extractor", "year", "month", "day", "ext"),
+            suggestions=(
+                "{uploader}/{title} [{id}].{ext}",
+                "{year}/{year}-{month:02d}-{day:02d} {title} [{id}].{ext}",
+                "{year}/{title} [{id}].{ext}",
+                "{title} [{id}].{ext}",
+            ),
         ),
     }
     pause = 5.0

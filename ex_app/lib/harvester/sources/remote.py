@@ -111,7 +111,11 @@ class Remote(Source):  # pylint: disable=too-many-instance-attributes
             "Folder on the remote", "", "The folder on the remote (empty: its root).", placeholder="Documents/Invoices"
         ),
         "include": Option(
-            "Files", "", "rclone's filter for the files, e.g. *.pdf or **/*.jpg (empty: all).", placeholder="*.pdf"
+            "Files",
+            "",
+            "rclone's filter for the files, e.g. *.pdf or **/*.jpg (empty: all).",
+            placeholder="*.pdf",
+            suggestions=("*.pdf", "*.{jpg,jpeg,png,heic}", "*.{mp4,mov}", "*.{doc,docx,odt,pdf}"),
         ),
         "recursive": Option("With subfolders", 1, "Also the files in the folder's subfolders.", kind="flag"),
         "path_template": Option(
@@ -121,6 +125,7 @@ class Remote(Source):  # pylint: disable=too-many-instance-attributes
             "{year}, {month}, {day} (of the file's time).",
             kind="template",
             values=("path", "dir", "filename", "stem", "ext", "year", "month", "day"),
+            suggestions=("{path}", "{filename}", "{year}/{filename}", "{year}/{month:02d}/{filename}"),
         ),
     }
     pause = 0.0

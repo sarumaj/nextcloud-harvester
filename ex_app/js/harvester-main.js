@@ -10,6 +10,15 @@
 	const RECORDER = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${OC.webroot || ''}/exapps/harvester/ws/record`
 	const VIEWPORT = { width: 1280, height: 800 }
 	const BLANK = { name: '', source: 'site', target: '/Harvester', schedule: '0 6 * * *', options: {}, tags: [], enabled: true }
+	// Usual schedules, offered below the job's schedule (cron, UTC).
+	const SCHEDULES = [
+		{ value: '0 * * * *', label: 'Hourly' },
+		{ value: '0 */6 * * *', label: 'Every 6 hours' },
+		{ value: '0 6 * * *', label: 'Daily 06:00' },
+		{ value: '0 6 * * 1-5', label: 'Weekdays 06:00' },
+		{ value: '0 6 * * 1', label: 'Mondays 06:00' },
+		{ value: '0 6 1 * *', label: 'Monthly, the 1st' },
+	]
 	let sources = []
 	let presets = []
 
@@ -217,8 +226,10 @@
 		const cards = presets.map((preset) => {
 			const inputs = {}
 			const fields = Object.entries(preset.parameters).map(([name, spec]) => {
-				inputs[name] = el('input', { value: spec.default })
-				return field(spec.title, inputs[name], spec.description)
+				inputs[name] = el('input', { value: spec.default, spellcheck: 'false' })
+				const row = field(spec.title, inputs[name], spec.description)
+				if (spec.suggestions && spec.suggestions.length) inputs[name].after(suggestionChips(inputs[name], spec.suggestions))
+				return row
 			})
 			return el('div', { class: 'harvester-card' },
 				el('h3', { class: 'harvester-with-icon' }, icon(preset.source), el('span', { text: preset.title })),
@@ -644,9 +655,36 @@
 		url.focus()
 	}
 
+	// Values to pick for a field that takes others too, all of them as buttons below it (a value,
+	// or { value, label } shown by its label). Not a datalist: browsers list only its entries
+	// that match what the field holds, so a field filled with one of them offered that one alone.
+	function suggestionChips(input, suggestions) {
+		const chips = suggestions.map((suggestion) => {
+			const { value, label } = typeof suggestion === 'object' ? suggestion : { value: String(suggestion), label: '' }
+			const chip = el('button', {
+				type: 'button',
+				class: 'harvester-chip',
+				text: label || (value === '' ? '(empty)' : value),
+				title: value,
+				onclick: () => {
+					input.value = value
+					// The field's checks and readable size follow, as when typed.
+					input.dispatchEvent(new Event('input', { bubbles: true }))
+					input.focus()
+				},
+			})
+			chip.dataset.value = value
+			return chip
+		})
+		// The chip of the value the field holds is marked.
+		const mark = () => chips.forEach((chip) => chip.setAttribute('aria-pressed', String(chip.dataset.value === String(input.value))))
+		input.addEventListener('input', mark)
+		mark()
+		return el('div', { class: 'harvester-values harvester-suggestions' }, el('small', { class: 'harvester-muted', text: 'Pick: ' }), ...chips)
+	}
+
 	// The input of an option, after its kind: an address, a pattern or a template (monospace), a
-	// number with its bounds, text with suggestions.
-	let suggestionLists = 0
+	// number with its bounds, text.
 	function optionInput(option, current) {
 		const number = typeof option.default === 'number'
 		const attributes = { value: current, type: option.kind === 'url' ? 'url' : number ? 'number' : 'text', spellcheck: 'false' }
@@ -654,14 +692,7 @@
 		if (number && option.minimum !== null && option.minimum !== undefined) attributes.min = String(option.minimum)
 		if (number && option.maximum !== null && option.maximum !== undefined) attributes.max = String(option.maximum)
 		if (['regex', 'template'].includes(option.kind)) attributes.class = 'harvester-code'
-		const input = el('input', attributes)
-		if (option.suggestions && option.suggestions.length) {
-			const id = `harvester-suggestions-${++suggestionLists}`
-			input.setAttribute('list', id)
-			// In the page already: a list the input refers to must be in the document.
-			document.body.append(el('datalist', { id }, ...option.suggestions.map((value) => el('option', { value }))))
-		}
-		return input
+		return el('input', attributes)
 	}
 
 	// What an option shows below its input: a pattern's check as typed, a template's values to
@@ -797,6 +828,7 @@
 				options.append(field(option.title, optionInputs[key], option.description))
 				const extra = optionHelp(option, optionInputs[key])
 				if (extra) optionInputs[key].after(extra)
+				if (option.suggestions && option.suggestions.length) (extra || optionInputs[key]).after(suggestionChips(optionInputs[key], option.suggestions))
 				if (option.unit) {
 					// A size in readable units beside the number, as it is typed.
 					const readable = el('small', { class: 'harvester-size' })
@@ -843,6 +875,8 @@
 		error,
 		el('button', { class: 'primary', type: 'submit', text: 'Save' }),
 		el('button', { type: 'button', text: 'Back to the jobs', onclick: () => show(root) }))
+		// Below the field, now that it is in its label.
+		schedule.after(suggestionChips(schedule, SCHEDULES))
 		page = el('div', {}, form, credentials)
 		root.replaceChildren(page)
 		renderCredentials(credentials, job, chosen)
@@ -914,6 +948,7 @@
 		#harvester .harvester-check-result.harvester-error { color: var(--color-error-text, var(--color-error)); }
 		#harvester .harvester-values { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 4px; }
 		#harvester .harvester-values .harvester-chip { border: none; min-height: 0; padding: 2px 8px; cursor: pointer; font-family: var(--font-face-monospace, monospace); }
+		#harvester .harvester-values .harvester-chip[aria-pressed="true"] { background: var(--color-primary-element-light, var(--color-primary-light)); outline: 1px solid var(--color-primary-element, var(--color-primary)); }
 		#harvester .harvester-values .harvester-chip:hover { background: var(--color-primary-element-light); }
 		#harvester .harvester-schedule { margin: -4px 0 12px; max-width: 700px; }
 		#harvester select[multiple] { height: auto; min-height: 0; padding: 4px; }

@@ -115,9 +115,15 @@ class Mail(Source):
             "Folder",
             "INBOX",
             "The mailbox folder, e.g. INBOX or Invoices.",
-            suggestions=("INBOX", "INBOX/Invoices", "Archive", "Sent"),
+            suggestions=("INBOX", "INBOX/Invoices", "INBOX.Invoices", "Archive", "Sent", "[Gmail]/All Mail"),
         ),
-        "since_days": Option("Days back", 90, "Only messages of the last this many days (0: all).", minimum=0),
+        "since_days": Option(
+            "Days back",
+            90,
+            "Only messages of the last this many days (0: all).",
+            minimum=0,
+            suggestions=("30", "90", "365", "0"),
+        ),
         "from_pattern": Option(
             "From",
             "",
@@ -131,6 +137,7 @@ class Mail(Source):
             "Regular expression on the subject; empty: any.",
             kind="regex",
             placeholder="Rechnung|Invoice",
+            suggestions=("Invoice|Rechnung|Faktura", "Statement|Kontoauszug|Wyciąg", "Payslip|Gehaltsabrechnung"),
         ),
         "filename_pattern": Option(
             "Attachment names",
@@ -138,6 +145,7 @@ class Mail(Source):
             "Regular expression on the attachment's file name.",
             kind="regex",
             placeholder="\\.pdf$",
+            suggestions=(".*", "\\.pdf$", "\\.(pdf|xml)$", "\\.(jpe?g|png)$"),
         ),
         "path": Option(
             "File name",
@@ -146,6 +154,7 @@ class Mail(Source):
             "{subject}.",
             kind="template",
             values=("from", "sender", "subject", "date", "year", "month", "day", "filename", "stem", "ext"),
+            suggestions=("{year}/{date} {filename}", "{sender}/{year}/{date} {filename}", "{date} {subject}{ext}"),
         ),
         "file_type": download.DOWNLOAD_OPTIONS["file_type"],
         "min_size": download.DOWNLOAD_OPTIONS["min_size"],

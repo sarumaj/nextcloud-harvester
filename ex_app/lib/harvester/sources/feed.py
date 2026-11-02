@@ -51,6 +51,7 @@ class Feed(Source):
             "Regular expression the file's URL must match (empty: all).",
             kind="regex",
             placeholder="\\.mp3$",
+            suggestions=("\\.mp3$", "\\.(mp3|m4a|ogg|opus)$", "\\.pdf$", "\\.(mp4|webm)$"),
         ),
         "path": Option(
             "File name",
@@ -58,6 +59,12 @@ class Feed(Source):
             "Relative to the folder: {title}, {feed}, {author}, {date}, {year}, {month}, {day}, {filename}, {stem}, "
             "{ext}.",
             kind="template",
+            suggestions=(
+                "{feed}/{year}/{title}{ext}",
+                "{year}/{date} {title}{ext}",
+                "{date} {title}{ext}",
+                "{feed}/{filename}",
+            ),
             values=(
                 "feed",
                 "title",

@@ -13,7 +13,14 @@
       "title": "Folder",
       "default": "INBOX",
       "check": "^[^\\r\\n\"]{1,200}$",
-      "description": "e.g. INBOX or INBOX/Invoices"
+      "description": "e.g. INBOX or INBOX/Invoices",
+      "suggestions": [
+        "INBOX",
+        "INBOX/Invoices",
+        "INBOX.Invoices",
+        "Archive",
+        "[Gmail]/All Mail"
+      ]
     },
     "sender": {
       "title": "Sender",
@@ -25,14 +32,44 @@
       "title": "Name",
       "default": "Invoices",
       "check": "^[^/{}$]{1,80}$",
-      "description": "For the folder and the tag."
+      "description": "For the folder and the tag.",
+      "suggestions": [
+        "Invoices",
+        "Bank statements",
+        "Payslips",
+        "Receipts"
+      ]
+    },
+    "schedule": {
+      "title": "Schedule",
+      "default": "0 7 * * *",
+      "check": "^[0-9*/,-]+( [0-9A-Za-z*/,-]+){4}$",
+      "description": "When it runs (cron, UTC): minute, hour, day, month, weekday. The job's form says it in words.",
+      "suggestions": [
+        {
+          "value": "0 7 * * *",
+          "label": "Daily 07:00"
+        },
+        {
+          "value": "0 7 * * 1",
+          "label": "Mondays 07:00"
+        },
+        {
+          "value": "0 */6 * * *",
+          "label": "Every 6 hours"
+        },
+        {
+          "value": "0 7 1 * *",
+          "label": "Monthly, the 1st, 07:00"
+        }
+      ]
     }
   },
   "job": {
     "name": "${name}",
     "source": "mail",
     "target": "/Documents/${name}",
-    "schedule": "0 7 * * *",
+    "schedule": "${schedule}",
     "tags": [
       "${name}",
       "{year}"

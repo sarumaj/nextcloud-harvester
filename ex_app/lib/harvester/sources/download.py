@@ -44,7 +44,12 @@ DOWNLOAD_OPTIONS = {
         multiple=True,
     ),
     "min_size": Option(
-        "Smallest file (bytes)", 0, "Smaller answers are refused (an error page, say).", unit="bytes", minimum=0
+        "Smallest file (bytes)",
+        0,
+        "Smaller answers are refused (an error page, say).",
+        unit="bytes",
+        minimum=0,
+        suggestions=("0", "10240", "102400", "1048576"),
     ),
     "max_size": Option(
         "Largest file (MB)",
@@ -52,6 +57,7 @@ DOWNLOAD_OPTIONS = {
         "A larger file is refused (the container's disk and memory).",
         unit="MB",
         minimum=1,
+        suggestions=("100", "1024", "4096", "16384"),
     ),
     "wait_pattern": Option(
         "Wait pattern",

@@ -51,6 +51,15 @@ class Releases(Source):
             "Regular expression the file's name must match, e.g. \\.AppImage$.",
             kind="regex",
             placeholder="\\.AppImage$",
+            suggestions=(
+                ".*",
+                "\\.AppImage$",
+                "x86_64.*\\.tar\\.gz$",
+                "(amd64|x86_64).*\\.deb$",
+                "\\.(exe|msi)$",
+                "\\.dmg$",
+                "\\.apk$",
+            ),
         ),
         "prereleases": Option("Prereleases", 0, "Also the files of prereleases.", kind="flag"),
         "path": Option(
@@ -60,8 +69,15 @@ class Releases(Source):
             "{ext}, {year}, {month}, {day} (of the release).",
             kind="template",
             values=("repo", "tag", "version", "name", "filename", "stem", "ext", "year", "month", "day"),
+            suggestions=("{tag}/{filename}", "{filename}", "{repo}/{version}/{filename}", "{year}/{tag}/{filename}"),
         ),
-        "max_pages": Option("Pages", 1, "At most this many pages of 30 releases (the newest first).", minimum=1),
+        "max_pages": Option(
+            "Pages",
+            1,
+            "At most this many pages of 30 releases (the newest first).",
+            minimum=1,
+            suggestions=("1", "3", "10"),
+        ),
         "forge": Option(
             "Forge",
             "auto",
