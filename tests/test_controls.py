@@ -445,3 +445,34 @@ def test_yt_dlps_progress_cancels_a_stopped_download():
             cancel_when_stopped({"status": "downloading"})
     finally:
         watch_stop(None)
+
+
+def test_a_job_asked_for_shows_queued_until_a_runner_takes_it(tmp_path, monkeypatch):
+    import asyncio  # pylint: disable=import-outside-toplevel
+
+    import main  # pylint: disable=import-outside-toplevel
+
+    class Nextcloud:  # pylint: disable=too-few-public-methods
+        """The page's user, as AppAPI tells the app."""
+
+        @property
+        async def user(self) -> str:
+            return "u"
+
+    store = Store(str(tmp_path / "db"))
+    executor = Executor(store)
+    monkeypatch.setitem(main.STATE, "store", store)
+    monkeypatch.setitem(main.STATE, "executor", executor)
+    waiting = store.save(job())
+    other = store.save(Job(user="v", name="n", source="fake", target="/In", schedule="* * * * *", options={}))
+    executor.request(waiting.id or 0)
+    executor.request(other.id or 0)
+    assert executor.queued == sorted([waiting.id, other.id])
+    listed = asyncio.run(main.list_jobs(Nextcloud()))
+    assert [(item["queued"], item["running"]) for item in listed] == [(True, False)]
+    log = asyncio.run(main.progress_log(Nextcloud()))
+    assert log["queued"] == [waiting.id] and log["running"] == [], "another user's job is not listed"
+    assert executor._claim(waiting)
+    assert executor.queued == [other.id]
+    listed = asyncio.run(main.list_jobs(Nextcloud()))
+    assert [(item["queued"], item["running"]) for item in listed] == [(False, True)]

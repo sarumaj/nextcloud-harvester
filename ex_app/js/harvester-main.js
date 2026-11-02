@@ -10,7 +10,7 @@
 	const RECORDER = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${OC.webroot || ''}/exapps/harvester/ws/record`
 	const VIEWPORT = { width: 1280, height: 800 }
 	const BLANK = { name: '', source: 'site', target: '/Harvester', schedule: '0 6 * * *', options: {}, tags: [], enabled: true }
-	// Usual schedules, offered below the job's schedule (cron, UTC).
+	// Usual schedules, offered below the job's schedule (cron, in the job's time zone).
 	const SCHEDULES = [
 		{ value: '*/15 * * * *', label: 'Every 15 minutes' },
 		{ value: '*/30 * * * *', label: 'Every 30 minutes' },
@@ -21,8 +21,12 @@
 		{ value: '0 6 * * 1', label: 'Mondays 06:00' },
 		{ value: '0 6 1 * *', label: 'Monthly, the 1st' },
 	]
+	// A new job's schedule runs in the person's time zone (an IANA name, as the server takes it).
+	const ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
 	let sources = []
 	let presets = []
+	// What a job's button met (a refused Stop, say), shown in its row once the list is drawn again.
+	const notices = {}
 
 	async function api(method, path, body) {
 		const response = await fetch(API + path, {
@@ -54,16 +58,18 @@
 			help ? el('small', { text: help }) : '')
 	}
 
-	// A size given in a unit (bytes, KB, MB, GB) in the largest unit it fills: 1572864 bytes is
-	// "≈ 1.5 MB", 4096 MB "= 4 GB". Units of 1024, as file managers count.
+	// A size given in a unit (bytes, KB, MB, GB) in the largest unit it fills: 1500000 bytes is
+	// "= 1.5 MB". Shown in units of 1000, as the progress log gives the files' sizes, so a limit
+	// reads as the sizes it is compared with; the option's own unit is the server's, which counts
+	// an option's MB as 1024 × 1024 bytes (4096 MB is "≈ 4.3 GB").
 	const SIZE_UNITS = ['bytes', 'KB', 'MB', 'GB', 'TB']
 	function sizeHint(value, unit) {
 		const number = Number(value)
 		if (value === '' || !Number.isFinite(number) || number < 0) return ''
 		let bytes = number * 1024 ** Math.max(0, SIZE_UNITS.indexOf(unit))
 		let index = 0
-		while (bytes >= 1024 && index < SIZE_UNITS.length - 1) {
-			bytes /= 1024
+		while (bytes >= 1000 && index < SIZE_UNITS.length - 1) {
+			bytes /= 1000
 			index += 1
 		}
 		const rounded = Math.round(bytes * 10) / 10
@@ -109,16 +115,32 @@
 	}
 
 	async function renderJobs(root) {
+		// Another view opened while the list was asked for (Edit, say) stays: the list is not drawn.
+		const view = root.firstChild
 		const jobs = await api('GET', '/jobs')
+		if (root.firstChild !== view) return
+		// A job's button: off until its answer, which (or its error, beside the job) the list
+		// drawn again shows; a run that ended just before Stop, say, is refused with a reason.
+		const act = (job, path, method = 'POST') => async (event) => {
+			event.currentTarget.disabled = true
+			try {
+				await api(method, `/jobs/${job.id}${path}`)
+			} catch (e) {
+				notices[job.id] = e.message
+			}
+			await show(root)
+		}
 		const table = el('table', { class: 'harvester-jobs' },
 			el('thead', {}, el('tr', {}, ...['Job', 'Folder', 'Schedule', 'Tags', 'Last run', ''].map((h) => el('th', { text: h })))))
 		const body = el('tbody', {})
 		for (const job of jobs) {
-			const state = job.running ? (job.paused ? 'held' : 'running') : job.last_status || 'never'
-			const label = { running: 'Running', held: 'Paused', ok: 'OK', failed: 'Failed', auth: 'Sign-in refused', challenge: 'Needs you', never: 'Not run yet' }[state] || state
+			const state = job.running ? (job.paused ? 'held' : 'running') : job.queued ? 'queued' : job.last_status || 'never'
+			const label = { running: 'Running', held: 'Paused', queued: 'Queued', ok: 'OK', failed: 'Failed', auth: 'Sign-in refused', challenge: 'Needs you', never: 'Not run yet' }[state] || state
 			body.append(el('tr', {},
 				el('td', { class: 'harvester-with-icon', title: (sources.find((x) => x.name === job.source) || {}).title || job.source },
-					icon(job.source), el('strong', { text: job.name }), job.enabled ? '' : el('span', { class: 'harvester-chip', text: 'paused' })),
+					icon(job.source), el('strong', { text: job.name }),
+					// Not "paused": that is a running job held by Pause.
+					job.enabled ? '' : el('span', { class: 'harvester-chip', text: 'off', title: 'Not enabled: runs only with Run now' })),
 				el('td', { class: 'harvester-muted', text: job.target }),
 				el('td', {}, el('code', { text: job.schedule })),
 				el('td', {}, ...job.tags.map((tag) => el('span', { class: 'harvester-chip', text: tag }))),
@@ -127,30 +149,34 @@
 					el('div', {
 						class: 'harvester-muted harvester-message',
 						'data-job-message': String(job.id),
-						text: job.running ? 'Starting' : job.last_run ? `${when(job.last_run)} · ${job.last_message || ''}` : '',
-					})),
+						text: job.running ? 'Starting'
+							: job.queued ? 'Waiting for its site or a free runner'
+								: job.last_run ? `${when(job.last_run)} · ${job.last_message || ''}` : '',
+					}),
+					notices[job.id] ? el('div', { class: 'harvester-error harvester-message', role: 'alert', text: notices[job.id] }) : ''),
 				el('td', { class: 'harvester-actions' },
 					state === 'challenge' ? el('button', { class: 'primary', text: 'Continue in the browser', onclick: () => openSession(root, job) }) : '',
 					// While it runs: pause (or resume) and stop instead of Run now; a stopped run
 					// keeps what it saved, and the next run goes on from there.
 					...(job.running
 						? [
-							el('button', { text: job.paused ? 'Resume' : 'Pause', onclick: async () => { await api('POST', `/jobs/${job.id}/${job.paused ? 'resume' : 'pause'}`); show(root) } }),
-							el('button', { text: 'Stop', onclick: async () => { await api('POST', `/jobs/${job.id}/stop`); show(root) } }),
+							el('button', { text: job.paused ? 'Resume' : 'Pause', onclick: act(job, job.paused ? '/resume' : '/pause') }),
+							el('button', { text: 'Stop', onclick: act(job, '/stop') }),
 						]
-						: [el('button', { text: 'Run now', onclick: async () => { await api('POST', `/jobs/${job.id}/run`); show(root) } })]),
+						: [job.queued
+							? el('button', { text: 'Run now', disabled: '', title: 'Queued already: it runs once its turn comes' })
+							: el('button', { text: 'Run now', onclick: act(job, '/run') })]),
 					el('button', { text: 'Edit', onclick: () => renderForm(root, job) }),
 					el('button', {
 						class: 'error',
 						text: 'Delete',
-						onclick: async () => {
-							if (confirm(`Delete ${job.name}? The files it downloaded stay.`)) {
-								await api('DELETE', `/jobs/${job.id}`)
-								show(root)
-							}
+						onclick: (event) => {
+							if (confirm(`Delete ${job.name}? The files it downloaded stay.`)) act(job, '', 'DELETE')(event)
 						},
 					}))))
 		}
+		// Shown once: the next drawing of the list is without them.
+		for (const id of Object.keys(notices)) delete notices[id]
 		table.append(body)
 		root.replaceChildren(
 			el('div', { class: 'harvester-header' },
@@ -165,7 +191,8 @@
 	}
 
 	// The jobs' progress log: what the runs do, live while one runs, of all jobs or of one.
-	// Polled; a run that starts or ends redraws the list (its states and messages change).
+	// Polled, often while a job runs or waits its turn; a run that is queued, starts or ends
+	// redraws the list (its states and messages change).
 	function progressPanel(root, jobs) {
 		const select = el('select', { 'aria-label': 'Job' },
 			el('option', { value: '', text: 'All jobs' }),
@@ -180,6 +207,7 @@
 		let after = 0
 		let timer = null
 		const running = jobs.filter((job) => job.running).map((job) => job.id)
+		const queued = jobs.filter((job) => job.queued && !job.running).map((job) => job.id)
 		const clock = (at) => {
 			const date = new Date(at * 1000)
 			return date.toDateString() === new Date().toDateString() ? date.toLocaleTimeString() : date.toLocaleString()
@@ -192,7 +220,10 @@
 			if (!document.body.contains(panel)) return
 			try {
 				const data = await api('GET', `/log?after=${after}${select.value ? `&job=${select.value}` : ''}`)
-				if (String(data.running) !== String(running)) {
+				// Another view opened while the log was asked for (a job's form): it is not replaced.
+				if (!document.body.contains(panel)) return
+				const waiting = (data.queued || []).filter((id) => !data.running.includes(id))
+				if (String(data.running) !== String(running) || String(waiting) !== String(queued)) {
 					show(root)
 					return
 				}
@@ -208,7 +239,7 @@
 				else if (data.lines.length && list.firstChild.classList.contains('harvester-muted')) list.firstChild.remove()
 				if (stick) list.scrollTop = list.scrollHeight
 			} catch (e) { /* tried again below */ }
-			timer = setTimeout(poll, running.length ? 2000 : 10000)
+			timer = setTimeout(poll, running.length || queued.length ? 2000 : 10000)
 		}
 		select.addEventListener('change', () => {
 			try { localStorage.setItem('harvester-log-job', select.value) } catch (e) { /* not kept */ }
@@ -261,18 +292,39 @@
 			el('div', { class: 'harvester-kinds' }, ...kinds),
 			cards.length ? el('h3', { text: 'Templates for known sites' }) : '',
 			...cards, error)
+		// The button that opened this view is gone: the keyboard goes on from the first choice.
+		const first = root.querySelector('.harvester-kind button')
+		if (first) first.focus()
 	}
 
-	async function renderCredentials(container, job, source) {
+	// What a source's account is for, above its fields (each field says what it is used for).
+	const ACCOUNT_USE = {
+		site: 'The recorded sign-in’s fields get the username, password and current one-time code; or a signed-in browser’s cookies instead of a sign-in.',
+		mail: 'The mailbox’s sign-in: a password, or OAuth2’s client and refresh token.',
+		remote: 'rclone’s configuration of the remote, with its passwords or tokens.',
+		releases: 'A token, for private repositories and for more requests than GitHub allows without one.',
+	}
+
+	// The job's account: its fields, saved with the form's Save (or here with Save account, for
+	// an existing job); an empty field keeps what is stored. Sets container.typed() (whether a
+	// field holds something) and container.save(job) (stores what was typed; false: nothing).
+	async function renderCredentials(container, job, source, notice = '') {
 		container.replaceChildren()
+		container.typed = () => false
+		container.save = async () => false
 		if (!source.credentials.length) return
+		const status = el('p', { class: 'harvester-muted', role: 'status', text: notice })
+		const error = el('p', { class: 'harvester-error' })
 		container.append(el('h3', { text: 'The account this job signs in with' }),
-			el('p', { text: 'Filled into the recipe’s username and password fields; never shown again.' }))
-		if (!job) {
-			container.append(el('p', { text: 'Save the job first, then set its account here.' }))
-			return
+			el('p', { text: `${ACCOUNT_USE[source.name] || 'What the job signs in with where its source asks for it.'} Stored encrypted in Nextcloud; never shown again.` }))
+		let stored = {}
+		if (job) {
+			try {
+				stored = await api('GET', `/jobs/${job.id}/credentials`)
+			} catch (e) {
+				error.textContent = `Whether an account is stored is unknown: ${e.message}`
+			}
 		}
-		const stored = await api('GET', `/jobs/${job.id}/credentials`)
 		const inputs = {}
 		for (const name of source.credentials) {
 			// Several lines (rclone's configuration, cookies) in a text area; secrets hidden.
@@ -298,20 +350,39 @@
 				container.append(button)
 			}
 		}
-		container.append(el('button', {
-			text: 'Save account',
-			onclick: async (event) => {
-				event.preventDefault()
-				const body = Object.fromEntries(Object.entries(inputs).map(([k, input]) => [k, input.value]))
-				await api('PUT', `/jobs/${job.id}/credentials`, body)
-				renderCredentials(container, job, source)
-			},
-		}))
+		const typed = () => Object.fromEntries(Object.entries(inputs).filter(([, input]) => input.value).map(([k, input]) => [k, input.value]))
+		container.typed = () => Object.keys(typed()).length > 0
+		container.save = async (saved) => {
+			const body = typed()
+			if (!Object.keys(body).length) return false
+			await api('PUT', `/jobs/${saved.id}/credentials`, body)
+			return true
+		}
+		// A new job's account is stored with the job, by the form's Save.
+		const button = job
+			? el('button', {
+				type: 'button',
+				text: 'Save account',
+				onclick: async () => {
+					button.disabled = true
+					error.textContent = ''
+					status.textContent = ''
+					try {
+						const done = await container.save(job)
+						await renderCredentials(container, job, source, done ? 'Account saved.' : 'Nothing typed: the stored account stays.')
+					} catch (e) {
+						error.textContent = e.message
+						button.disabled = false
+					}
+				},
+			})
+			: el('p', { class: 'harvester-muted', text: 'Saved with the job when you press Save.' })
+		container.append(error, button, status)
 	}
 
 	// The rclone wizard: the app runs `rclone config` with a configuration of its own and shows
 	// rclone's questions one at a time (no terminal). The finished remote, checked as a run checks
-	// it, goes into the account's field to be reviewed and saved with Save account.
+	// it, goes into the account's field to be reviewed and saved with the job (or Save account).
 	let wizardLists = 0
 	function rcloneWizard(textarea) {
 		const panel = el('div', { class: 'harvester-card harvester-wizard', 'aria-live': 'polite' })
@@ -326,12 +397,22 @@
 			panel.remove()
 		}
 		const cancel = el('button', { type: 'button', text: 'Cancel', onclick: close })
+		// One step at a time: while rclone answers (it may take seconds), the buttons but Cancel
+		// are off, so a second click does not meet "the wizard is busy".
+		let busy = false
 		async function step(method, path, body) {
+			if (busy) return
+			busy = true
 			error.textContent = ''
+			const buttons = [...panel.querySelectorAll('button')].filter((button) => button !== cancel && !button.disabled)
+			buttons.forEach((button) => { button.disabled = true })
 			try {
 				render(await api(method, path, body))
 			} catch (e) {
 				error.textContent = e.message
+				buttons.forEach((button) => { button.disabled = false })
+			} finally {
+				busy = false
 			}
 		}
 		function render(view) {
@@ -352,6 +433,7 @@
 					select.append(el('option', { value: kind.name, text: kind.description === kind.name ? kind.name : `${kind.description} (${kind.name})` }))
 				}
 				select.value = 'webdav'
+				select.focus()
 			} catch (e) {
 				error.textContent = e.message
 			}
@@ -470,7 +552,7 @@
 				return
 			}
 			panel.replaceChildren(el('h3', { text: 'Set up with rclone: done' }),
-				el('p', { text: 'The configuration rclone wrote (passwords obscured, as rclone keeps them). Use it, then save it with Save account.' }),
+				el('p', { text: 'The configuration rclone wrote (passwords obscured, as rclone keeps them). Use it, then save it with the job’s Save (or Save account).' }),
 				el('pre', { class: 'harvester-code harvester-wizard-result', text: view.config }),
 				error,
 				el('button', {
@@ -949,6 +1031,10 @@
 
 	function renderForm(root, job, prefill) {
 		const value = job || prefill || BLANK
+		// The job saved so far: a new one is, after its first Save, saved again with PUT.
+		let current = job
+		// The zone its schedule runs in: a job keeps its own, a new one takes the person's.
+		const zone = job ? job.timezone || 'UTC' : ZONE
 		const name = el('input', { value: value.name, required: '' })
 		const target = el('input', { value: value.target })
 		const schedule = el('input', { value: value.schedule })
@@ -960,7 +1046,7 @@
 			clearTimeout(scheduleTimer)
 			scheduleTimer = setTimeout(async () => {
 				try {
-					const answer = await api('GET', `/schedule?expression=${encodeURIComponent(schedule.value.trim())}`)
+					const answer = await api('GET', `/schedule?expression=${encodeURIComponent(schedule.value.trim())}&timezone=${encodeURIComponent(zone)}`)
 					scheduleHint.classList.toggle('harvester-error', Boolean(answer.error))
 					if (answer.error) {
 						scheduleHint.textContent = answer.error
@@ -1043,45 +1129,75 @@
 			}
 		}
 
+		const save = el('button', { class: 'primary', type: 'submit', form: 'harvester-job-form', text: 'Save' })
+		const heading = el('span', { text: job ? `Edit ${job.name}` : `New job: ${chosen.title}` })
 		const form = el('form', {
+			id: 'harvester-job-form',
 			class: 'harvester-form',
 			onsubmit: async (event) => {
 				event.preventDefault()
+				if (save.disabled) return
 				const body = {
 					name: name.value,
 					source: chosen.name,
 					target: target.value,
 					schedule: schedule.value,
+					timezone: zone,
 					tags: tags.value.split(','),
 					enabled: enabled.checked,
 					options: Object.fromEntries(Object.entries(optionInputs).map(([key, input]) =>
 						[key, typeof chosen.options[key].default === 'number' ? Number(input.value) : input.value])),
 				}
+				save.disabled = true
+				error.textContent = ''
 				try {
-					const saved = await api(job ? 'PUT' : 'POST', job ? `/jobs/${job.id}` : '/jobs', body)
-					// A new job's account can be set once it exists: the form stays open for it.
-					if (job) show(root)
-					else renderForm(root, saved)
+					current = await api(current ? 'PUT' : 'POST', current ? `/jobs/${current.id}` : '/jobs', body)
+					heading.textContent = `Edit ${current.name}`
 				} catch (e) {
 					error.textContent = e.message
+					save.disabled = false
+					return
 				}
+				// The account typed with it is saved too, never left behind; if that fails, the form
+				// stays with what was typed, and Save tries again.
+				try {
+					await credentials.save(current)
+				} catch (e) {
+					error.textContent = `The job is saved, its account is not: ${e.message}`
+					save.disabled = false
+					return
+				}
+				show(root)
 			},
 		},
-		el('h2', { class: 'harvester-with-icon' }, icon(chosen.name), el('span', { text: job ? `Edit ${job.name}` : `New job: ${chosen.title}` })),
+		el('h2', { class: 'harvester-with-icon' }, icon(chosen.name), heading),
 		field('Name', name),
 		field('Folder', target, 'In your files, e.g. /Magazines/iX.'),
-		field('Schedule', schedule, 'Cron: minute hour day month weekday (UTC). 0 6 * * * is daily at 06:00.'),
+		field('Schedule', schedule, `Cron: minute hour day month weekday, in ${zone === ZONE ? 'your time zone' : 'the job’s time zone'} (${zone}). 0 6 * * * is daily at 06:00.`),
 		scheduleHint,
 		field('Tags', tags, 'Comma-separated; may use the link’s values, e.g. {year}. A tag whose value a file lacks is left out.'),
 		el('label', { class: 'harvester-check' }, enabled, el('span', { text: 'Enabled: runs on its schedule' })),
-		options,
-		error,
-		el('button', { class: 'primary', type: 'submit', text: 'Save' }),
-		el('button', { type: 'button', text: 'Back to the jobs', onclick: () => show(root) }))
+		options)
 		// Below the field, now that it is in its label.
 		schedule.after(suggestionChips(schedule, SCHEDULES))
-		page = el('div', {}, form, credentials)
+		// Save and Back below the account, which Save stores with the job; Enter in the account's
+		// one-line fields saves as it does in the form's (the wizard's fields answer the wizard).
+		credentials.addEventListener('keydown', (event) => {
+			if (event.key === 'Enter' && event.target.matches('input') && !event.target.closest('.harvester-wizard')) {
+				event.preventDefault()
+				form.requestSubmit(save)
+			}
+		})
+		const back = el('button', {
+			type: 'button',
+			text: 'Back to the jobs',
+			onclick: () => {
+				if (!credentials.typed() || confirm('Leave without saving the account you typed?')) show(root)
+			},
+		})
+		page = el('div', {}, form, credentials, el('div', { class: 'harvester-form-actions' }, error, save, back))
 		root.replaceChildren(page)
+		name.focus()
 		renderCredentials(credentials, job, chosen)
 	}
 
@@ -1135,6 +1251,7 @@
 		#harvester .harvester-log-error .harvester-log-text { color: var(--color-error-text, var(--color-error)); }
 		#harvester .harvester-log-done .harvester-log-text { color: var(--color-success-text, var(--color-success)); font-weight: bold; }
 		#harvester .harvester-status-running { background: var(--color-primary-element); color: var(--color-primary-element-text); }
+		#harvester .harvester-status-queued { background: var(--color-primary-element-light); color: var(--color-primary-element-light-text, var(--color-main-text)); }
 		#harvester .harvester-status-held { background: var(--color-warning); color: var(--color-warning-text, #000); }
 		#harvester .harvester-status-challenge { background: var(--color-warning); color: var(--color-warning-text, #000); }
 		#harvester .harvester-field { display: flex; flex-direction: column; gap: 2px; margin: 12px 0; max-width: 700px; }
@@ -1159,7 +1276,8 @@
 		#harvester .harvester-field input:not([type=checkbox]), #harvester .harvester-field select, #harvester .harvester-field textarea { width: 100%; margin: 0; }
 		#harvester fieldset { border: 1px solid var(--color-border); border-radius: var(--border-radius-large); padding: 8px 16px; margin: 16px 0; max-width: 760px; }
 		#harvester legend { padding: 0 4px; font-weight: bold; }
-		#harvester form > button, #harvester .harvester-card button { margin: 8px 8px 0 0; }
+		#harvester form > button, #harvester .harvester-form-actions button, #harvester .harvester-card button { margin: 8px 8px 0 0; }
+		#harvester .harvester-form-actions { margin-top: 16px; }
 		#harvester .harvester-error { color: var(--color-error-text, var(--color-error)); }
 		#harvester .harvester-credentials { margin-top: 24px; max-width: 760px; }
 		#harvester .harvester-wizard h3 { margin-top: 0; }
@@ -1218,7 +1336,13 @@
 		const placeholder = document.querySelector('#content #content')
 		if (placeholder) placeholder.replaceWith(root)
 		else (document.querySelector('#content') || document.body).append(root)
-		;[sources, presets] = await Promise.all([api('GET', '/sources'), api('GET', '/presets')])
+		try {
+			;[sources, presets] = await Promise.all([api('GET', '/sources'), api('GET', '/presets')])
+		} catch (e) {
+			// Without the sources no form can be drawn: say why instead of an empty page.
+			root.replaceChildren(el('p', { class: 'harvester-error', text: `Harvester: ${e.message}` }))
+			return
+		}
 		show(root)
 	})
 })()
