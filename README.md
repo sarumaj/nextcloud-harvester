@@ -68,7 +68,10 @@ the app's browser or taken from a template, not by code.
     environment, as the browser does. Live and upcoming streams are skipped; an entry that
     cannot be had (private, removed) is skipped with a line in the progress log, and tried again
     next run. A video larger than the job's largest file is not downloaded (yt-dlp's
-    `max_filesize`).
+    `max_filesize`). *Impersonate a browser* has yt-dlp present itself as a browser (its own
+    impersonation with `curl_cffi`, for sites behind Cloudflare that answer it with 403);
+    extractors that need it use it anyway. For galleries, the same option is gallery-dl's browser
+    emulation (Chrome's headers and TLS ciphers).
   - `gallery`: images of galleries, albums and profiles on the sites gallery-dl supports;
     gallery-dl lists them, Harvester downloads them with its checks and the page as `Referer`.
   - `remote`: the files in a folder of a WebDAV, SFTP, FTP or S3 server, a Nextcloud public
