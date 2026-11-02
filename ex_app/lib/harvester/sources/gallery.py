@@ -71,6 +71,12 @@ class Gallery(Source):
             "{id}, {year}, {month}, {day}, ... (they differ per site).",
             kind="template",
             values=("category", "filename", "extension", "stem", "ext", "year", "month", "day"),
+            suggestions=(
+                "{category}/{filename}.{extension}",
+                "{year}/{filename}.{extension}",
+                "{year}/{month:02d}/{filename}.{extension}",
+                "{filename}.{extension}",
+            ),
         ),
         **download.DOWNLOAD_OPTIONS,
     }

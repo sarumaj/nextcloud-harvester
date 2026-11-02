@@ -24,6 +24,7 @@ COMMON_OPTIONS = {
         "The rest comes in the next runs (a first run may find hundreds); -1: no limit (a run still ends "
         "after two hours, and goes on in the next).",
         minimum=-1,
+        suggestions=("3", "10", "50", "-1"),
     ),
     # Its title names the proxy as the admin calls it (browser.PROXY_NAME, given by the page).
     "home": Option(

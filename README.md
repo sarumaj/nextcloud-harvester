@@ -8,9 +8,11 @@ the app's browser or taken from a template, not by code.
 - **Jobs:** a source and its settings, a folder, a cron schedule (UTC), tags and an account.
   *Harvester* in Nextcloud's top menu lists your jobs, runs one now and edits them. The form
   explains the schedule in words as it is typed, with its next runs, and shows sizes in KB, MB
-  or GB. Below the jobs, a **progress log** of what the runs do (searching, each file downloaded,
-  saved or found already there, errors, the outcome), live while one runs, of all jobs or of one;
-  a new run clears its job's last message.
+  or GB. Fields with usual values (the schedule, file names, formats, patterns, sizes, files per
+  run) offer them all as buttons below the field, which takes other values too; options with a
+  fixed set of values are lists. Below the jobs, a **progress log** of what the runs do
+  (searching, each file downloaded, saved or found already there, errors, the outcome), live
+  while one runs, of all jobs or of one; a new run clears its job's last message.
 - **Sources** (`ex_app/lib/harvester/sources/`), one card each on the *New job* page:
   - `site`: files linked from a website's pages, by a recipe (below).
   - `mail`: attachments of the messages in an IMAP mailbox (TLS), filtered by sender, subject,
@@ -114,7 +116,11 @@ the app's browser or taken from a template, not by code.
 - **Notifications:** a job that needs a person, or fails, notifies its user; the same failure
   again on the next runs does not.
 - **Templates** (`ex_app/lib/harvester/presets/*.json`), jobs with a few parameters, one card
-  each on the *New job* page:
+  each on the *New job* page. A parameter may suggest values (`suggestions`: values, or
+  `{value, label}` shown by the label, each passing its `check`), offered as buttons on the card:
+  every template suggests schedules, the media ones their quality (yt-dlp formats from 480p to
+  the best, joined video and audio, or audio alone), others folders, names, magazines, years or
+  file patterns:
   - `heise`: heise's magazines (iX, c't, ...) as PDF for a subscription;
   - `pdfs-on-a-page`: the PDFs linked from a page;
   - `mail-invoices`: invoices (PDF attachments) from a sender;

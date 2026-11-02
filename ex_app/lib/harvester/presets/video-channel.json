@@ -1,7 +1,7 @@
 {
   "title": "Video channel",
   "source": "media",
-  "description": "A YouTube, Vimeo or other channel's newest videos (up to 1080p, one file each), into a folder per channel, tagged with its name.",
+  "description": "A YouTube, Vimeo or other channel's newest videos (up to 1080p by default, video and audio joined into one file), into a folder per channel, tagged with its name.",
   "parameters": {
     "url": {
       "title": "Channel",
@@ -14,20 +14,72 @@
       "default": "Channel",
       "check": "^[^/{}$]{1,80}$",
       "description": "For the folder and the tag."
+    },
+    "quality": {
+      "title": "Quality",
+      "default": "bv*[height<=1080]+ba/b[height<=1080]",
+      "check": "^[A-Za-z0-9*+/\\[\\]()<>=!?:._,-]{1,200}$",
+      "description": "yt-dlp's format: the best video (up to a height) joined with the best audio, into mp4 where the codecs allow, mkv otherwise. Any other format selection works too.",
+      "suggestions": [
+        {
+          "value": "bv*[height<=1080]+ba/b[height<=1080]",
+          "label": "Up to 1080p"
+        },
+        {
+          "value": "bv*+ba/b",
+          "label": "Best"
+        },
+        {
+          "value": "bv*[height<=720]+ba/b[height<=720]",
+          "label": "Up to 720p"
+        },
+        {
+          "value": "bv*[height<=480]+ba/b[height<=480]",
+          "label": "Up to 480p"
+        },
+        {
+          "value": "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b",
+          "label": "Best, mp4 preferred"
+        }
+      ]
+    },
+    "schedule": {
+      "title": "Schedule",
+      "default": "30 4 * * *",
+      "check": "^[0-9*/,-]+( [0-9A-Za-z*/,-]+){4}$",
+      "description": "When it runs (cron, UTC): minute, hour, day, month, weekday. The job's form says it in words.",
+      "suggestions": [
+        {
+          "value": "30 4 * * *",
+          "label": "Daily 04:30"
+        },
+        {
+          "value": "0 */6 * * *",
+          "label": "Every 6 hours"
+        },
+        {
+          "value": "0 * * * *",
+          "label": "Hourly"
+        },
+        {
+          "value": "30 4 * * 1",
+          "label": "Mondays 04:30"
+        }
+      ]
     }
   },
   "job": {
     "name": "${name}",
     "source": "media",
     "target": "/Videos/${name}",
-    "schedule": "30 4 * * *",
+    "schedule": "${schedule}",
     "tags": [
       "${name}",
       "{year}"
     ],
     "options": {
       "url": "${url}",
-      "format": "best[height<=1080][acodec!=none][vcodec!=none]/best[height<=1080]",
+      "format": "${quality}",
       "max_entries": 15,
       "path": "{year}/{year}-{month:02d}-{day:02d} {title} [{id}].{ext}",
       "max_items": 3

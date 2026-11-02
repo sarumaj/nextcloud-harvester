@@ -325,6 +325,7 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
             "The file's address from the link's values, e.g. {url}/download.",
             kind="template",
             values=("filename", "stem", "ext", "text", "page", "host", "url"),
+            suggestions=("{url}", "{url}/download", "{url}?download=1"),
         ),
         "path": Option(
             "File name",
@@ -333,9 +334,12 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
             "the pattern's groups, e.g. {year}/{text}.",
             kind="template",
             values=("filename", "stem", "ext", "text", "page", "host", "url"),
+            suggestions=("{filename}", "{text}{ext}", "{host}/{filename}", "{page}/{filename}"),
         ),
         **download.DOWNLOAD_OPTIONS,
-        "max_pages": Option("Pages", 10, "At most this many pages of a listing.", minimum=1),
+        "max_pages": Option(
+            "Pages", 10, "At most this many pages of a listing.", minimum=1, suggestions=("1", "5", "10", "50")
+        ),
         "stop_at_seen": Option(
             "Stop at known files",
             1,

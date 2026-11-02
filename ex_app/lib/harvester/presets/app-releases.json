@@ -13,20 +13,53 @@
       "title": "Files",
       "default": ".*",
       "check": "^[^\\r\\n]{1,200}$",
-      "description": "A pattern of the file names, e.g. \\.AppImage$ or x86_64.*\\.tar\\.gz$"
+      "description": "A pattern of the file names, e.g. \\.AppImage$ or x86_64.*\\.tar\\.gz$",
+      "suggestions": [
+        ".*",
+        "\\.AppImage$",
+        "x86_64.*\\.tar\\.gz$",
+        "(amd64|x86_64).*\\.deb$",
+        "\\.(exe|msi)$",
+        "\\.dmg$",
+        "\\.apk$"
+      ]
     },
     "name": {
       "title": "Name",
       "default": "App",
       "check": "^[^/{}$]{1,80}$",
       "description": "For the folder and the tag."
+    },
+    "schedule": {
+      "title": "Schedule",
+      "default": "0 6 * * 1",
+      "check": "^[0-9*/,-]+( [0-9A-Za-z*/,-]+){4}$",
+      "description": "When it runs (cron, UTC): minute, hour, day, month, weekday. The job's form says it in words.",
+      "suggestions": [
+        {
+          "value": "0 6 * * 1",
+          "label": "Mondays 06:00"
+        },
+        {
+          "value": "0 6 * * *",
+          "label": "Daily 06:00"
+        },
+        {
+          "value": "0 6 1 * *",
+          "label": "Monthly, the 1st, 06:00"
+        },
+        {
+          "value": "0 */6 * * *",
+          "label": "Every 6 hours"
+        }
+      ]
     }
   },
   "job": {
     "name": "${name} releases",
     "source": "releases",
     "target": "/Software/${name}",
-    "schedule": "0 6 * * 1",
+    "schedule": "${schedule}",
     "tags": [
       "${name}",
       "release"

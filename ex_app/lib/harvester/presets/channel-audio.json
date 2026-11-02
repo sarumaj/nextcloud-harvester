@@ -13,21 +13,75 @@
       "title": "Name",
       "default": "Talks",
       "check": "^[^/{}$]{1,80}$",
-      "description": "For the folder and the tag."
+      "description": "For the folder and the tag.",
+      "suggestions": [
+        "Talks",
+        "Lectures",
+        "Music",
+        "Audiobooks"
+      ]
+    },
+    "quality": {
+      "title": "Quality",
+      "default": "ba[ext=m4a]/ba",
+      "check": "^[A-Za-z0-9*+/\\[\\]()<>=!?:._,-]{1,200}$",
+      "description": "yt-dlp's format: the best audio, as m4a where the site has it (Best audio: any, else the video). Any other format selection works too.",
+      "suggestions": [
+        {
+          "value": "ba[ext=m4a]/ba",
+          "label": "Best audio, m4a preferred"
+        },
+        {
+          "value": "ba/b",
+          "label": "Best audio"
+        },
+        {
+          "value": "ba[abr<=128]/ba",
+          "label": "Up to 128 kbit/s"
+        },
+        {
+          "value": "ba[ext=webm]/ba",
+          "label": "Opus (webm) preferred"
+        }
+      ]
+    },
+    "schedule": {
+      "title": "Schedule",
+      "default": "30 4 * * *",
+      "check": "^[0-9*/,-]+( [0-9A-Za-z*/,-]+){4}$",
+      "description": "When it runs (cron, UTC): minute, hour, day, month, weekday. The job's form says it in words.",
+      "suggestions": [
+        {
+          "value": "30 4 * * *",
+          "label": "Daily 04:30"
+        },
+        {
+          "value": "30 4 * * 1",
+          "label": "Mondays 04:30"
+        },
+        {
+          "value": "0 */6 * * *",
+          "label": "Every 6 hours"
+        },
+        {
+          "value": "0 * * * *",
+          "label": "Hourly"
+        }
+      ]
     }
   },
   "job": {
     "name": "${name} (audio)",
     "source": "media",
     "target": "/Audio/${name}",
-    "schedule": "30 4 * * *",
+    "schedule": "${schedule}",
     "tags": [
       "${name}",
       "audio"
     ],
     "options": {
       "url": "${url}",
-      "format": "bestaudio[ext=m4a]/bestaudio",
+      "format": "${quality}",
       "max_entries": 15,
       "path": "{year}/{title} [{id}].{ext}",
       "max_items": 5
