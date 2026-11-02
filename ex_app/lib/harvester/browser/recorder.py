@@ -569,6 +569,10 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
             blocking = trial.Blocking(context, asyncio.get_running_loop(), stop, time.monotonic() + trial.TRIAL_SECONDS)
             await self.send({"type": "test-started"})
             result = await asyncio.to_thread(trial.survey, source, blocking, recipe, session)  # type: ignore[arg-type]
+            # Stopped by the person: what the stop cut short is no failure of the recipe.
+            if stop.is_set() and result.get("ended") == "failed":
+                result["ended"] = "stopped"
+                result["problems"] = result["problems"][:-1]
             if not (uses_browser(recipe) or int(source.settings["browser"] or 0)):
                 result["http"] = True
         except SourceError as error:

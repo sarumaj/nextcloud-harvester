@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- *Test the recipe* stopped by its person during a step said "failed": a stop cut short a step,
+  and the step's error took its place.
+
 ## 0.9.0 - 2026-11-02
 
 ### Added

@@ -232,6 +232,9 @@ class BrowserDriver(Driver):
         for number, step in todo:
             try:
                 replay(self.main, step, secrets)
+            except Stopped:
+                # The run or the recipe's test was stopped during the step: no failure of it.
+                raise
             except Exception as error:
                 found = self.challenge(self.main)
                 if found:

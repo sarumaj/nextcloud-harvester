@@ -199,3 +199,22 @@ def test_a_recipes_pattern_that_takes_too_long_fails_the_run():
     slow = {"start": f"{SITE}/long", "links": {"selector": "a.file", "pattern": r"(a|aa)+$"}}
     with pytest.raises(SourceError, match="takes too long"):
         list(source(LongNames(), slow, stop_at_seen=0).items(lambda key: False))
+
+
+def test_a_step_cut_short_by_a_stop_is_no_failure(monkeypatch):
+    import pytest  # pylint: disable=import-outside-toplevel
+
+    from harvester.sources import Stopped  # pylint: disable=import-outside-toplevel
+    from harvester.sources import site as site_module  # pylint: disable=import-outside-toplevel
+
+    def replay(page, step, secrets):  # pylint: disable=unused-argument
+        raise Stopped("stopped")
+
+    monkeypatch.setattr(site_module, "replay", replay)
+    driver = object.__new__(site_module.BrowserDriver)
+    driver.main = object()
+    shots: list[str] = []
+    driver.keep_shot = lambda page, what: shots.append(what)
+    with pytest.raises(Stopped):
+        driver.sign_in([{"action": "scroll"}], {}, None, "")
+    assert not shots, "no picture of a failure: there was none"
