@@ -365,17 +365,37 @@ def test_the_recorder_tells_the_page_which_address_sites_see(monkeypatch):
         async def text(self):
             return "ip=203.0.113.10\nloc=DE\n"
 
-    class Requests:  # pylint: disable=too-few-public-methods
-        """The context's request API."""
+    made: list[dict] = []
+    disposed: list[bool] = []
+
+    class Requests:
+        """A request context of its own (not the browser context's, which shares its cookies)."""
 
         async def get(self, url, timeout):
             assert url == browser.TRACE_URL and timeout
             return Answer()
 
-    class Context:  # pylint: disable=too-few-public-methods
-        """The browser's context."""
+        async def dispose(self):
+            disposed.append(True)
 
-        request = Requests()
+    class Factory:  # pylint: disable=too-few-public-methods
+        """Playwright's request API."""
+
+        async def new_context(self, proxy=None):
+            made.append({"proxy": proxy})
+            return Requests()
+
+    class Playwright:  # pylint: disable=too-few-public-methods
+        """Playwright, as far as the recorder asks it."""
+
+        request = Factory()
+
+    class Context:  # pylint: disable=too-few-public-methods
+        """The browser's context: asking through it would hand Cloudflare's cookie to the browser."""
+
+        @property
+        def request(self):
+            raise AssertionError("the browser's own request API shares its cookies")
 
     sent: list[dict] = []
 
@@ -385,8 +405,12 @@ def test_the_recorder_tells_the_page_which_address_sites_see(monkeypatch):
     monkeypatch.setattr(browser, "PROXY_NAME", "the home connection")
     recorder = Recorder(send)
     recorder._context = Context()  # type: ignore[assignment]
+    recorder._playwright = Playwright()  # type: ignore[assignment]
+    recorder._proxy = {"server": "http://127.0.0.1:4711", "username": "u", "password": "p"}
     asyncio.run(recorder._tell_address(True))
     asyncio.run(recorder._tell_address(False))
+    assert made == [{"proxy": recorder._proxy}] * 2, "the browser's way out: its guard, with its credentials"
+    assert disposed == [True, True]
     assert sent == [
         {"type": "network", "via": "the home connection", "proxied": True, "ip": "203.0.113.10", "country": "DE"},
         {"type": "network", "via": "directly", "proxied": False, "ip": "203.0.113.10", "country": "DE"},

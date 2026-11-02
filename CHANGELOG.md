@@ -51,6 +51,12 @@
   own (Proxy-Authorization, which Playwright answers), so a browser that reaches another
   browser's guard, one that took the port of a guard that crashed, say, is refused there.
 
+### Fixed
+
+- The recorder's "Sites see …" check asked Cloudflare through the browser's own request context,
+  so Cloudflare's cookie (`__cf_bm`) landed in the recording and in the job's kept session; it
+  asks through a request context of its own now, on the browser's way out.
+
 ## 0.10.0 - 2026-11-02
 
 ### Added

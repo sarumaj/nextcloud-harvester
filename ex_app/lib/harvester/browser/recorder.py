@@ -194,6 +194,7 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         self._trial_context: BrowserContext | None = None
         # The browser's connections all go through its guard (started with the browser).
         self._gate: Guard | None = None
+        self._proxy: dict | None = None
         self._loopback = ""
 
     @property
@@ -245,7 +246,11 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
             port = await asyncio.to_thread(self._gate.start)
         self._playwright = await async_playwright().start()
         credentials = self._gate.credentials if self._gate else None
-        self._browser = await self._playwright.chromium.launch(**launch_options(port, http1, home, credentials))
+        options = launch_options(port, http1, home, credentials)
+        # The browser's way out (its guard, the home connection, or none), for asking which address
+        # sites see without the browser's cookies (_tell_address).
+        self._proxy = options.get("proxy")
+        self._browser = await self._playwright.chromium.launch(**options)
         self._context = await self._new_context(session)
         await self._context.expose_binding("__harvesterReport", self._report)
         await self._context.add_init_script(SCRIPT)
@@ -273,14 +278,22 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         """Tells the page which address sites see this browser come from, asked through the
         browser's own connection (its proxy, if any), and whether that is the proxy."""
         via = browser.PROXY_NAME if proxied else "directly"
+        # A request context of its own on the browser's way out: the context's own (context.request)
+        # shares the browser's cookies, and Cloudflare answers with one (__cf_bm), which would
+        # land in the person's recording and the job's kept session.
+        requests = None
         try:
-            assert self._context is not None
-            answer = await self._context.request.get(TRACE_URL, timeout=15000)
+            assert self._playwright is not None
+            requests = await self._playwright.request.new_context(proxy=self._proxy)  # type: ignore[arg-type]
+            answer = await requests.get(TRACE_URL, timeout=15000)
             seen = seen_address(await answer.text())
         except Exception as error:  # pylint: disable=broad-exception-caught
             text = (str(error) or type(error).__name__).splitlines()[0]
             await self.send({"type": "network", "via": via, "proxied": proxied, "error": text})
             return
+        finally:
+            if requests is not None:
+                await requests.dispose()
         await self.send({"type": "network", "via": via, "proxied": proxied, **seen})
 
     async def session(self) -> dict:
