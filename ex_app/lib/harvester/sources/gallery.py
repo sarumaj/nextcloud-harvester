@@ -82,6 +82,7 @@ class Gallery(Source):
     }
     pause = 1.0
     listing_options = ("url",)
+    address_option = "url"
 
     def __init__(self, options: dict, credentials: dict[str, str], client: httpx.Client | None):
         super().__init__({"file_type": "image"} | options, credentials, client)

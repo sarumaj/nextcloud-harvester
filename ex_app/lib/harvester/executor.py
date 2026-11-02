@@ -1,5 +1,6 @@
-"""Runs the jobs when their schedule says, and when a user asks; a few at once (RUNNERS, or the
-admin's setting), never one twice, and one per site at a time."""
+"""Runs the jobs when their schedule says, and when a user asks (an on-demand job: with the
+address they sent it); a few at once (RUNNERS, or the admin's setting), never one twice, and one
+per site at a time."""
 
 import asyncio
 import datetime
@@ -18,7 +19,7 @@ import httpx
 from croniter import croniter
 from nc_py_api import AsyncNextcloudApp
 
-from . import browser, runner, settings
+from . import browser, ondemand, runner, settings
 from .schedule import zone
 from .nextcloud import NextcloudLibrary
 from .sources import MARK, SOURCES, AuthError, ChallengeError, Source, Stopped
@@ -68,6 +69,8 @@ class Control:
         self.paused_for = 0.0
         # The thread the run is in, once it started (0 before).
         self.thread = 0
+        # The fetch it runs (an address sent to an on-demand job), if it does: its id.
+        self.fetch = 0
 
     def nap(self, seconds: float) -> None:
         """The run's waits (between files, retries, what a site asks for): ended at once by a
@@ -102,9 +105,10 @@ def connect_nextcloud() -> AsyncNextcloudApp:
 
 
 def is_due(job: Job, now: float) -> bool:
-    """Tells whether the schedule has come round since the last run (or since the job was made)."""
+    """Tells whether the schedule has come round since the last run (or since the job was made);
+    never for an on-demand job (it has none)."""
     # A job waiting for its user (a challenge) runs again once answered, or by hand.
-    if not job.enabled or job.last_status == "challenge":
+    if not job.enabled or ondemand.on_demand(job) or job.last_status == "challenge":
         return False
     # The schedule's hours are the job's time zone's: "0 6 * * *" is 06:00 there, in summer and
     # in winter.
@@ -220,12 +224,16 @@ class Executor:
 
     def waits(self, jobs: list[Job]) -> dict[int, str]:
         """Why each of the jobs (those a user may see) waits, if it does: its place in the queue
-        and what it waits for (a runner, its own site, a browser). Nothing of other people's jobs
-        but how many there are: the site named is the job's own."""
+        and what it waits for (a runner, its own site, a browser), and how many addresses an
+        on-demand job has to fetch. Nothing of other people's jobs but how many there are: the
+        site named is the job's own (or its next address's)."""
         with self._lock:
             order = list(self._queued)
             busy_sites = set(self._sites.values())
             running = {job_id: control.thread for job_id, control in self.controls.items()}
+        waiting: dict[int, list[str]] = {}
+        for fetch in self.store.fetches([job.id or 0 for job in jobs]):
+            waiting.setdefault(fetch["job"], []).append(fetch["url"])
         reasons: dict[int, str] = {}
         for job in jobs:
             job_id = job.id or 0
@@ -237,7 +245,8 @@ class Executor:
                 continue
             ahead = order.index(job_id)
             place = f"{ahead + 1}. in the queue"
-            site = site_of(job)
+            # The site its next run is of: an on-demand job's next address's.
+            site = site_of(ondemand.for_fetch(job, waiting[job_id][0]) if job_id in waiting else job)
             if site in busy_sites and not site.startswith("job:"):
                 reasons[job_id] = f"{place}: waits for its site ({site}), used by another job"
             elif len(running) >= self.runners:
@@ -245,13 +254,19 @@ class Executor:
                 reasons[job_id] = f"{place}: waits for a runner, all {self.runners} busy ({ahead} job{plural} ahead)"
             else:
                 reasons[job_id] = f"{place}: starts in a moment"
+            # An on-demand job's addresses, fetched one after the other.
+            count = len(waiting.get(job_id, []))
+            if count:
+                reasons[job_id] += f"; {count} address{'es' if count != 1 else ''} queued"
         return reasons
 
     def start(self) -> None:
         """Starts the schedule's thread and as many runners as the setting allows; those beyond
         self.runners wait until it is raised. The passes for tags the app did not finish (it
-        stopped meanwhile) are queued."""
+        stopped meanwhile) are queued, and so are the on-demand jobs' addresses still waiting."""
         for job_id in self.store.pending_retags():
+            self.request(job_id, run=False)
+        for job_id in dict.fromkeys(fetch["job"] for fetch in self.store.fetches()):
             self.request(job_id, run=False)
         threading.Thread(target=self._schedule, name="schedule", daemon=True).start()
         for number in range(settings.MAX_RUNNERS):
@@ -284,6 +299,21 @@ class Executor:
                 return
             self._queued[job_id] = None
         self.requests.put(job_id)
+
+    def fetch(self, job_id: int, url: str) -> tuple[dict, bool]:
+        """Queues the address for the on-demand job (checked by ondemand.fetch_problem): its run
+        comes after the addresses sent before. Returns the fetch, and whether it is new (an
+        address waiting already keeps its place)."""
+        fetch, new = self.store.add_fetch(job_id, url)
+        # Not a run of the job's own address: the runner takes the job's next address.
+        self.request(job_id, run=False)
+        return fetch, new
+
+    def fetching(self, job_id: int) -> int:
+        """The fetch the job runs now (its id), 0 for none."""
+        with self._lock:
+            control = self.controls.get(job_id)
+            return control.fetch if control else 0
 
     def retag(self, job_id: int, previous: list[str]) -> None:
         """Brings the job's new tags to the files it saved, as soon as a runner is free (the job's
@@ -350,9 +380,11 @@ class Executor:
                 LOG.exception("the schedule's turn failed")
             time.sleep(60)
 
-    def _runner(self, number: int = 0) -> None:
+    def _runner(self, number: int = 0) -> None:  # pylint: disable=too-many-branches
         """Takes the queued jobs one after another; one whose site is busy waits its turn. A
-        runner numbered beyond the setting (self.runners) waits until it is raised."""
+        runner numbered beyond the setting (self.runners) waits until it is raised. An on-demand
+        job runs its addresses one per turn, each going back to the queue's end for the next
+        (other people's jobs are not held up by a person who sends many)."""
         while True:
             if number >= self.runners:
                 time.sleep(5)
@@ -369,20 +401,31 @@ class Executor:
                         self._queued.pop(job_id, None)
                         self._wanted.discard(job_id)
                     continue
-                if not self._claim(job):
+                # A run asked for (the schedule, Run now) goes first; else the oldest address
+                # sent, whose site is the one the job waits for.
+                with self._lock:
+                    wanted = job_id in self._wanted
+                fetches = [] if wanted else self.store.fetches([job_id])
+                fetch = fetches[0] if fetches else None
+                if not self._claim(ondemand.for_fetch(job, fetch["url"]) if fetch else job):
                     # Its site (or the job itself) is busy: back to the queue, a little later.
                     time.sleep(2)
                     self.requests.put(job_id)
                     continue
-                with self._lock:
-                    wanted = job_id in self._wanted
-                    self._wanted.discard(job_id)
+                if fetch is None:
+                    with self._lock:
+                        wanted = job_id in self._wanted
+                        self._wanted.discard(job_id)
                 try:
-                    self.run(job, wanted)
+                    self.run(job, wanted, fetch)
                 finally:
                     with self._lock:
                         self.controls.pop(job_id, None)
                         self._sites.pop(job_id, None)
+                        again = job_id in self._wanted
+                    # Its next turn: a run asked for meanwhile, or the next address.
+                    if again or self.store.fetches([job_id]):
+                        self.request(job_id, run=False)
             except Exception:  # pylint: disable=broad-exception-caught
                 LOG.exception("a runner's turn failed")
                 time.sleep(60)
@@ -399,22 +442,30 @@ class Executor:
             self._queued.pop(job.id, None)
             return True
 
-    def run(self, job: Job, wanted: bool = True) -> None:  # pylint: disable=too-many-locals
+    def run(  # pylint: disable=too-many-locals,too-many-statements
+        self, job: Job, wanted: bool = True, fetch: dict | None = None
+    ) -> None:
         """Runs the job and records how it went; a new failure is also a notification to its user.
-        A pending pass for its tags comes first; without wanted, only that pass (if any)."""
+        A pending pass for its tags comes first; without wanted, only that pass (if any). With a
+        fetch (an address sent to the on-demand job), the run is of that address, the job's
+        options otherwise as they are; the fetch leaves its queue when the run ends, however."""
         assert job.id is not None
         job_id = job.id
         previous = self.store.retag_from(job_id)
-        if previous is None and not wanted:
+        if previous is None and not wanted and fetch is None:
             return
         # Its controls: a runner made them when it took the job; a direct call (tests) makes them.
         with self._lock:
             control = self.controls.setdefault(job_id, Control())
         # The run's thread: while it waits for a browser, the page says so (waits).
         control.thread = threading.get_ident()
-        self._begin(job_id, control, wanted, previous is not None)
+        # A fetch is a run, of its address.
+        job = ondemand.for_fetch(job, fetch["url"]) if fetch else job
+        wanted = wanted or fetch is not None
+        self._begin(job_id, control, wanted, previous is not None, fetch)
         nc = self.connect()
         source = None
+        message = ""
         try:
             self.call(nc.set_user(job.user))
             source_class = SOURCES[job.source]
@@ -437,7 +488,7 @@ class Executor:
                     if previous is not None:
                         message = self._retag_turn(job, source, library, control, previous, wanted, nc)
                     if wanted:
-                        message = self._work(job, source, library, control, started, None)
+                        message = self._work(job, source, library, control, started, None, fetch)
                 finally:
                     # Kept also after a failure: cookies set before it (a sign-in) still count;
                     # not for a job deleted while it ran (its session went with it), nor when its
@@ -447,16 +498,44 @@ class Executor:
                             self.call(save_session(nc, job, source.session()))
                     finally:
                         source.close()
-            # A pass for the tags is no run: the job's last run (and its schedule) stay.
-            if wanted:
-                self.store.finish(job_id, "ok", message)
-            self.store.log(job_id, "done", message)
+            self._succeeded(job_id, control, wanted, f"{fetch['url']}: {message}" if fetch else message, nc)
         except Exception as error:  # pylint: disable=broad-exception-caught
             self._failed(job, nc, error, not wanted, getattr(source, "shot", None))
         finally:
             watch_stop(None)
+            if fetch is not None:
+                self.store.drop_fetch(fetch["id"])
             with self._lock:
                 self.controls.pop(job_id, None)
+
+    def _succeeded(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self, job_id: int, control: Control, wanted: bool, message: str, nc: AsyncNextcloudApp
+    ) -> None:
+        """Records a run (or a pass for the tags) that went through; a one-time job has then done
+        what it was for, unless it was stopped or has more addresses to fetch."""
+        # A pass for the tags is no run: the job's last run (and its schedule) stay.
+        if wanted:
+            self.store.finish(job_id, "ok", message)
+        self.store.log(job_id, "done", message)
+        # The job as it is now: the person may have changed it meanwhile.
+        latest = self.store.job(job_id)
+        more = [other for other in self.store.fetches([job_id]) if other["id"] != control.fetch]
+        if wanted and latest and latest.once and not control.stopped.is_set() and not more:
+            self._once_done(latest, nc, message)
+
+    def _once_done(self, job: Job, nc: AsyncNextcloudApp, message: str) -> None:
+        """Deletes the one-time job after a run that went through, with its account and kept
+        session (as Delete on the page does); its files stay. Its log goes with it: the person
+        is told what it did in a notification instead."""
+        job_id = job.id or 0
+        self.call(
+            nc.preferences_ex.delete(
+                [credential_key(job, name) for name in SOURCES[job.source].credentials] + [session_key(job)]
+            )
+        )
+        self.store.delete(job_id)
+        LOG.info("one-time job %s (%s) deleted after its run", job_id, job.user)
+        self.notify(nc, f"Harvester: {job.name} done", f"{message}. The one-time job is deleted; its files stay.")
 
     def _credentials(self, nc: AsyncNextcloudApp, job: Job) -> dict[str, str]:
         """The job's account, as its user set it."""
@@ -523,10 +602,12 @@ class Executor:
         control: Control,
         started: float,
         previous: list[str] | None,
+        fetch: dict | None = None,
     ) -> str:
         """The run itself, its files' tags first brought up to date; with previous (the job's
         tags before a change), only the tags: of the files it recorded, then of those it saved
-        before it recorded them, found by a listing without downloads."""
+        before it recorded them, found by a listing without downloads. A fetch's run says how
+        many of the address's files the job fetched before (not again: "seen" is the job's)."""
         job_id = job.id or 0
 
         def report(level: str, text: str) -> None:
@@ -554,11 +635,19 @@ class Executor:
             return message
         if changed:
             report("info", f"Tags brought up to date on {changed} files")
-        return runner.run(
+        known_before = 0
+
+        def seen(key: str) -> bool:
+            nonlocal known_before
+            found = self.store.seen(job_id, key)
+            known_before += found and not key.startswith(MARK)
+            return found
+
+        message = runner.run(
             job,
             source,
             library,
-            lambda key: self.store.seen(job_id, key),
+            seen,
             lambda key: self.store.mark_seen(job_id, key),
             until=lambda: started + RUN_LIMIT + control.paused_for,
             report=report,
@@ -566,7 +655,11 @@ class Executor:
             stopped=stopped,
             record=record,
             owners={entry["file"]: key for key, entry in known.items() if entry["file"] is not None},
+            later="when the address is sent again" if fetch else "next run",
         )
+        if fetch and known_before:
+            report("info", f"{known_before} of the files at {fetch['url']} were fetched before: not again")
+        return message
 
     @staticmethod
     def _earlier_tags(  # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -595,14 +688,19 @@ class Executor:
         message = f"Tags brought up to date on {changed + tagged} files"
         return (message, True) if whole else (f"{message}; stopped, the others get them at the job's next turn", False)
 
-    def _begin(self, job_id: int, control: Control, run: bool, retag: bool) -> None:
+    def _begin(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self, job_id: int, control: Control, run: bool, retag: bool, fetch: dict | None = None
+    ) -> None:
         """A turn's start: a run's clears the last run's message (the page shows this run's
         progress, its log, instead); downloads in progress end at once when it is stopped (one
-        job per thread)."""
+        job per thread). A fetch's names its address."""
+        control.fetch = fetch["id"] if fetch else 0
         if run:
             self.store.begin(job_id)
         if retag:
             self.store.log(job_id, "info", "The job's tags changed: bringing them to its files")
+        if fetch:
+            self.store.log(job_id, "info", f"Fetching {fetch['url']}")
         watch_stop(control.stopped)
 
     def notify(self, nc: AsyncNextcloudApp, subject: str, message: str) -> None:

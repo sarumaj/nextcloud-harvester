@@ -245,6 +245,8 @@ class Tally:
     skipped: int = 0
     failures: list[str] = dataclasses.field(default_factory=list)
     denied: int = 0
+    # When what is left is tried again: the next run, or (a fetch's) the address sent again.
+    later: str = "next run"
 
     def sentence(self) -> str:
         """The run's outcome, as the jobs' list shows it."""
@@ -254,7 +256,7 @@ class Tally:
         if self.skipped:
             message += f", {self.skipped} skipped (not of the job's file types, or too large)"
         if self.failures:
-            message += f", {len(self.failures)} failed (tried again next run): {self.failures[0]}"
+            message += f", {len(self.failures)} failed (tried again {self.later}): {self.failures[0]}"
         return message
 
 
@@ -271,14 +273,16 @@ def run(  # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
     stopped: Callable[[], bool] = lambda: False,
     record: Callable[[Placed], None] = lambda placed: None,
     owners: dict[int, str] | None = None,
+    later: str = "next run",
 ) -> str:
     """Downloads up to max_items new items (and stops at until, a time.monotonic(), or a
     function giving it) and returns what was done, in a sentence; report hears of each step
     (the page's progress log). stopped is asked before each file: it may wait while the run is
     paused, and True ends the run there (the rest comes next run, as at the limits). owners are
-    the files the job saved before, by ID, with their items' keys."""
+    the files the job saved before, by ID, with their items' keys; later says when the rest
+    comes (a fetch's: when its address is sent again)."""
     limit = int(job.options.get("max_items", COMMON_OPTIONS["max_items"].default))
-    tally = Tally()
+    tally = Tally(later=later)
     complete = True
     halted = False
     # The files of this run count too: two items of one name in a run get two files.
@@ -295,17 +299,17 @@ def run(  # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
     try:
         for item in source.items(seen):
             if stopped():
-                report("info", "Stopped: the rest comes next run")
+                report("info", f"Stopped: the rest comes {later}")
                 halted = True
                 complete = False
                 break
             # -1: no limit of files (the time limit still holds).
             if 0 <= limit <= tally.downloaded:
-                report("info", f"{limit} files this run (Files per run): the rest comes next run")
+                report("info", f"{limit} files this run (Files per run): the rest comes {later}")
                 complete = False
                 break
             if until is not None and time.monotonic() > (until() if callable(until) else until):
-                report("info", "The run's time is up: the rest comes next run")
+                report("info", f"The run's time is up: the rest comes {later}")
                 complete = False
                 break
             # A pause between two downloads, not before the first.
@@ -340,7 +344,7 @@ def run(  # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
     except Stopped:
         # Stopped during a wait (a listing, a retry, the site asking to wait): the file it was at
         # is not marked and comes next run.
-        report("info", "Stopped: the rest comes next run")
+        report("info", f"Stopped: the rest comes {later}")
         halted = True
         complete = False
     if tally.failures and not (tally.downloaded or tally.adopted or tally.skipped):
@@ -353,4 +357,4 @@ def run(  # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
     if complete:
         # The whole site is known now: later runs may stop at known files (stop_at_seen).
         mark_seen(FULL_PASS)
-    return f"{tally.sentence()}; stopped, the rest comes next run" if halted else tally.sentence()
+    return f"{tally.sentence()}; stopped, the rest comes {later}" if halted else tally.sentence()

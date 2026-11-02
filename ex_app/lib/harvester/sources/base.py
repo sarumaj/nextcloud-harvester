@@ -235,6 +235,10 @@ class Source(abc.ABC):
     # complete pass (and the source's own, MARK), its other options (file names, files per
     # run) do not.
     listing_options: ClassVar[tuple[str, ...]] = ()
+    # The option holding the address an on-demand job's fetch replaces for its run (a page, a
+    # feed); "" when the source has none a browser's page could send (a mailbox, a remote's
+    # folder, a repository's releases): it offers no on-demand jobs.
+    address_option: ClassVar[str] = ""
 
     def __init__(self, options: dict, credentials: dict[str, str], client: httpx.Client | None):
         self.settings = {key: options.get(key, option.default) for key, option in self.options.items()}
@@ -247,6 +251,16 @@ class Source(abc.ABC):
         # listing asks seen() about, e.g. a whole message handled); the runner sets both.
         self.report: Callable[[str, str], None] = lambda level, text: None
         self.remember: Callable[[str], None] = lambda key: None
+
+    @classmethod
+    def address_of(cls, options: dict) -> str:
+        """The job's own address (cls.address_option's value), "" when it has none."""
+        return str(options.get(cls.address_option) or "").strip() if cls.address_option else ""
+
+    @classmethod
+    def with_address(cls, options: dict, url: str) -> dict:
+        """The job's options with the address in place of its own, for one run."""
+        return options | {cls.address_option: url}
 
     @abc.abstractmethod
     def items(self, seen: Callable[[str], bool]) -> Iterator[Item]:

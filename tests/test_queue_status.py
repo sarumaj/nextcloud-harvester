@@ -183,6 +183,8 @@ def test_a_job_is_its_owners_alone(app):
         main.get_credentials(job_id, ben),
         main.set_credentials(job_id, {"password": "x"}, ben),
         main.progress_log(ben, job_id),
+        main.fetch_url(job_id, main.FetchIn(url="https://feed.example/other"), ben),
+        main.cancel_fetch(job_id, 1, ben),
     ]
     assert [status_of(call) for call in calls] == [404] * len(calls)
     assert store.job(job_id) == job, "unchanged"

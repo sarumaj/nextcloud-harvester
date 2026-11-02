@@ -85,6 +85,7 @@ class Feed(Source):
     }
     pause = 2.0
     listing_options = ("url", "take", "link_pattern")
+    address_option = "url"
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

@@ -519,6 +519,26 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
     }
     pause = 2.0
     listing_options = ("recipe", "browser", "max_pages")
+    # The address is the recipe's listing: a fetch's page is walked with the recipe's levels and
+    # file links (after its sign-in steps), as its start page would be.
+    address_option = "recipe"
+
+    @classmethod
+    def address_of(cls, options: dict) -> str:
+        try:
+            return str(json.loads(str(options.get("recipe") or "{}")).get("start") or "").strip()
+        except (ValueError, AttributeError):
+            return ""
+
+    @classmethod
+    def with_address(cls, options: dict, url: str) -> dict:
+        try:
+            recipe = json.loads(str(options.get("recipe") or "{}"))
+        except ValueError:
+            recipe = {}
+        if not isinstance(recipe, dict):
+            recipe = {}
+        return options | {"recipe": json.dumps(recipe | {"start": url})}
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

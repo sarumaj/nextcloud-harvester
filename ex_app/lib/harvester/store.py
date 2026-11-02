@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     last_message TEXT,
     challenge_url TEXT,
     timezone TEXT NOT NULL DEFAULT 'UTC',
-    retag_from TEXT
+    retag_from TEXT,
+    once INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS seen (
     job INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
@@ -62,6 +63,15 @@ CREATE TABLE IF NOT EXISTS shots (
     what TEXT NOT NULL,
     image BLOB NOT NULL
 );
+-- The addresses sent to on-demand jobs, waiting for their run (one after the other, oldest
+-- first): kept here so that a restart loses none; an address waits once per job.
+CREATE TABLE IF NOT EXISTS fetches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    url TEXT NOT NULL,
+    at REAL NOT NULL,
+    UNIQUE (job, url)
+);
 """
 # The lines of the progress log kept per job (its last runs).
 LOG_KEPT = 500
@@ -91,6 +101,8 @@ class Job:
     challenge_url: str | None = None
     # The time zone its schedule is in (an IANA name; the page sends the browser's).
     timezone: str = "UTC"
+    # An on-demand job (no schedule) deleted after a run that went through (ondemand.py).
+    once: bool = False
 
 
 class Store:  # pylint: disable=too-many-public-methods
@@ -114,6 +126,8 @@ class Store:  # pylint: disable=too-many-public-methods
             self._db.execute("ALTER TABLE jobs ADD COLUMN timezone TEXT NOT NULL DEFAULT 'UTC'")
         if "retag_from" not in columns:
             self._db.execute("ALTER TABLE jobs ADD COLUMN retag_from TEXT")
+        if "once" not in columns:
+            self._db.execute("ALTER TABLE jobs ADD COLUMN once INTEGER NOT NULL DEFAULT 0")
         # After the columns: the table made anew keeps them.
         self._never_reuse_ids()
         self._lock = threading.Lock()
@@ -158,6 +172,7 @@ class Store:  # pylint: disable=too-many-public-methods
         values["options"] = json.loads(values["options"])
         values["tags"] = json.loads(values["tags"])
         values["enabled"] = bool(values["enabled"])
+        values["once"] = bool(values["once"])
         return Job(**values)
 
     def jobs(self, user: str | None = None) -> list[Job]:
@@ -187,20 +202,21 @@ class Store:  # pylint: disable=too-many-public-methods
             job.schedule,
             int(job.enabled),
             job.timezone,
+            int(job.once),
         )
         with self._lock, self._db:
             if job.id is None:
                 job.created = time.time()
                 cursor = self._db.execute(
                     "INSERT INTO jobs (user, name, source, options, target, tags, schedule, enabled, timezone,"
-                    " created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    " once, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (*values, job.created),
                 )
                 job.id = cursor.lastrowid
             else:
                 self._db.execute(
                     "UPDATE jobs SET user = ?, name = ?, source = ?, options = ?, target = ?, tags = ?, schedule = ?,"
-                    " enabled = ?, timezone = ? WHERE id = ?",
+                    " enabled = ?, timezone = ?, once = ? WHERE id = ?",
                     (*values, job.id),
                 )
         return job
@@ -209,6 +225,34 @@ class Store:  # pylint: disable=too-many-public-methods
         """Deletes a job and what it has downloaded (the files stay in Nextcloud)."""
         with self._lock, self._db:
             self._db.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
+
+    def add_fetch(self, job_id: int, url: str) -> tuple[dict, bool]:
+        """Queues the address for the job: the fetch (id, job, url, at), and whether it is new
+        (False: the address waits already, and keeps its place)."""
+        with self._lock, self._db:
+            cursor = self._db.execute(
+                "INSERT OR IGNORE INTO fetches (job, url, at) VALUES (?, ?, ?)", (job_id, url, time.time())
+            )
+            row = self._db.execute("SELECT * FROM fetches WHERE job = ? AND url = ?", (job_id, url)).fetchone()
+        return dict(row), cursor.rowcount > 0
+
+    def fetches(self, jobs: list[int] | None = None) -> list[dict]:
+        """The addresses waiting for the jobs (or for all), oldest first."""
+        if jobs is not None and not jobs:
+            return []
+        query, values = "SELECT * FROM fetches", []
+        if jobs is not None:
+            query += f" WHERE job IN ({', '.join('?' * len(jobs))})"
+            values = list(jobs)
+        with self._lock:
+            rows = self._db.execute(query + " ORDER BY id", values).fetchall()
+        return [dict(row) for row in rows]
+
+    def drop_fetch(self, fetch_id: int) -> bool:
+        """Takes the address out of its job's queue (fetched, or cancelled); False when it was not
+        there."""
+        with self._lock, self._db:
+            return self._db.execute("DELETE FROM fetches WHERE id = ?", (fetch_id,)).rowcount > 0
 
     def begin(self, job_id: int) -> None:
         """A run starts: the last run's message goes, the page shows the run's progress instead."""

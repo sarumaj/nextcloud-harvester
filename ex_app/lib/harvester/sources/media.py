@@ -131,6 +131,7 @@ class Media(Source):
     }
     pause = 5.0
     listing_options = ("url", "max_entries")
+    address_option = "url"
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

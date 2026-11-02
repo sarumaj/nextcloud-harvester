@@ -16,7 +16,7 @@ from nc_py_api import AsyncNextcloudApp
 from nc_py_api.ex_app import AppAPIAuthMiddleware, anc_app, persistent_storage, run_app, set_handlers
 from pydantic import BaseModel, Field, field_validator
 
-from harvester import browser, schedule, settings
+from harvester import browser, ondemand, schedule, settings
 from harvester.rclone_wizard import AUTHORIZE_ORIGIN, Authorization, WizardError, Wizards, remote_types
 from harvester.browser.recorder import Recorder
 from harvester.executor import (
@@ -84,6 +84,7 @@ class JobIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     source: str = Field(max_length=40)
     target: str = Field(min_length=1, max_length=1000)
+    # Cron; "" for an on-demand job, which runs when its person sends it an address.
     schedule: str = Field("0 6 * * *", max_length=100)
     # Bounded: a recipe is a few kilobytes; nothing a person types needs more.
     options: dict[Annotated[str, Field(max_length=60)], Annotated[str, Field(max_length=100_000)] | int] = Field(
@@ -93,6 +94,8 @@ class JobIn(BaseModel):
     enabled: bool = True
     # The schedule's time zone (the browser's, as the page sends it); UTC when none is sent.
     timezone: str = Field("UTC", max_length=64)
+    # An on-demand job deleted after a run that went through.
+    once: bool = False
 
     @field_validator("source")
     @classmethod
@@ -105,10 +108,10 @@ class JobIn(BaseModel):
     @field_validator("schedule")
     @classmethod
     def valid_schedule(cls, value: str) -> str:
-        """A cron expression (minute hour day month weekday)."""
-        if not croniter.is_valid(value):
+        """A cron expression (minute hour day month weekday), or none (on demand)."""
+        if value.strip() and not croniter.is_valid(value):
             raise ValueError("not a cron expression")
-        return value
+        return value.strip()
 
     @field_validator("timezone")
     @classmethod
@@ -178,15 +181,21 @@ def number_problem(option: Option, text: str) -> str:
 
 def checked(body: JobIn) -> JobIn:
     """The job, if each option has a value of its kind (else the refusal names the option as the
-    form does) and its source accepts them (a recipe that can run, for instance)."""
+    form does) and its source accepts them (a recipe that can run, for instance). An on-demand
+    job's source must have an address a fetch replaces; its own may be empty."""
+    if not body.schedule and not ondemand.offered(body.source):
+        raise HTTPException(422, f"{SOURCES[body.source].title} has no address to send: it runs on a schedule.")
+    if body.once and body.schedule:
+        raise HTTPException(422, "Only an on-demand job is deleted after its run.")
     options = SOURCES[body.source].options | COMMON_OPTIONS
     for name, option in options.items():
         problem = option_problem(option, body.options[name]) if name in body.options else ""
         if problem:
             title = f"Through {browser.PROXY_NAME}" if name == "home" else option.title
             raise HTTPException(422, f"{title} {problem}")
+    given = body.options if body.schedule else ondemand.checked_options(body.source, body.options)
     try:
-        SOURCES[body.source](body.options, {}, None).close()
+        SOURCES[body.source](given, {}, None).close()
     except SourceError as error:
         raise HTTPException(422, str(error)) from error
     return body
@@ -201,6 +210,8 @@ def list_sources() -> list[dict]:
             "title": source.title,
             "description": source.description,
             "credentials": list(source.credentials),
+            # The option a fetch of an on-demand job replaces ("": no on-demand jobs).
+            "address": source.address_option,
             "credential_help": {name: list(help_) for name, help_ in source.credential_help.items()},
             "options": {
                 key: vars(option) | ({"title": f"Through {browser.PROXY_NAME}"} if key == "home" else {})
@@ -263,6 +274,7 @@ async def list_jobs(nc: NC) -> list[dict]:
     queued = executor.queued
     running = executor.running
     waits = executor.waits(jobs)
+    fetches = fetches_of(jobs)
     return [
         vars(job)
         | {
@@ -270,9 +282,23 @@ async def list_jobs(nc: NC) -> list[dict]:
             "queued": job.id in queued,
             "paused": executor.paused(job.id or 0),
             "waiting": waits.get(job.id or 0, ""),
+            "fetches": fetches.get(job.id or 0, []),
         }
         for job in jobs
     ]
+
+
+def fetches_of(jobs: list[Job]) -> dict[int, list[dict]]:
+    """The addresses waiting for the jobs, by job, oldest first; the one each runs now is marked
+    running."""
+    executor = STATE["executor"]
+    found: dict[int, list[dict]] = {}
+    for fetch in store().fetches([job.id or 0 for job in jobs]):
+        running = executor.fetching(fetch["job"]) == fetch["id"]
+        found.setdefault(fetch["job"], []).append(
+            {"id": fetch["id"], "url": fetch["url"], "at": fetch["at"], "running": running}
+        )
+    return found
 
 
 @APP.get("/api/status")
@@ -285,7 +311,8 @@ def queue_status() -> dict:
 @APP.get("/api/log")
 async def progress_log(nc: NC, job: int | None = None, after: int = 0) -> dict:
     """The user's progress log after the line after: of one job of theirs, or of all; which of
-    their jobs run now, which wait for their turn and why, and the queue's status."""
+    their jobs run now, which wait for their turn and why, the queue's status and the addresses
+    their on-demand jobs wait to fetch."""
     if job is not None:
         await own_job(job, nc)
     user = await nc.user
@@ -299,6 +326,9 @@ async def progress_log(nc: NC, job: int | None = None, after: int = 0) -> dict:
         "queued": [job_id for job_id in queued if job_id in mine],
         "waiting": {str(job_id): reason for job_id, reason in executor.waits(jobs).items()},
         "status": executor.status(),
+        # The on-demand jobs' waiting addresses (their ids): the page draws the list again
+        # when they change.
+        "fetches": {str(job_id): [fetch["id"] for fetch in found] for job_id, found in fetches_of(jobs).items()},
     }
 
 
@@ -314,6 +344,11 @@ async def update_job(job_id: int, body: JobIn, nc: NC) -> dict:
     job = await own_job(job_id, nc)
     saved = store().save(Job(id=job.id, user=job.user, created=job.created, **checked(body).model_dump()))
     forget_changed(job, saved)
+    # On a schedule now: the addresses sent to it are not fetched (the one running ends as it is).
+    if not ondemand.on_demand(saved):
+        for fetch in store().fetches([saved.id or 0]):
+            if STATE["executor"].fetching(saved.id or 0) != fetch["id"]:
+                store().drop_fetch(fetch["id"])
     # Other tags: the files it saved get them (and lose those it gave and has no more) at once.
     if saved.tags != job.tags:
         STATE["executor"].retag(saved.id or 0, job.tags)
@@ -367,8 +402,51 @@ async def get_shot(job_id: int, nc: NC) -> dict:
 
 @APP.post("/api/jobs/{job_id}/run")
 async def run_job(job_id: int, nc: NC) -> dict:
-    """Runs a job now (after the one running)."""
-    STATE["executor"].request((await own_job(job_id, nc)).id)
+    """Runs a job now (after the one running); an on-demand job with its own address."""
+    job = await own_job(job_id, nc)
+    if ondemand.on_demand(job) and not SOURCES[job.source].address_of(job.options):
+        raise HTTPException(409, "The job has no address of its own: fetch one with it.")
+    STATE["executor"].request(job.id)
+    return {}
+
+
+class FetchIn(BaseModel):
+    """An address sent to an on-demand job."""
+
+    url: str = Field(min_length=1, max_length=ondemand.MAX_URL)
+
+
+async def account_set(nc: AsyncNextcloudApp, job: Job) -> bool:
+    """Whether the user set any of the job's account."""
+    for name in SOURCES[job.source].credentials:
+        if await nc.preferences_ex.get_value(credential_key(job, name)):
+            return True
+    return False
+
+
+@APP.post("/api/jobs/{job_id}/fetch")
+async def fetch_url(job_id: int, body: FetchIn, nc: NC) -> dict:
+    """Queues the address for the user's on-demand job: its run fetches that address in place
+    of the job's own (whose options stay). Checked first, as the job's source checks its own
+    (422 with why). An address waiting already keeps its place. Returns the fetch (id, url, at)
+    and whether it is new."""
+    job = await own_job(job_id, nc)
+    url = body.url.strip()
+    problem = ondemand.fetch_problem(job, url, await account_set(nc, job))
+    if problem:
+        raise HTTPException(422, problem)
+    fetch, new = STATE["executor"].fetch(job.id or 0, url)
+    return {key: fetch[key] for key in ("id", "url", "at")} | {"new": new}
+
+
+@APP.delete("/api/jobs/{job_id}/fetch/{fetch_id}")
+async def cancel_fetch(job_id: int, fetch_id: int, nc: NC) -> dict:
+    """Takes a waiting address out of the job's queue; one being fetched is stopped with Stop."""
+    job = await own_job(job_id, nc)
+    if STATE["executor"].fetching(job.id or 0) == fetch_id:
+        raise HTTPException(409, "The address is being fetched: Stop ends that.")
+    if not any(fetch["id"] == fetch_id for fetch in store().fetches([job.id or 0])) or not store().drop_fetch(fetch_id):
+        raise HTTPException(404, "The address is not waiting (fetched already?).")
     return {}
 
 

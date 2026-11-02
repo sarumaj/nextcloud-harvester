@@ -114,7 +114,7 @@ def test_runners_run_jobs_side_by_side_but_one_per_site(tmp_path, monkeypatch):
     started: list[tuple[int, float]] = []
     lock = threading.Lock()
 
-    def slow_run(_self, ran, _wanted=True):
+    def slow_run(_self, ran, _wanted=True, _fetch=None):
         with lock:
             started.append((ran.id, time.monotonic()))
         time.sleep(1.0)
@@ -244,7 +244,7 @@ def test_the_admins_settings_change_the_runners_and_browsers(tmp_path, monkeypat
 def test_a_runner_beyond_the_setting_waits(tmp_path, monkeypatch):
     store = Store(str(tmp_path / "db"))
     ran: list[int] = []
-    monkeypatch.setattr(Executor, "run", lambda _self, job, _wanted=True: ran.append(job.id))
+    monkeypatch.setattr(Executor, "run", lambda _self, job, _wanted=True, _fetch=None: ran.append(job.id))
     executor = Executor(store, runners=1)
     threading.Thread(target=executor._runner, args=(1,), daemon=True).start()
     queued = store.save(Job(user="u", name="a", source="feed", target="/a", schedule="", options={}))
