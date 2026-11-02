@@ -94,8 +94,12 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN playwright install --with-deps chromium && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# The unprivileged user the app runs as (start.sh drops to it).
-RUN useradd --system --uid 10001 --user-group --create-home --home-dir /home/harvester harvester
+# The unprivileged user the app runs as (start.sh drops to it), and frpc's own: HaRP's key in
+# frpc's configuration and environment stays out of the reach of the app's user, as whom the
+# browsers and helper programs run.
+RUN useradd --system --uid 10001 --user-group --create-home --home-dir /home/harvester harvester && \
+    useradd --system --uid 10002 --user-group --no-create-home --home-dir /nonexistent \
+        --shell /usr/sbin/nologin harvester-frp
 
 # The app.
 COPY ex_app/img /ex_app/img
