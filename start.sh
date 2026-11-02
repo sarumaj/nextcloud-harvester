@@ -69,6 +69,15 @@ if [ "$(id -u)" = 0 ] && id harvester >/dev/null 2>&1; then
         FRP_USER=harvester-frp
     fi
     if [ -f /frpc.toml ]; then
+        # HaRP's TLS files are mounted readable for the image's user as HaRP made them: frpc's
+        # own copies, so that frpc reads them as its user whatever their owner and mode there.
+        if [ "$FRP_USER" = harvester-frp ] && [ -d /certs/frp ]; then
+            install -d -o harvester-frp -g harvester-frp -m 0700 /etc/frpc-certs
+            for file in client.crt client.key ca.crt; do
+                install -o harvester-frp -g harvester-frp -m 0600 "/certs/frp/$file" "/etc/frpc-certs/$file"
+            done
+            sed -i 's|"/certs/frp/|"/etc/frpc-certs/|' /frpc.toml
+        fi
         chgrp "$FRP_USER" /frpc.toml
         chmod 0640 /frpc.toml
     fi
