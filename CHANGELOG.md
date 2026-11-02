@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added
+
+- **The queue for everyone:** a line above the jobs says how many runners and browsers are busy
+  (browsers by jobs and by recordings) and how many jobs wait, and a waiting job says its place
+  and why (a runner, its site, a browser), without naming anyone else's jobs or sites
+  (`GET /api/status`). The recorder's "all browsers in use" says what holds them.
+
 ### Fixed
 
 - *Test the recipe* stopped by its person during a step said "failed": a stop cut short a step,

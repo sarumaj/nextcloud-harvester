@@ -194,12 +194,19 @@ the app's browser or taken from a template, not by code.
   a job never runs twice at once, and jobs of the same site (the host of the job's address) wait
   for each other, so no site gets more than one job's requests. The schedule and **Run now** only
   queue a job; a queued job asked for again runs once. The page shows it **Queued** until a
-  runner takes it, and checks every two seconds while a job of yours waits or runs.
+  runner takes it, and checks every two seconds while a job of yours waits or runs (ten
+  otherwise). Everyone's load is shown, nobody's jobs: above the list a line such as *Runners 2/2
+  · Browsers 3/3 (2 jobs, 1 recording) · 3 queued*, and beside a waiting job its place and why
+  it waits: *2. in the queue: waits for a runner, all 2 busy (1 job ahead)*, *waits for its site
+  (heise.de), used by another job* (its own site, never another job's), or, running, *Waits for
+  a browser: all 3 in use (2 by jobs, 1 by recordings)* (`GET /api/status`, and in the log's
+  polls).
 - **Browsers:** up to `HARVESTER_BROWSERS` Chromiums at once (3 by default; each takes some
   300-600 MB): each running website job takes one, recordings the others, so people record side
   by side and while jobs run. When all are taken, the recorder's screen says so instead of staying
-  empty. A browser is freed whenever its view ends: Done, Cancel, another view of the page,
-  closing the page, the time limits, or (rclone's sign-in) the wizard's end.
+  empty, and how many jobs and recordings hold them (not whose). A browser is freed whenever its
+  view ends: Done, Cancel, another view of the page, closing the page, the time limits, or
+  (rclone's sign-in) the wizard's end.
 - **Admin settings:** *Administration settings > Additional settings > Harvester* sets the
   numbers of jobs and browsers at once (1 to 8 each) and the proxy; the environment's values
   (`HARVESTER_RUNNERS`, `HARVESTER_BROWSERS`, `HARVESTER_PROXY`, `HARVESTER_PROXY_NAME`) are the

@@ -1,7 +1,8 @@
 """The app's page (harvester-main.js) in Chromium against a stubbed API and WebSocket: the
 recorder's navigation, the same controls for every pick (Pick again, the element, Remove), Undo
-of a pick, numbered pages, scroll to load more and the recipe's test; and a failed step's
-picture from the progress log, with the job's browser opened at its page."""
+of a pick, numbered pages, scroll to load more and the recipe's test; a failed step's picture
+from the progress log, with the job's browser opened at its page; and the queue's status with
+why a job waits."""
 
 # pylint: disable=missing-function-docstring
 
@@ -60,7 +61,20 @@ JOB = {
     "running": False,
     "queued": False,
     "paused": False,
+    "waiting": "",
 }
+# A second job of the person's, queued behind others' jobs.
+QUEUED = JOB | {
+    "id": 2,
+    "name": "Feed",
+    "source": "feed",
+    "target": "/Feed",
+    "options": {"url": "https://feed.example/rss"},
+    "last_status": "ok",
+    "queued": True,
+    "waiting": "2. in the queue: waits for a runner, all 2 busy (1 job ahead)",
+}
+STATUS = {"runners": {"busy": 2, "total": 2}, "browsers": {"jobs": 2, "recordings": 1, "total": 3}, "queued": 3}
 LOG = {
     "lines": [
         {"id": 1, "job": 1, "name": "Mag", "at": 1, "level": "error", "message": "step 2 (click #go) failed", "shot": 1}
@@ -77,21 +91,34 @@ SHOT = {
 }
 
 
+# The API's requests the page made: (method, path with its query, body).
+CALLS: list[tuple[str, str, dict | None]] = []
+
+
 @pytest.fixture(name="page")
-def fixture_page():
+def fixture_page(request):
     from playwright.sync_api import sync_playwright  # pylint: disable=import-outside-toplevel
 
+    # A test may give its jobs (parametrized indirectly), else the one of its own.
+    jobs = getattr(request, "param", [JOB])
     answers = {
         "/sources": main.list_sources(),
         "/presets": main.list_presets(),
-        "/jobs": [JOB],
-        "/log": LOG,
+        "/jobs": jobs,
+        # The log's polls agree with the list (else the page draws the list again each time).
+        "/log": LOG | {"queued": [job["id"] for job in jobs if job["queued"] and not job["running"]]},
         "/jobs/1/shot": SHOT,
+        "/status": STATUS,
     }
+    CALLS.clear()
 
     def api(route) -> None:
-        path = route.request.url.split("/api", 1)[1].split("?")[0]
-        route.fulfill(status=200, content_type="application/json", body=json.dumps(answers.get(path, {})))
+        method = route.request.method
+        full = route.request.url.split("/api", 1)[1]
+        path = full.split("?")[0]
+        CALLS.append((method, full, json.loads(route.request.post_data) if route.request.post_data else None))
+        answer = answers.get(f"{method} {path}", answers.get(path, {}))
+        route.fulfill(status=200, content_type="application/json", body=json.dumps(answer))
 
     def document(route) -> None:
         body = f'<html><head><script>{STUBS}</script><script src="/main.js"></script></head>'
@@ -102,7 +129,10 @@ def fixture_page():
         browser = playwright.chromium.launch(**launch_options(9))  # a port nobody listens on: all fulfilled
         page = browser.new_page()
         page.route("**/apps/app_api/proxy/harvester/api/**", api)
-        page.route("**/main.js", lambda route: route.fulfill(status=200, content_type="text/javascript", body=SCRIPT))
+        page.route(
+            "**/main.js",
+            lambda route: route.fulfill(status=200, content_type="text/javascript; charset=utf-8", body=SCRIPT),
+        )
         page.route(PAGE, document)
         page.goto(PAGE)
         page.wait_for_selector("table.harvester-jobs")
@@ -227,3 +257,13 @@ def test_a_failed_steps_picture_and_the_browser_at_its_page(page):
     page.get_by_role("button", name="Go", exact=True).click()
     page.get_by_role("button", name="Back", exact=True).click()
     assert sent(page) == [{"type": "goto", "url": "https://site.example/other"}, {"type": "back"}]
+
+
+@needs_chromium
+@pytest.mark.parametrize("page", [[JOB, QUEUED]], indirect=True)
+def test_the_queues_status_and_why_a_job_waits(page):
+    assert page.locator(".harvester-load").inner_text() == "Runners 2/2 · Browsers 3/3 (2 jobs, 1 recording) · 3 queued"
+    row = page.locator("tbody tr").nth(1)
+    assert "2. in the queue: waits for a runner, all 2 busy (1 job ahead)" in row.inner_text()
+    assert row.locator("button").all_inner_texts() == ["Run now", "Edit", "Delete"]
+    assert row.get_by_role("button", name="Run now").is_disabled(), "queued already"

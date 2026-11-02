@@ -115,10 +115,21 @@
 		return `Fill in “${step.value}” (${step.selector})`
 	}
 
+	// What everyone's jobs and recordings hold now, without whose: "Runners 2/2 · Browsers 3/3
+	// (2 jobs, 1 recording) · 3 queued". Empty when the app did not say.
+	function statusText(status) {
+		if (!status || !status.runners || !status.browsers) return ''
+		const { runners, browsers } = status
+		const plural = (number, word) => `${number} ${word}${number === 1 ? '' : 's'}`
+		const open = browsers.jobs + browsers.recordings
+		const held = open ? ` (${[browsers.jobs ? plural(browsers.jobs, 'job') : '', browsers.recordings ? plural(browsers.recordings, 'recording') : ''].filter(Boolean).join(', ')})` : ''
+		return `Runners ${runners.busy}/${runners.total} · Browsers ${open}/${browsers.total}${held} · ${status.queued} queued`
+	}
+
 	async function renderJobs(root) {
 		// Another view opened while the list was asked for (Edit, say) stays: the list is not drawn.
 		const view = root.firstChild
-		const jobs = await api('GET', '/jobs')
+		const [jobs, status] = await Promise.all([api('GET', '/jobs'), api('GET', '/status').catch(() => null)])
 		if (root.firstChild !== view) return
 		// A job's button: off until its answer, which (or its error, beside the job) the list
 		// drawn again shows; a run that ended just before Stop, say, is refused with a reason.
@@ -150,8 +161,8 @@
 					el('div', {
 						class: 'harvester-muted harvester-message',
 						'data-job-message': String(job.id),
-						text: job.running ? 'Starting'
-							: job.queued ? 'Waiting for its site or a free runner'
+						text: job.running ? job.waiting || 'Starting'
+							: job.queued ? job.waiting || 'Waiting for its site or a free runner'
 								: job.last_run ? `${when(job.last_run)} · ${job.last_message || ''}` : '',
 					}),
 					notices[job.id] ? el('div', { class: 'harvester-error harvester-message', role: 'alert', text: notices[job.id] }) : ''),
@@ -179,12 +190,15 @@
 		// Shown once: the next drawing of the list is without them.
 		for (const id of Object.keys(notices)) delete notices[id]
 		table.append(body)
+		// Everyone's load, so a job that waits is understood; updated by the progress log's polls.
+		const load = el('p', { class: 'harvester-muted harvester-load', role: 'status', title: 'All people’s jobs and recordings', text: statusText(status) })
 		root.replaceChildren(
 			el('div', { class: 'harvester-header' },
 				el('div', {},
 					el('h2', { text: 'Harvester' }),
 					el('p', { class: 'harvester-muted', text: 'Fetches files from websites into your folders on a schedule, and tags them.' })),
 				el('button', { class: 'primary', text: 'New job', onclick: () => renderStart(root) })),
+			load,
 			jobs.length ? table : el('div', { class: 'harvester-empty' },
 				el('p', { text: 'No jobs yet.' }),
 				el('p', { class: 'harvester-muted', text: 'A job fetches the files of one site: record it in the browser, or start from a template.' })),
@@ -236,12 +250,19 @@
 					show(root)
 					return
 				}
+				const load = root.querySelector('.harvester-load')
+				if (load && data.status) load.textContent = statusText(data.status)
+				// Why a queued job waits (its place, a runner, its site), or a running one (a browser).
+				for (const [id, reason] of Object.entries(data.waiting || {})) {
+					const message = root.querySelector(`[data-job-message="${id}"]`)
+					if (message) message.textContent = reason
+				}
 				const stick = list.scrollHeight - list.scrollTop - list.clientHeight < 24
 				for (const entry of data.lines) {
 					list.append(line(entry))
 					after = entry.id
 					const message = root.querySelector(`[data-job-message="${entry.job}"]`)
-					if (message && running.includes(entry.job)) message.textContent = entry.message
+					if (message && running.includes(entry.job) && !(data.waiting || {})[entry.job]) message.textContent = entry.message
 				}
 				while (list.children.length > 300) list.firstChild.remove()
 				if (!list.children.length) list.append(el('li', { class: 'harvester-muted', text: 'No runs yet.' }))
@@ -1434,6 +1455,7 @@
 		#harvester .harvester-form-actions { margin-top: 16px; }
 		#harvester .harvester-error { color: var(--color-error-text, var(--color-error)); }
 		#harvester .harvester-credentials { margin-top: 24px; max-width: 760px; }
+		#harvester .harvester-load { margin: -8px 0 12px; font-variant-numeric: tabular-nums; }
 		#harvester .harvester-wizard h3 { margin-top: 0; }
 		#harvester .harvester-wizard-help { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--color-text-maxcontrast); }
 		#harvester .harvester-wizard pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px 12px; background: var(--color-background-dark); border-radius: var(--border-radius); }

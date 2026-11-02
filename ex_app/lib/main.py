@@ -19,7 +19,15 @@ from pydantic import BaseModel, Field, field_validator
 from harvester import browser, schedule, settings
 from harvester.rclone_wizard import AUTHORIZE_ORIGIN, Authorization, WizardError, Wizards, remote_types
 from harvester.browser.recorder import Recorder
-from harvester.executor import RUNNERS, Executor, credential_key, load_session, save_session, session_key
+from harvester.executor import (
+    RUNNERS,
+    Executor,
+    browsers_in_use,
+    credential_key,
+    load_session,
+    save_session,
+    session_key,
+)
 from harvester.presets import PRESETS, make_job
 from harvester.runner import COMMON_OPTIONS
 from harvester.sources.download import DOWNLOAD_OPTIONS
@@ -247,30 +255,50 @@ def explain_schedule(
 
 @APP.get("/api/jobs")
 async def list_jobs(nc: NC) -> list[dict]:
-    """The user's jobs, with how their last run went, and which run or wait for their turn."""
+    """The user's jobs, with how their last run went, which run or wait for their turn, and
+    why they wait."""
     executor = STATE["executor"]
+    jobs = store().jobs(await nc.user)
     # Queued first: a job taken in between is then running too (and shown so), not neither.
     queued = executor.queued
     running = executor.running
+    waits = executor.waits(jobs)
     return [
-        vars(job) | {"running": job.id in running, "queued": job.id in queued, "paused": executor.paused(job.id or 0)}
-        for job in store().jobs(await nc.user)
+        vars(job)
+        | {
+            "running": job.id in running,
+            "queued": job.id in queued,
+            "paused": executor.paused(job.id or 0),
+            "waiting": waits.get(job.id or 0, ""),
+        }
+        for job in jobs
     ]
+
+
+@APP.get("/api/status")
+def queue_status() -> dict:
+    """What everyone's jobs and recordings hold now (runners, browsers, the queue), without
+    whose: so a person sees why their job waits."""
+    return STATE["executor"].status()
 
 
 @APP.get("/api/log")
 async def progress_log(nc: NC, job: int | None = None, after: int = 0) -> dict:
-    """The user's progress log after the line after: of one job of theirs, or of all; and which
-    of their jobs run now, and which wait for their turn."""
+    """The user's progress log after the line after: of one job of theirs, or of all; which of
+    their jobs run now, which wait for their turn and why, and the queue's status."""
     if job is not None:
         await own_job(job, nc)
     user = await nc.user
-    mine = {listed.id for listed in store().jobs(user)}
-    queued = STATE["executor"].queued
+    jobs = store().jobs(user)
+    mine = {listed.id for listed in jobs}
+    executor = STATE["executor"]
+    queued = executor.queued
     return {
         "lines": store().log_lines(user, job, max(after, 0)),
-        "running": [job_id for job_id in STATE["executor"].running if job_id in mine],
+        "running": [job_id for job_id in executor.running if job_id in mine],
         "queued": [job_id for job_id in queued if job_id in mine],
+        "waiting": {str(job_id): reason for job_id, reason in executor.waits(jobs).items()},
+        "status": executor.status(),
     }
 
 
@@ -558,7 +586,7 @@ async def admit_sign_in(websocket: WebSocket, user: str, wizard: str) -> Authori
     if authorization and not browser.SLOTS.acquire(blocking=False):  # pylint: disable=consider-using-with
         authorization.kill()
         authorization = None
-        refusal = "All browsers are in use (other recordings, or a job): try again in a few minutes."
+        refusal = busy_browsers()
     if authorization is None:
         await websocket.send_json({"type": "error", "message": refusal})
         await websocket.close(code=1008)
@@ -613,12 +641,17 @@ async def admit(websocket: WebSocket, nc: AsyncNextcloudApp) -> tuple[bool, Job 
         except (ValueError, HTTPException):
             refusal = "No such job."
     if not refusal and not browser.SLOTS.acquire(blocking=False):  # pylint: disable=consider-using-with
-        refusal = "All browsers are in use (other recordings, or a job): try again in a few minutes."
+        refusal = busy_browsers()
     if refusal:
         await websocket.send_json({"type": "error", "message": refusal})
         await websocket.close(code=1008)
         return False, None
     return True, job
+
+
+def busy_browsers() -> str:
+    """The recorder's refusal when every browser is open: what holds them, without whose."""
+    return f"No browser is free: {browsers_in_use()}. Try again in a few minutes."
 
 
 def switched_on(job: Job, name: str) -> bool:
