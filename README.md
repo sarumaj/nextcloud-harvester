@@ -97,12 +97,15 @@ the app's browser or taken from a template, not by code.
   (`HARVESTER_RUNNERS`, `HARVESTER_BROWSERS`, `HARVESTER_PROXY`, `HARVESTER_PROXY_NAME`) are the
   defaults. The app reads them each minute, so a change needs no restart: a lowered number lets
   the running jobs and open browsers finish first.
-- **Proxy:** with a proxy (an http(s) address, credentials in it if it needs them:
-  `http://user:password@host:3128`) a job may go **Through the proxy**: its downloads, its
-  browser, yt-dlp and gallery-dl use it, and sites that refuse servers' addresses see the
-  proxy's. The proxy's name changes what the form says, e.g. *Through the home connection* for a
-  proxy at home. Without one the option is not offered, and a job that chose it goes directly.
-  The recorder follows the form's choice.
+- **Proxy:** with a proxy a job may go **Through the proxy**: its downloads, its browser, yt-dlp
+  and gallery-dl use it, and sites that refuse servers' addresses see the proxy's. HTTP(S), with
+  credentials in the address if it needs them (`http://user:password@host:3128`), or SOCKS5
+  without a password (`socks5://host:1080`; `socks5h://` has the proxy look up the names), e.g.
+  `ssh -D` or Tor. A SOCKS5 proxy with a password, or another kind, is refused (Chromium cannot
+  send a SOCKS password): the app's log says why, once, and no proxy is used. The proxy's name
+  changes what the form says, e.g. *Through the home connection* for a proxy at home. Without
+  one the option is not offered, and a job that chose it goes directly. The recorder follows the
+  form's choice.
 - **Notifications:** a job that needs a person, or fails, notifies its user; the same failure
   again on the next runs does not.
 - **Templates** (`ex_app/lib/harvester/presets/*.json`), jobs with a few parameters, one card

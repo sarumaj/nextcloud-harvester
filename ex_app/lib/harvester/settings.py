@@ -17,6 +17,8 @@ BROWSERS = "browsers"
 PROXY = "proxy"
 PROXY_NAME = "proxy_name"
 KEYS = (RUNNERS, BROWSERS, PROXY, PROXY_NAME)
+PROXY_SCHEMES = ("http", "https", "socks5", "socks5h")
+_REFUSED: set[str] = set()
 DEFAULT_PROXY = os.environ.get("HARVESTER_PROXY", "").strip()
 DEFAULT_PROXY_NAME = os.environ.get("HARVESTER_PROXY_NAME", "").strip() or "the proxy"
 # The choices: each runner is a thread, each browser some 300-600 MB of the server's memory.
@@ -59,9 +61,10 @@ def form(runners: int, browsers: int, address: str = "", name: str = "the proxy"
                 default=address,
                 placeholder="http://proxy.example:3128",
                 description=(
-                    "An HTTP proxy that jobs may choose (Through the proxy): sites that refuse servers' "
-                    "addresses see the proxy's. With credentials: http://user:password@host:port. Empty: none, "
-                    "and jobs that chose it go directly."
+                    "A proxy that jobs may choose (Through the proxy): sites that refuse servers' addresses "
+                    "see the proxy's. HTTP(S), with credentials if needed (http://user:password@host:port), or "
+                    "SOCKS5 without a password (socks5://host:port; socks5h:// has the proxy look up the names). "
+                    "Empty: none, and jobs that chose it go directly."
                 ),
             ),
             SettingsField(
@@ -91,17 +94,30 @@ def number(value: str | None, default: int, highest: int) -> int:
 
 
 def proxy(value: str | None, default: str) -> str:
-    """The proxy's address: the default if unset, "" if emptied or not an http(s) address."""
-    if value is None:
-        return default
-    value = value.strip()
+    """The proxy's address: the default if unset, "" if emptied or not one the app can use
+    (the default is checked as well)."""
+    value = (default if value is None else value).strip()
     if not value:
         return ""
-    address = urlparse(value)
-    if address.scheme not in ("http", "https") or not address.hostname:
-        LOG.warning("the proxy %s is no http(s) address: none is used", shown(value))
+    problem = proxy_problem(value)
+    if problem:
+        # Read each minute: said once per address (Nextcloud's form cannot show it).
+        if value not in _REFUSED:
+            _REFUSED.add(value)
+            LOG.warning("the proxy %s: %s; none is used", shown(value), problem)
         return ""
     return value
+
+
+def proxy_problem(value: str) -> str:
+    """Why the app cannot use this proxy, or "" if it can: HTTP(S) or SOCKS5 (socks5h: the
+    proxy looks up the names), a SOCKS5 one without a password, which Chromium cannot send."""
+    address = urlparse(value)
+    if address.scheme not in PROXY_SCHEMES or not address.hostname:
+        return "not an http://, https://, socks5:// or socks5h:// address"
+    if address.scheme.startswith("socks") and (address.username or address.password):
+        return "a SOCKS5 proxy with a password, which the browser cannot send"
+    return ""
 
 
 def shown(address: str) -> str:

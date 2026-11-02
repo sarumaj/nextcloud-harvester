@@ -274,7 +274,11 @@ def test_the_proxy_setting_takes_only_http_addresses_and_hides_its_password():
 
     assert settings.proxy(None, "http://env:1") == "http://env:1"
     assert settings.proxy(" ", "http://env:1") == ""
-    assert settings.proxy("socks5://x:1", "http://env:1") == "", "Chromium and httpx here speak http(s)"
+    assert settings.proxy("socks5://x:1", "http://env:1") == "socks5://x:1"
+    assert settings.proxy("socks5h://x:1", "") == "socks5h://x:1"
+    assert settings.proxy("socks5://u:p@x:1", "") == "", "the browser cannot send a SOCKS password"
+    assert settings.proxy("socks4://x:1", "") == ""
+    assert settings.proxy(None, "socks5://u:p@x:1") == "", "the environment's is checked too"
     assert settings.proxy("proxy.example:3128", "") == "", "an address needs its scheme"
     assert settings.shown("http://u:secret@p.example:3128") == "http://u:***@p.example:3128"
 
@@ -301,3 +305,12 @@ def test_the_jobs_form_names_the_proxy_as_the_admin_does(monkeypatch):
     assert options["home"]["title"] == "Through the home connection"
     monkeypatch.setattr(browser, "PROXY", "")
     assert "home" not in main.list_sources()[0]["options"], "no proxy: not offered"
+
+
+def test_a_socks_proxy_goes_to_the_browser_and_the_downloads(monkeypatch):
+    from harvester import browser  # pylint: disable=import-outside-toplevel
+    from harvester.sources.download import guarded_client  # pylint: disable=import-outside-toplevel
+
+    monkeypatch.setattr(browser, "PROXY", "socks5h://proxy.example:1080")
+    assert browser.launch_options(home=True)["proxy"] == {"server": "socks5://proxy.example:1080"}
+    guarded_client(proxy=browser.PROXY).close()  # socksio is installed: httpx takes it

@@ -87,9 +87,10 @@ LAUNCH_ARGS = ["--disable-dev-shm-usage"]
 CHANNEL = os.environ.get("HARVESTER_BROWSER_CHANNEL", "chromium")
 LOCALE = os.environ.get("HARVESTER_LOCALE", "en-US")
 # A proxy for the jobs that choose it (http:// or https://, credentials in the address if it
-# needs them), e.g. a home connection: sites that refuse servers' addresses see the proxy's.
-# Empty: none, and the jobs' option is not offered. HARVESTER_PROXY and HARVESTER_PROXY_NAME (what
-# the job's form calls it) are the defaults; the admin's settings change both (settings.py).
+# needs them, or socks5:// and socks5h:// without), e.g. a home connection: sites that refuse
+# servers' addresses see the proxy's. Empty: none, and the jobs' option is not offered.
+# HARVESTER_PROXY and HARVESTER_PROXY_NAME (what the job's form calls it) are the defaults; the
+# admin's settings change both (settings.py).
 PROXY = os.environ.get("HARVESTER_PROXY", "").strip()
 PROXY_NAME = os.environ.get("HARVESTER_PROXY_NAME", "").strip() or "the proxy"
 TIMEZONE = os.environ.get("HARVESTER_TIMEZONE", "Europe/Berlin")
@@ -124,7 +125,9 @@ def launch_options(http1: bool = False, home: bool = False) -> dict:
     options = {"args": args, "env": child_env()} | ({"channel": CHANNEL} if CHANNEL else {})
     if home and PROXY:
         address = urlparse(PROXY)
-        server = address._replace(netloc=address.netloc.rpartition("@")[2]).geturl()
+        # Chromium knows socks5 only, and looks up the names at a SOCKS proxy anyway.
+        scheme = "socks5" if address.scheme == "socks5h" else address.scheme
+        server = address._replace(scheme=scheme, netloc=address.netloc.rpartition("@")[2]).geturl()
         options["proxy"] = {"server": server} | (
             {"username": unquote(address.username or ""), "password": unquote(address.password or "")}
             if address.username
