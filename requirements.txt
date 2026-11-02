@@ -5,6 +5,9 @@ gallery-dl==1.32.17
 httpx==0.28.1
 nc_py_api[app]==0.30.3
 playwright==1.64.1
+# The public suffixes (co.uk, github.io) the cookies panel never sets a cookie for: its bundled
+# list, offline.
+publicsuffixlist==1.1.2.20261101
 # The recorder's patterns, with a time limit (a pattern that backtracks without end).
 regex==2026.9.29
 # SOCKS proxies: the downloads (httpx) and gallery-dl (requests).
