@@ -1,7 +1,7 @@
-// The app's page in Nextcloud: the user's jobs, a job's form (blank or from a template) with
-// its account, and the recorder (the app's browser, shown and driven from here), which proposes
-// the links' patterns and shows what they match. Plain JavaScript, no build: Nextcloud loads
-// it into the page AppAPI renders for the top menu.
+// The app's page in Nextcloud: the user's jobs and those shared with them, a job's form (blank
+// or from a template) with its account and its shares, and the recorder (the app's browser,
+// shown and driven from here), which proposes the links' patterns and shows what they match.
+// Plain JavaScript, no build: Nextcloud loads it into the page AppAPI renders for the top menu.
 (function () {
 	'use strict'
 
@@ -115,10 +115,24 @@
 		return `Fill in “${step.value}” (${step.selector})`
 	}
 
+	// What everyone's jobs and recordings hold now, without whose: "Runners 2/2 · Browsers 3/3
+	// (2 jobs, 1 recording) · 3 queued". Empty when the app did not say.
+	function statusText(status) {
+		if (!status || !status.runners || !status.browsers) return ''
+		const { runners, browsers } = status
+		const plural = (number, word) => `${number} ${word}${number === 1 ? '' : 's'}`
+		const open = browsers.jobs + browsers.recordings
+		const held = open ? ` (${[browsers.jobs ? plural(browsers.jobs, 'job') : '', browsers.recordings ? plural(browsers.recordings, 'recording') : ''].filter(Boolean).join(', ')})` : ''
+		return `Runners ${runners.busy}/${runners.total} · Browsers ${open}/${browsers.total}${held} · ${status.queued} queued`
+	}
+
+	// The permissions of a share, as Nextcloud's: View always, the others chosen.
+	const PERMISSIONS = [['view', 'View'], ['run', 'Run'], ['edit', 'Edit'], ['delete', 'Delete'], ['reshare', 'Reshare']]
+
 	async function renderJobs(root) {
 		// Another view opened while the list was asked for (Edit, say) stays: the list is not drawn.
 		const view = root.firstChild
-		const jobs = await api('GET', '/jobs')
+		const [jobs, status] = await Promise.all([api('GET', '/jobs'), api('GET', '/status').catch(() => null)])
 		if (root.firstChild !== view) return
 		// A job's button: off until its answer, which (or its error, beside the job) the list
 		// drawn again shows; a run that ended just before Stop, say, is refused with a reason.
@@ -135,13 +149,20 @@
 			el('thead', {}, el('tr', {}, ...['Job', 'Folder', 'Schedule', 'Tags', 'Last run', ''].map((h) => el('th', { text: h })))))
 		const body = el('tbody', {})
 		for (const job of jobs) {
+			// What the person may do with a job shared with them (all of it with their own).
+			const can = (permission) => job.mine !== false || (job.permissions || []).includes(permission)
 			const state = job.running ? (job.paused ? 'held' : 'running') : job.queued ? 'queued' : job.last_status || 'never'
 			const label = { running: 'Running', held: 'Paused', queued: 'Queued', ok: 'OK', failed: 'Failed', auth: 'Sign-in refused', challenge: 'Needs you', never: 'Not run yet' }[state] || state
 			body.append(el('tr', {},
 				el('td', { class: 'harvester-with-icon', title: (sources.find((x) => x.name === job.source) || {}).title || job.source },
 					icon(job.source), el('strong', { text: job.name }),
 					// Not "paused": that is a running job held by Pause.
-					job.enabled ? '' : el('span', { class: 'harvester-chip', text: 'off', title: 'Not enabled: runs only with Run now' })),
+					job.enabled ? '' : el('span', { class: 'harvester-chip', text: 'off', title: 'Not enabled: runs only with Run now' }),
+					job.mine === false
+						? el('span', { class: 'harvester-chip harvester-shared', text: `shared by ${job.owner_name || job.owner}`, title: `${job.owner_name || job.owner}’s job: you may ${job.permissions.join(', ')}` })
+						: (job.shares || []).length
+							? el('span', { class: 'harvester-chip harvester-shared', text: 'shared', title: `Shared with ${job.shares.map((share) => share.label).join(', ')}` })
+							: ''),
 				el('td', { class: 'harvester-muted', text: job.target }),
 				el('td', {}, el('code', { text: job.schedule })),
 				el('td', {}, ...job.tags.map((tag) => el('span', { class: 'harvester-chip', text: tag }))),
@@ -150,16 +171,17 @@
 					el('div', {
 						class: 'harvester-muted harvester-message',
 						'data-job-message': String(job.id),
-						text: job.running ? 'Starting'
-							: job.queued ? 'Waiting for its site or a free runner'
+						text: job.running ? job.waiting || 'Starting'
+							: job.queued ? job.waiting || 'Waiting for its site or a free runner'
 								: job.last_run ? `${when(job.last_run)} · ${job.last_message || ''}` : '',
 					}),
 					notices[job.id] ? el('div', { class: 'harvester-error harvester-message', role: 'alert', text: notices[job.id] }) : ''),
 				el('td', { class: 'harvester-actions' },
-					state === 'challenge' ? el('button', { class: 'primary', text: 'Continue in the browser', onclick: () => openSession(root, job) }) : '',
+					// The job's browser holds its owner's session: theirs alone.
+					state === 'challenge' && job.mine !== false ? el('button', { class: 'primary', text: 'Continue in the browser', onclick: () => openSession(root, job) }) : '',
 					// While it runs: pause (or resume) and stop instead of Run now; a stopped run
 					// keeps what it saved, and the next run goes on from there.
-					...(job.running
+					...(!can('run') ? [] : job.running
 						? [
 							el('button', { text: job.paused ? 'Resume' : 'Pause', onclick: act(job, job.paused ? '/resume' : '/pause') }),
 							el('button', { text: 'Stop', onclick: act(job, '/stop') }),
@@ -167,24 +189,27 @@
 						: [job.queued
 							? el('button', { text: 'Run now', disabled: '', title: 'Queued already: it runs once its turn comes' })
 							: el('button', { text: 'Run now', onclick: act(job, '/run') })]),
-					el('button', { text: 'Edit', onclick: () => renderForm(root, job) }),
-					el('button', {
+					el('button', { text: can('edit') ? 'Edit' : 'View', onclick: () => renderForm(root, job) }),
+					can('delete') ? el('button', {
 						class: 'error',
 						text: 'Delete',
 						onclick: (event) => {
 							if (confirm(`Delete ${job.name}? The files it downloaded stay.`)) act(job, '', 'DELETE')(event)
 						},
-					}))))
+					}) : '')))
 		}
 		// Shown once: the next drawing of the list is without them.
 		for (const id of Object.keys(notices)) delete notices[id]
 		table.append(body)
+		// Everyone's load, so a job that waits is understood; updated by the progress log's polls.
+		const load = el('p', { class: 'harvester-muted harvester-load', role: 'status', title: 'All people’s jobs and recordings', text: statusText(status) })
 		root.replaceChildren(
 			el('div', { class: 'harvester-header' },
 				el('div', {},
 					el('h2', { text: 'Harvester' }),
 					el('p', { class: 'harvester-muted', text: 'Fetches files from websites into your folders on a schedule, and tags them.' })),
 				el('button', { class: 'primary', text: 'New job', onclick: () => renderStart(root) })),
+			load,
 			jobs.length ? table : el('div', { class: 'harvester-empty' },
 				el('p', { text: 'No jobs yet.' }),
 				el('p', { class: 'harvester-muted', text: 'A job fetches the files of one site: record it in the browser, or start from a template.' })),
@@ -223,7 +248,7 @@
 					type: 'button',
 					class: 'harvester-link',
 					text: 'Show what the browser saw',
-					onclick: () => showShot(root, jobs.find((job) => job.id === entry.job) || { id: entry.job, name: entry.name }),
+					onclick: () => showShot(root, jobs.find((job) => job.id === entry.job) || { id: entry.job, name: entry.name, mine: false }),
 				}) : ''))
 		async function poll() {
 			if (!document.body.contains(panel)) return
@@ -236,12 +261,19 @@
 					show(root)
 					return
 				}
+				const load = root.querySelector('.harvester-load')
+				if (load && data.status) load.textContent = statusText(data.status)
+				// Why a queued job waits (its place, a runner, its site), or a running one (a browser).
+				for (const [id, reason] of Object.entries(data.waiting || {})) {
+					const message = root.querySelector(`[data-job-message="${id}"]`)
+					if (message) message.textContent = reason
+				}
 				const stick = list.scrollHeight - list.scrollTop - list.clientHeight < 24
 				for (const entry of data.lines) {
 					list.append(line(entry))
 					after = entry.id
 					const message = root.querySelector(`[data-job-message="${entry.job}"]`)
-					if (message && running.includes(entry.job)) message.textContent = entry.message
+					if (message && running.includes(entry.job) && !(data.waiting || {})[entry.job]) message.textContent = entry.message
 				}
 				while (list.children.length > 300) list.firstChild.remove()
 				if (!list.children.length) list.append(el('li', { class: 'harvester-muted', text: 'No runs yet.' }))
@@ -868,7 +900,8 @@
 					el('h2', { text: `${job.name}: what the browser saw` }),
 					el('p', { class: 'harvester-muted', text: `${shot.what} · ${when(shot.at)}` })),
 				el('div', { class: 'harvester-actions' },
-					el('button', { class: 'primary', text: 'Open in the browser', title: 'The job’s browser at this page, with its session, to look live', onclick: () => openSession(root, job, 'shot') }),
+					// The job's browser holds its owner's session: theirs alone.
+					job.mine === false ? '' : el('button', { class: 'primary', text: 'Open in the browser', title: 'The job’s browser at this page, with its session, to look live', onclick: () => openSession(root, job, 'shot') }),
 					el('button', { text: 'Back', onclick: () => show(root) }))),
 			el('p', {}, el('strong', { text: shot.title || '(no title)' }), el('br'), el('code', { text: shot.url })),
 			el('img', { class: 'harvester-shot-image', src: `data:image/jpeg;base64,${shot.image}`, alt: `The page ${shot.url} as the job’s browser showed it` }))
@@ -1180,12 +1213,18 @@
 
 	function renderForm(root, job, prefill) {
 		const value = job || prefill || BLANK
+		// A job shared with the person: its folder and account stay its owner's, and without Edit
+		// the form only shows it.
+		const others = Boolean(job && job.mine === false)
+		const viewOnly = others && !(job.permissions || []).includes('edit')
+		const ownerName = others ? job.owner_name || job.owner : ''
 		// The job saved so far: a new one is, after its first Save, saved again with PUT.
 		let current = job
 		// The zone its schedule runs in: a job keeps its own, a new one takes the person's.
 		const zone = job ? job.timezone || 'UTC' : ZONE
 		const name = el('input', { value: value.name, required: '' })
 		const target = el('input', { value: value.target })
+		if (others) target.disabled = true
 		const schedule = el('input', { value: value.schedule })
 		// The schedule in words and its next runs in the person's time, as it is typed (the
 		// server reads it as the executor does).
@@ -1236,7 +1275,7 @@
 				textarea.value = current
 				optionInputs[key] = textarea
 				options.append(field(option.title, textarea, option.description),
-					el('button', {
+					viewOnly ? '' : el('button', {
 						type: 'button',
 						text: 'Record in the browser',
 						onclick: () => openRecorder(root, page, textarea, applySuggestions, () => Object.fromEntries(
@@ -1284,7 +1323,7 @@
 		}
 
 		const save = el('button', { class: 'primary', type: 'submit', form: 'harvester-job-form', text: 'Save' })
-		const heading = el('span', { text: job ? `Edit ${job.name}` : `New job: ${chosen.title}` })
+		const heading = el('span', { text: job ? `${viewOnly ? '' : 'Edit '}${job.name}` : `New job: ${chosen.title}` })
 		const form = el('form', {
 			id: 'harvester-job-form',
 			class: 'harvester-form',
@@ -1326,7 +1365,7 @@
 		},
 		el('h2', { class: 'harvester-with-icon' }, icon(chosen.name), heading),
 		field('Name', name),
-		field('Folder', target, 'In your files, e.g. /Magazines/iX.'),
+		field('Folder', target, others ? `In ${ownerName}’s files: the files are theirs, and only they change the folder.` : 'In your files, e.g. /Magazines/iX.'),
 		field('Schedule', schedule, `Cron: minute hour day month weekday, in ${zone === ZONE ? 'your time zone' : 'the job’s time zone'} (${zone}). 0 6 * * * is daily at 06:00.`),
 		scheduleHint,
 		field('Tags', tags, 'Comma-separated; may use the link’s values, e.g. {year}. A tag whose value a file lacks is left out.'),
@@ -1349,10 +1388,106 @@
 				if (!credentials.typed() || confirm('Leave without saving the account you typed?')) show(root)
 			},
 		})
-		page = el('div', {}, form, credentials, el('div', { class: 'harvester-form-actions' }, error, save, back))
+		if (viewOnly) {
+			for (const control of form.querySelectorAll('input, select, textarea, button')) control.disabled = true
+			save.hidden = true
+		}
+		const shares = job && (!others || (job.permissions || []).includes('reshare')) ? sharePanel(job) : ''
+		page = el('div', {}, form, credentials, shares, el('div', { class: 'harvester-form-actions' }, error, save, back))
 		root.replaceChildren(page)
 		name.focus()
-		renderCredentials(credentials, job, chosen)
+		// The account is the owner's alone: another person sees neither it nor whether it is set.
+		if (others) {
+			credentials.typed = () => false
+			credentials.save = async () => false
+			credentials.append(el('p', { class: 'harvester-muted', text: `The job signs in with ${ownerName}’s account, runs as them and saves into their files; only they see or change the account.` }))
+		} else renderCredentials(credentials, job, chosen)
+	}
+
+	// Sharing a job, as Nextcloud shares files: with people and groups (found by Nextcloud's own
+	// search, so its sharing rules apply), each with View and what else is ticked. The owner sees
+	// all its shares; one who may share it on, those they made, with at most their own permissions.
+	function sharePanel(job) {
+		const others = job.mine === false
+		const own = others ? job.permissions || [] : PERMISSIONS.map(([name]) => name)
+		const error = el('p', { class: 'harvester-error', role: 'alert' })
+		const list = el('ul', { class: 'harvester-shares', 'aria-label': 'Shared with' })
+		const results = el('ul', { class: 'harvester-sharees', 'aria-live': 'polite' })
+		const search = el('input', { type: 'search', placeholder: 'A name of a person or group', autocomplete: 'off' })
+		const label = (share) => `${share.label}${share.kind === 'group' ? ' (group)' : ''}`
+		const change = async (method, path, body) => {
+			error.textContent = ''
+			try {
+				draw(await api(method, `/jobs/${job.id}/shares${path}`, body))
+			} catch (e) {
+				error.textContent = e.message
+				load()
+			}
+		}
+		// A share's permissions: View always; one who shares it on gives no more than they have.
+		const boxes = (share) => el('span', { class: 'harvester-permissions' }, ...PERMISSIONS.map(([name, text]) => {
+			const box = el('input', { type: 'checkbox', 'data-permission': name })
+			box.checked = name === 'view' || share.permissions.includes(name)
+			box.disabled = name === 'view' || !own.includes(name)
+			box.addEventListener('change', () => {
+				const chosen = [...box.closest('.harvester-permissions').querySelectorAll('input:checked')].map((input) => input.dataset.permission)
+				change('PUT', '', { kind: share.kind, sharee: share.sharee, permissions: chosen })
+			})
+			return el('label', {}, box, ` ${text} `)
+		}))
+		function draw(shares) {
+			list.replaceChildren(...(shares.length ? shares.map((share) => el('li', { 'data-sharee': `${share.kind}:${share.sharee}` },
+				el('strong', { text: label(share) }), boxes(share),
+				el('button', {
+					type: 'button',
+					class: 'error',
+					text: 'Remove',
+					'aria-label': `Remove the share with ${label(share)}`,
+					onclick: () => change('DELETE', `/${share.kind}/${encodeURIComponent(share.sharee)}`),
+				}))) : [el('li', { class: 'harvester-muted', text: 'Not shared yet.' })]))
+		}
+		async function load() {
+			try {
+				draw(await api('GET', `/jobs/${job.id}/shares`))
+			} catch (e) {
+				error.textContent = e.message
+			}
+		}
+		let searching
+		search.addEventListener('input', () => {
+			clearTimeout(searching)
+			const text = search.value.trim()
+			if (!text) {
+				results.replaceChildren()
+				return
+			}
+			searching = setTimeout(async () => {
+				try {
+					const found = await api('GET', `/sharees?search=${encodeURIComponent(text)}&job=${job.id}`)
+					if (search.value.trim() !== text) return
+					results.replaceChildren(...(found.length ? found.map((sharee) => el('li', {},
+						el('button', {
+							type: 'button',
+							class: 'harvester-link',
+							text: label(sharee),
+							title: 'Share with View; tick what else they may do below',
+							onclick: () => {
+								search.value = ''
+								results.replaceChildren()
+								change('PUT', '', { kind: sharee.kind, sharee: sharee.sharee, permissions: ['view'] })
+							},
+						}))) : [el('li', { class: 'harvester-muted', text: 'Nobody found to share with.' })]))
+				} catch (e) {
+					error.textContent = e.message
+				}
+			}, 300)
+		})
+		draw(job.shares || [])
+		load()
+		return el('section', { class: 'harvester-share' },
+			el('h3', { text: 'Share' }),
+			el('p', { class: 'harvester-muted', text: `People and groups it is shared with see the job, its progress and what its browser saw; Run, Edit, Delete and Reshare let them do more. Its account, folder, notifications and browser session stay ${others ? `${job.owner_name || job.owner}’s` : 'yours'}, and it always runs as ${others ? 'them' : 'you'}.` }),
+			field('Share with', search), results, list, error)
 	}
 
 	async function show(root) {
@@ -1434,6 +1569,13 @@
 		#harvester .harvester-form-actions { margin-top: 16px; }
 		#harvester .harvester-error { color: var(--color-error-text, var(--color-error)); }
 		#harvester .harvester-credentials { margin-top: 24px; max-width: 760px; }
+		#harvester .harvester-share { margin-top: 24px; max-width: 760px; }
+		#harvester .harvester-shares, #harvester .harvester-sharees { list-style: none; margin: 4px 0; padding: 0; }
+		#harvester .harvester-shares li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 6px 0; border-bottom: 1px solid var(--color-border); }
+		#harvester .harvester-shares li strong { margin-inline-end: auto; }
+		#harvester .harvester-permissions label { margin-inline-end: 8px; }
+		#harvester .harvester-shared { background: var(--color-primary-element-light); color: var(--color-primary-element-light-text, var(--color-main-text)); }
+		#harvester .harvester-load { margin: -8px 0 12px; font-variant-numeric: tabular-nums; }
 		#harvester .harvester-wizard h3 { margin-top: 0; }
 		#harvester .harvester-wizard-help { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--color-text-maxcontrast); }
 		#harvester .harvester-wizard pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px 12px; background: var(--color-background-dark); border-radius: var(--border-radius); }
