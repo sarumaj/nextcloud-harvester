@@ -18,10 +18,22 @@ The messages are JSON over the page's WebSocket:
 
 import asyncio
 import re
+import time
 from collections.abc import Awaitable, Callable
 from urllib.parse import urlparse
 
-from playwright.async_api import Browser, BrowserContext, CDPSession, Page, Playwright, Route, async_playwright
+import regex
+
+from playwright.async_api import (
+    Browser,
+    BrowserContext,
+    CDPSession,
+    Page,
+    Playwright,
+    Route,
+    WebSocketRoute,
+    async_playwright,
+)
 
 from .. import browser, patterns
 from ..recipe import steps_from_events
@@ -32,6 +44,7 @@ from . import (
     allowed_url,
     context_options,
     fitted_viewport,
+    http_address,
     launch_options,
     reachable,
     seen_address,
@@ -44,6 +57,11 @@ EXAMPLES = 8
 TYPED = 200
 # Seconds closing the browser may take.
 CLOSE_TIMEOUT = 10
+# How long a person's pattern may take (s): on the links of a page, all together; on a page's
+# address. A pattern that backtracks without end ((a|aa)+$) would otherwise hold the app: it runs
+# with the regex module's time limit, in a thread that leaves the event loop free (concurrent).
+PATTERN_TIMEOUT = 2.0
+DEPTH_TIMEOUT = 0.2
 HIGHLIGHT = "([selector, pattern]) => window.__harvester ? window.__harvester.highlight(selector, pattern) : null"
 MATCHES = "els => els.map(e => [e.href || '', (e.innerText || '').trim().slice(0, 80)])"
 
@@ -53,6 +71,20 @@ CURSORS = frozenset(
     "default pointer text crosshair move grab grabbing not-allowed wait progress help cell copy "
     "zoom-in zoom-out col-resize row-resize ew-resize ns-resize nesw-resize nwse-resize vertical-text".split()
 )
+
+
+def search_all(pattern: str, texts: list[str]) -> list:
+    """The pattern's match in each text (None for none or an empty text), within PATTERN_TIMEOUT
+    for all of them (else TimeoutError)."""
+    compiled = regex.compile(pattern)
+    deadline = time.monotonic() + PATTERN_TIMEOUT
+    found = []
+    for text in texts:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            raise TimeoutError("the pattern took too long")
+        found.append(compiled.search(text, timeout=left, concurrent=True) if text else None)
+    return found
 
 
 class Recorder:  # pylint: disable=too-many-instance-attributes
@@ -110,12 +142,13 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
             storage_state=session or None,  # type: ignore[arg-type]
         )
         await self._context.route("**/*", self._guard)
+        await self._context.route_web_socket(re.compile(".*"), self._socket_guard)
         await self._context.expose_binding("__harvesterReport", self._report)
         await self._context.add_init_script(SCRIPT)
         self._context.on("page", lambda page: asyncio.ensure_future(self._show(page)))
         await self._show(await self._context.new_page())
         asyncio.ensure_future(self._tell_address(home and bool(browser.PROXY)))
-        if url and (allowed_url(url) or self.opens_loopback(url)) and self._page:
+        if url and (self.opens_loopback(url) or await asyncio.to_thread(allowed_url, url)) and self._page:
             await self._page.goto(url, wait_until="domcontentloaded")
 
     async def _tell_address(self, proxied: bool) -> None:
@@ -152,6 +185,13 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
             await route.continue_()
         else:
             await route.abort("blockedbyclient")
+
+    async def _socket_guard(self, route: WebSocketRoute) -> None:
+        # A page's WebSockets pass by the routes: the same check, on their http(s) address; one
+        # refused is never connected (sources.site.socket_guard).
+        url = http_address(route.url)
+        if self.opens_loopback(url) or await asyncio.to_thread(reachable, url):
+            route.connect_to_server()
 
     async def _show(self, page: Page) -> None:
         """Shows this page (the first, or a new tab or window the site opened). Once per page:
@@ -222,13 +262,14 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         await self.send({"type": "recipe", "recipe": self.recipe, "proposals": self.proposals})
 
     def depth(self, url: str) -> int:
-        """How deep the page is: 0 for the listing, n for a page the nth level's links lead to."""
+        """How deep the page is: 0 for the listing, n for a page the nth level's links lead to (a
+        pattern that is none, or takes too long, matches nothing)."""
         for level in range(len(self.follow), 0, -1):
             pattern = self.follow[level - 1].get("pattern", "")
             try:
-                if re.search(pattern, url):
+                if regex.search(pattern, url, timeout=DEPTH_TIMEOUT):
                     return level
-            except re.error:
+            except (regex.error, TimeoutError):
                 continue
         return 0
 
@@ -277,12 +318,21 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
             await self._update()
             return
         found = await page.eval_on_selector_all(spec["selector"], MATCHES)
+        try:
+            matches = await asyncio.to_thread(search_all, pattern.pattern, [href for href, _ in found])
+        except TimeoutError:
+            proposal.update(
+                error="the pattern takes too long on this page's links (it backtracks): make it simpler",
+                examples=[],
+                matching=0,
+            )
+            await self._update()
+            return
         examples = []
-        for href, text in found:
-            match = pattern.search(href) if href else None
+        for (href, text), match in zip(found, matches):
             if match and len(examples) < EXAMPLES:
                 examples.append({"url": href, "text": text, "values": patterns.group_values(match)})
-        matching = sum(1 for href, _ in found if href and pattern.search(href))
+        matching = sum(1 for match in matches if match)
         proposal.update(error="", examples=examples, matching=matching, found=len(found), pattern=pattern.pattern)
         proposal["groups"] = list(pattern.groupindex)
         try:
@@ -300,7 +350,8 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
             url = str(message.get("url", "")).strip()
             if "://" not in url:
                 url = "https://" + url
-            if not allowed_url(url):
+            # The name's lookup off the event loop, as in _guard.
+            if not await asyncio.to_thread(allowed_url, url):
                 await self.send({"type": "error", "message": f"The browser may not open {url}."})
                 return
             if self.mode == "record":

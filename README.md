@@ -209,12 +209,22 @@ the app's browser or taken from a template, not by code.
     host and scheme;
   - **OAuth2** for mail (Gmail, Outlook or any provider's token endpoint): a client ID and secret
     and a refresh token sign in with XOAUTH2; a refresh token the provider replaces is kept.
-- **Safety:** the browser and the downloads reach only http(s) addresses outside local and
-  private networks, checked on the addresses a name resolves to and on every redirect (a
-  `file://` page would show the app's secret). Chromium, rclone and gallery-dl run without the
-  app's secrets in their environment. The app runs as the user `harvester` without a way back
-  to root (`setpriv --no-new-privs`, `start.sh`). The recorder's WebSocket takes only Nextcloud's
-  origin (`NEXTCLOUD_URL`, more in `HARVESTER_ORIGINS`).
+- **Safety:** the browser's pages and the downloads reach only http(s) addresses outside local
+  and private networks, checked on the addresses a name resolves to and on every request and
+  redirect (a `file://` page would show the app's secret): a page's WebSockets too (one refused
+  is never connected), its service workers are off, and a file a recorded site links to is
+  downloaded by the app's guarded HTTP client with the browser's cookies, not by the browser.
+  WebSockets a page's web worker opens pass by Playwright's routes: there, as for yt-dlp,
+  gallery-dl, rclone and mail servers, which connect by themselves (their addresses checked the
+  same way before, not their redirects), the External Apps' network rules stay the guard. Pages
+  and feeds are read up to 16 MB, a file in chunks up to the job's largest size. Chromium, its
+  Playwright driver, rclone, gallery-dl and ffmpeg run without the app's secrets in their
+  environment (a proxy's password goes to gallery-dl in a 0600 file), and the app's process is
+  undumpable, so its `/proc` files (its environment) are root's. The app runs as the user
+  `harvester`, frpc as `harvester-frp`, whose configuration (HaRP's key) `harvester` may not
+  read, both without a way back to root (`setpriv --no-new-privs`, `start.sh`). A job's id is
+  never used again. A pattern in the recorder runs with a time limit. The recorder's WebSocket
+  takes only Nextcloud's origin (`NEXTCLOUD_URL`, more in `HARVESTER_ORIGINS`).
 
 ## Development
 

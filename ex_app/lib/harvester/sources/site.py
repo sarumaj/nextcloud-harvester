@@ -17,8 +17,9 @@ from collections.abc import Callable, Generator, Iterator
 from typing import Any, BinaryIO
 from urllib.parse import urljoin
 
+import httpx
 from bs4 import BeautifulSoup
-from playwright.sync_api import Route, sync_playwright
+from playwright.sync_api import Route, WebSocketRoute, sync_playwright
 
 from .. import browser
 from .. import cookies as cookie_jar
@@ -81,12 +82,13 @@ class HttpDriver(Driver):
             )
 
     def open(self, url: str | None) -> Any:
-        response = self.client.get(url)
-        kind = browser.challenge_in_html(response.text) if "html" in response.headers.get("content-type", "") else None
+        with self.client.stream("GET", url) as response:
+            text = download.read_page(response).decode(response.encoding or "utf-8", "replace")
+        kind = browser.challenge_in_html(text) if "html" in response.headers.get("content-type", "") else None
         if kind:
             raise ChallengeError(str(response.url), kind)
         response.raise_for_status()
-        return str(response.url), BeautifulSoup(response.text, "html.parser")
+        return str(response.url), BeautifulSoup(text, "html.parser")
 
     def challenge(self, page: Any) -> tuple[str, str] | None:
         kind = browser.challenge_in_html(str(page[1]))
@@ -129,15 +131,20 @@ class BrowserDriver(Driver):
             raise SourceError("no browser came free (recordings use them all)")
         self._playwright = None
         self._browser = None
+        # The downloads' proxy and user agent: the browser's (download).
+        self.proxy = browser.PROXY if home else ""
+        self.user_agent = ""
         try:
             self._playwright = sync_playwright().start()
             self._browser = self._playwright.chromium.launch(**browser.launch_options(http1, home))
+            self.user_agent = browser.user_agent(self._browser.version)
             self.context = self._browser.new_context(
                 **browser.context_options(self._browser.version),
                 accept_downloads=False,
                 storage_state=session or None,  # type: ignore[arg-type]
             )
             self.context.route("**/*", guard)
+            self.context.route_web_socket(re.compile(".*"), socket_guard)
             # The account's cookies over the kept session's: the user gave them for this job.
             if cookies:
                 self.context.add_cookies(cookies)  # type: ignore[arg-type]
@@ -207,16 +214,15 @@ class BrowserDriver(Driver):
 
     @contextlib.contextmanager
     def download(self, url: str) -> Iterator[Response]:
-        response = self.context.request.get(url, timeout=300_000)
-
-        # Read only when asked for: after the checks of the status and the announced size.
-        def body() -> Iterator[bytes]:
-            yield response.body()
-
-        try:
-            yield Response(response.status, response.url, response.headers, body())
-        finally:
-            response.dispose()
+        # Over HTTP with the browser's cookies, user agent and proxy, not with the context's own
+        # requests (context.request), which pass by its routes: the guarded client checks every
+        # request and redirect on the addresses the names resolve to, and the file comes in
+        # chunks, never whole into memory.
+        hooks = {"request": [session_cookies(self.context.storage_state()["cookies"])]}
+        options = {"proxy": self.proxy} if self.proxy else {}
+        with download.guarded_client(event_hooks=hooks, headers={"User-Agent": self.user_agent}, **options) as client:
+            with download.http(client)(url) as response:
+                yield response
 
     def close(self) -> None:
         try:
@@ -234,6 +240,45 @@ def guard(route: Route) -> None:
         route.continue_()
     else:
         route.abort("blockedbyclient")
+
+
+def socket_guard(route: WebSocketRoute) -> None:
+    """Lets a page's WebSocket connect only where the browser may go (the routes do not see
+    them); another is never connected: the page's socket opens to nothing (Playwright's stand-in,
+    which a close from the handler would leave waiting)."""
+    if browser.reachable(browser.http_address(route.url)):
+        route.connect_to_server()
+
+
+def sent_with(cookie: dict, url: httpx.URL, now: float) -> bool:
+    """Whether the browser sends the cookie (storage_state's) to the address: a host's own only to
+    that host (Playwright's domain without a dot), a domain's to it and its subdomains, a secure
+    one only over https, within its path, unexpired."""
+    domain, host = str(cookie.get("domain", "")).lower(), url.host.lower()
+    within = str(cookie.get("path") or "/").rstrip("/")
+    path = url.path or "/"
+    expires = float(cookie.get("expires", -1) or -1)
+    return (
+        (host == domain or (domain.startswith(".") and f".{host}".endswith(domain)))
+        and (path == within or path.startswith(within + "/"))
+        and (url.scheme == "https" or not cookie.get("secure"))
+        and not 0 < expires < now
+    )
+
+
+def session_cookies(cookies: list[dict]) -> Callable[[httpx.Request], None]:
+    """Gives each request (a redirect's too) the browser's cookies that the browser would send
+    with it (sent_with): an HTTP client's cookie jar would send a host's own to its subdomains
+    too."""
+
+    def add(request: httpx.Request) -> None:
+        now = time.time()
+        pairs = [f"{cookie['name']}={cookie['value']}" for cookie in cookies if sent_with(cookie, request.url, now)]
+        if pairs:
+            # After those the client's own jar holds (set by the answers since).
+            request.headers["Cookie"] = "; ".join(filter(None, [request.headers.get("Cookie", ""), *pairs]))
+
+    return add
 
 
 def settle(page) -> None:

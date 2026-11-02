@@ -5,9 +5,9 @@ gallery-dl only lists here (its JSON output, intermediary pages resolved); the d
 Harvester's, with a Referer of the gallery's page. Sites that need gallery-dl's own headers,
 cookies or sign-in for the files themselves may refuse it.
 
-The account's user name and password go to gallery-dl in a configuration file, its cookies as a
-cookies.txt file (both 0600, removed after the listing), never on its command line; the cookies go
-to Harvester's downloads too.
+The account's user name and password (and the proxy's address, which may hold its password) go
+to gallery-dl in a configuration file, its cookies as a cookies.txt file (both 0600, removed after
+the listing), never on its command line; the cookies go to Harvester's downloads too.
 """
 
 import datetime
@@ -98,8 +98,6 @@ class Gallery(Source):
     def listing(self) -> list:
         """gallery-dl's messages for the page."""
         options, files = self.account_files()
-        if self.home and browser.PROXY:
-            options = [*options, "--proxy", browser.PROXY]
         # The address after "--": never read as an option (it is http(s) in any case).
         command = [sys.executable, "-m", "gallery_dl", "--resolve-json", "--no-download", *options, "--", self.url]
         try:
@@ -123,17 +121,24 @@ class Gallery(Source):
         return messages
 
     def account_files(self) -> tuple[list[str], list[str]]:
-        """gallery-dl's options for the account, and the files they name (to remove after)."""
+        """gallery-dl's options for the account and the proxy, and the files they name (to remove
+        after)."""
         options, files = [], []
         found = self.account_cookies(self.url)
         if found:
             files.append(cookies.to_file(found))
             options += ["--cookies", files[-1]]
+        extractor = {}
         if self.secrets.get("username"):
+            extractor |= {"username": self.secrets["username"], "password": self.secrets.get("password", "")}
+        # The proxy's address may hold its password: in the file too, not on the command line,
+        # which every process in the container may read.
+        if self.home and browser.PROXY:
+            extractor["proxy"] = browser.PROXY
+        if extractor:
             handle, path = tempfile.mkstemp(prefix="harvester-gallery-dl-", suffix=".json")
             with os.fdopen(handle, "w", encoding="utf-8") as file:
-                account = {"username": self.secrets["username"], "password": self.secrets.get("password", "")}
-                json.dump({"extractor": account}, file)
+                json.dump({"extractor": extractor}, file)
             files.append(path)
             options += ["--config", path]
         return options, files
