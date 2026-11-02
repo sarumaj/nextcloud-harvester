@@ -1,8 +1,9 @@
 """The admin's settings (Administration settings > Additional settings > Harvester): how many jobs
-run at once, how many browsers may be open, and the proxy the jobs may choose. Their defaults come
-from the environment (HARVESTER_RUNNERS, HARVESTER_BROWSERS, HARVESTER_PROXY,
-HARVESTER_PROXY_NAME, which the deployment may set); a value the admin chooses wins (an emptied
-proxy: none), and the executor reads them each minute, so a change needs no restart.
+run at once, how many browsers may be open, the proxy the jobs may choose, and whether the
+browsers go through their network guard. Their defaults come from the environment
+(HARVESTER_RUNNERS, HARVESTER_BROWSERS, HARVESTER_PROXY, HARVESTER_PROXY_NAME, HARVESTER_GUARD,
+which the deployment may set); a value the admin chooses wins (an emptied proxy: none), and the
+executor reads them each minute, so a change needs no restart.
 """
 
 import logging
@@ -16,17 +17,24 @@ RUNNERS = "runners"
 BROWSERS = "browsers"
 PROXY = "proxy"
 PROXY_NAME = "proxy_name"
-KEYS = (RUNNERS, BROWSERS, PROXY, PROXY_NAME)
+GUARD = "guard"
+KEYS = (RUNNERS, BROWSERS, PROXY, PROXY_NAME, GUARD)
 PROXY_SCHEMES = ("http", "https", "socks5", "socks5h")
 _REFUSED: set[str] = set()
 DEFAULT_PROXY = os.environ.get("HARVESTER_PROXY", "").strip()
 DEFAULT_PROXY_NAME = os.environ.get("HARVESTER_PROXY_NAME", "").strip() or "the proxy"
+# The guard's choices (a select's plain strings, as choices), and the words that switch it.
+ON, OFF = "On", "Off"
+ON_WORDS = ("1", "true", "on", "yes")
+OFF_WORDS = ("0", "false", "off", "no")
+# On unless the deployment says off (as browser.GUARD, which the setting changes).
+DEFAULT_GUARD = os.environ.get("HARVESTER_GUARD", "").strip().lower() not in OFF_WORDS
 # The choices: each runner is a thread, each browser some 300-600 MB of the server's memory.
 MAX_RUNNERS = 8
 MAX_BROWSERS = 8
 
 
-def form(runners: int, browsers: int, address: str = "", name: str = "the proxy") -> SettingsForm:
+def form(runners: int, browsers: int, address: str = "", name: str = "the proxy", guard: bool = True) -> SettingsForm:
     """The admin's form, with the environment's values as its defaults."""
     return SettingsForm(
         id="harvester_admin",
@@ -75,6 +83,22 @@ def form(runners: int, browsers: int, address: str = "", name: str = "the proxy"
                 placeholder="the proxy",
                 description='What the job\'s form calls it: "Through <name>", e.g. "the home connection".',
             ),
+            SettingsField(
+                id=GUARD,
+                title="Browser network guard",
+                type=SettingsFieldType.SELECT,
+                default=ON if guard else OFF,
+                options=[ON, OFF],
+                description=(
+                    "On: every connection of the browsers goes through a guard that refuses local and "
+                    "private addresses, also those the browser's own checks do not see (a web worker's "
+                    "WebSockets) and names that change after their check (DNS rebinding). Off: the browsers "
+                    "connect by themselves, a little faster, and only the network's firewall keeps those two "
+                    "off the private network. Switch it off only when the External Apps' network is already "
+                    "firewalled from private networks and the cloud's metadata service (169.254.169.254). "
+                    "A change applies to browsers started afterwards."
+                ),
+            ),
         ],
     )
 
@@ -91,6 +115,16 @@ def number(value: str | None, default: int, highest: int) -> int:
         return min(max(1, int(str(value))), highest)
     except ValueError:
         return default
+
+
+def switch(value: str | None, default: bool) -> bool:
+    """An on/off setting's value: the default if unset or neither (On, off, 1, false, ...)."""
+    word = (value or "").strip().lower()
+    if word in ON_WORDS:
+        return True
+    if word in OFF_WORDS:
+        return False
+    return default
 
 
 def proxy(value: str | None, default: str) -> str:

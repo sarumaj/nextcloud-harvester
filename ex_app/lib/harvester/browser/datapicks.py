@@ -15,7 +15,7 @@ from playwright.async_api import Page
 
 from .. import jsonlist, patterns
 from ..recipe import steps_from_events
-from ..sources import site
+from ..sources import near
 
 EXAMPLES = 8
 # How long a person's pattern may take (s): on the links of a page, all together; on a page's
@@ -131,7 +131,7 @@ class DataPicks:  # pylint: disable=too-few-public-methods
             await self.send({"type": "error", "message": message})
             return
         where = {key: str(event.get(key) or "") for key in ("closest", "selector", "attribute")}
-        found = await self._page.eval_on_selector_all(spec["selector"], site.VALUES, [where])
+        found = await self._page.eval_on_selector_all(spec["selector"], near.VALUES, [where])
         texts = [entry[2][0] for entry in found if entry[2][0]]
         proposal = patterns.propose_value(texts or [str(event.get("text") or "")])
         values = spec.setdefault("values", [])
@@ -252,7 +252,7 @@ class DataPicks:  # pylint: disable=too-few-public-methods
         specs = spec.get("values") or []
         # The values' texts beside the links: the job's own script.
         texts = (
-            [entry[2] for entry in await page.eval_on_selector_all(spec["selector"], site.VALUES, specs)]
+            [entry[2] for entry in await page.eval_on_selector_all(spec["selector"], near.VALUES, specs)]
             if specs
             else []
         )

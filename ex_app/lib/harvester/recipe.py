@@ -26,6 +26,11 @@ first, the address or the name when the selector finds nothing (a page that chan
 frames' order, say); a query that changes from visit to visit matters to neither. A step
 without it acts on the page itself, as recipes always did.
 
+A step that acts on an element (click, fill, press) may have "alternatives": more selectors
+that found its element alone when it was recorded, tried in their order when "selector" finds
+nothing (harvester.selectors: the run says which stood in, the recipe stays as it is). A level,
+the file links and the next page's link may have them too, matching the same links.
+
 A step with "optional": true is best effort (a banner that shows only on the first visit): the
 job waits for its element a short time only and goes on without it (harvester.sources.site).
 
@@ -53,6 +58,7 @@ from urllib.parse import urlsplit
 
 from . import patterns
 from .browser import VIEWPORT_MAX, VIEWPORT_MIN, allowed_url
+from .patterns import token_parameters
 
 ACTIONS = {"goto", "click", "fill", "press", "scroll", "mail-code"}
 # A scroll step's rounds: by default, and at most.
@@ -119,7 +125,11 @@ def _action_label(step: dict) -> str:
 
 
 def _framed(step: dict, event: dict) -> dict:
-    """The step with the frame the event happened in, if it was in one."""
+    """The step with the frame the event happened in, if it was in one, and the alternative
+    selectors recorder.js found its element by."""
+    alternatives = event.get("alternatives")
+    if isinstance(alternatives, list) and alternatives:
+        step = step | {"alternatives": [str(value) for value in alternatives]}
     return step | {"frame": event["frame"]} if event.get("frame") else step
 
 
@@ -216,6 +226,11 @@ def _mail_code_problem(step: dict) -> str:
     return ""
 
 
+def _alternatives_ok(spec: dict) -> bool:
+    alternatives = spec.get("alternatives", [])
+    return isinstance(alternatives, list) and all(isinstance(value, str) and value for value in alternatives)
+
+
 def _check_steps(steps: list) -> list[str]:
     problems = []
     for number, step in enumerate(steps, 1):
@@ -231,6 +246,8 @@ def _check_steps(steps: list) -> list[str]:
             problems.append(f"step {number}: rounds of scrolling from 1 to {SCROLL_ROUNDS_MAX}")
         elif step["action"] not in ("goto", "scroll") and not step.get("selector"):
             problems.append(f"step {number}: no element")
+        elif not _alternatives_ok(step):
+            problems.append(f"step {number}: the alternatives are a list of selectors")
         elif step["action"] == "mail-code" and (problem := _mail_code_problem(step)):
             problems.append(f"step {number}: {problem}")
     return problems
@@ -328,7 +345,34 @@ def check_recipe(recipe: dict) -> list[str]:
     else:
         problems += _check_pattern("file links", links.get("pattern", ""))
         problems += _check_values("file links", links.get("values"))
+    picks = [("file links", links), ("next page", recipe.get("next"))]
+    picks += [(f"level {level}", follow) for level, follow in enumerate(recipe.get("follow") or [], 1)]
+    for where, spec in picks:
+        if isinstance(spec, dict) and not _alternatives_ok(spec):
+            problems.append(f"{where}: the alternatives are a list of selectors")
     return problems + _check_next(recipe.get("next")) + _check_viewport(recipe.get("viewport"))
+
+
+def token_warnings(recipe: dict) -> list[str]:
+    """The recipe's addresses that carry a token of the visit they were recorded in (a sign-in's
+    code or ticket, a session, a signature: harvester.patterns.token_parameter), which a job's
+    run will likely find spent: its steps' and its listing's."""
+    warnings = []
+    for number, step in enumerate(recipe.get("steps") or [], 1):
+        names = token_parameters(str(step.get("url") or "")) if isinstance(step, dict) else []
+        if names and step.get("action") == "goto":
+            warnings.append(
+                f"step {number} opens an address with {', '.join(names)}: a token of this visit, likely spent "
+                "when the job runs. Record the clicks that lead there instead (undo the step)."
+            )
+    names = token_parameters(str(recipe.get("start") or ""))
+    if names:
+        warnings.append(
+            f"the listing's address carries {', '.join(names)}: a token of this visit, likely spent when the job "
+            "runs. Pick on the page the steps lead to, without browsing away first: the job starts where its "
+            "steps end then."
+        )
+    return warnings
 
 
 def uses_browser(recipe: dict) -> bool:

@@ -28,11 +28,11 @@ from playwright.sync_api import Route, WebSocketRoute, sync_playwright
 
 from .. import browser
 from .. import cookies as cookie_jar
-from .. import jsonlist, otp, pagination, patterns
+from .. import jsonlist, otp, pagination, patterns, selectors
 from .. import recipe as recipes
 from ..browser.guard import Guard
-from . import download, mail
-from .base import AuthError, ChallengeError, Item, Option, Source, SourceError, Stopped, check_stop, pattern_search
+from . import download, near
+from .base import AuthError, ChallengeError, Item, Option, Source, SourceError, Stopped, pattern_search
 from .download import Response
 
 # The seen key a run records once it has gone through the whole site (not stopped by
@@ -61,17 +61,6 @@ PAGE_SIZE = (
 )
 SCROLL_DOWN = "() => window.scrollTo(0, (document.scrollingElement || document.body).scrollHeight)"
 OUTER_HTML = "s => { const e = document.querySelector(s); return e ? e.outerHTML : '' }"
-# A level's links with the texts of its values (harvester.recipe: "values"): each value's element
-# (the link's closest match of closest, then the match of selector in it), its attribute or its
-# text; null where there is none, or a selector the page cannot read.
-VALUES = """(els, specs) => els.map(e => [e.href || '', (e.innerText || '').trim(), specs.map(s => {
-  try {
-    let at = s.closest ? e.closest(s.closest) : e
-    if (at && s.selector) at = at.querySelector(s.selector)
-    if (!at) return null
-    return s.attribute ? at.getAttribute(s.attribute) : (at.innerText || at.textContent || '').trim()
-  } catch (error) { return null }
-})])"""
 # The recipe test (Site.survey): the file links it lists, and the listing pages it opens at most.
 SURVEY_FILES = 20
 SURVEY_PAGES = 30
@@ -86,6 +75,8 @@ class Driver(abc.ABC):
     saw: Callable[[dict], None] | None = None
     # The optional steps the sign-in went on without: {"number", "label", "why"} each.
     skipped: list[dict] = []
+    # The steps whose element an alternative selector found (selectors.repair_line's lines).
+    repaired: list[str] = []
 
     def keep_shot(self, page: Any, what: str) -> None:
         """Keeps what the page shows, and tells saw."""
@@ -108,22 +99,8 @@ class Driver(abc.ABC):
         return [(url, text, [None] * len(specs)) for url, text in self.links(page, selector)]
 
     def read_json(self, url: str) -> Any:
-        """A JSON listing's page, asked for as a file is (the job's cookies, the guarded client),
-        read up to download.MAX_PAGE."""
-        with self.download(url) as response:
-            if response.status >= 400:
-                raise SourceError(f"the JSON listing {url} answered {response.status}")
-            body = bytearray()
-            for chunk in response.chunks:
-                body += chunk
-                if len(body) > download.MAX_PAGE:
-                    raise SourceError(f"the JSON listing {url} is larger than {download.MAX_PAGE // 1048576} MB")
-        try:
-            return jsonlist.parse(bytes(body))
-        except ValueError as error:
-            raise SourceError(
-                f"the JSON listing {url} is not JSON ({str(error).splitlines()[0]}): signed out?"
-            ) from error
+        """A JSON listing's page, asked for as a file is (near.read_json)."""
+        return near.read_json(self.download, url)
 
     @abc.abstractmethod
     def next(self, page: Any, selector: str) -> Any:
@@ -184,7 +161,7 @@ class HttpDriver(Driver):
         page_url, soup = page
         return [
             (urljoin(page_url, str(link.get("href"))), link.get_text(" ", strip=True))
-            for link in soup.select(selector)
+            for link in selectors.soup_select(soup, selector)
             if link.get("href")
         ]
 
@@ -194,7 +171,7 @@ class HttpDriver(Driver):
             (
                 urljoin(page_url, str(link.get("href"))),
                 link.get_text(" ", strip=True),
-                [soup_value(link, s) for s in specs],
+                [near.soup_value(link, s) for s in specs],
             )
             for link in soup.select(selector)
             if link.get("href")
@@ -250,13 +227,17 @@ class BrowserDriver(Driver):
         # The downloads' proxy and user agent: the browser's (download).
         self.proxy = browser.PROXY if home else ""
         self.user_agent = ""
-        # The browser's connections all go through its guard (with the home connection, if chosen).
+        # The browser's connections all go through its guard (with the home connection, if
+        # chosen), unless the admin switched the guard off: then the routes alone check them.
         self._guard: Guard | None = None
         try:
-            self._guard = Guard(self.proxy)
-            port = self._guard.start()
+            port = 0
+            if browser.GUARD:
+                self._guard = Guard(self.proxy)
+                port = self._guard.start()
             self._playwright = sync_playwright().start()
-            self._browser = self._playwright.chromium.launch(**browser.launch_options(port, http1))
+            credentials = self._guard.credentials if self._guard else None
+            self._browser = self._playwright.chromium.launch(**browser.launch_options(port, http1, home, credentials))
             self.user_agent = browser.user_agent(self._browser.version)
             self.context = self._browser.new_context(
                 # The window the recipe was recorded in (its steps and pages laid out alike).
@@ -283,6 +264,7 @@ class BrowserDriver(Driver):
         todo = list(enumerate(steps, 1))
         self._start = start
         self.skipped = []
+        self.repaired = []
         if session and start:
             self.main.goto(start, wait_until="domcontentloaded")
             settle(self.main)
@@ -291,7 +273,7 @@ class BrowserDriver(Driver):
                 todo = todo[last:]
         for number, step in todo:
             try:
-                replay(self.main, step, secrets)
+                replay(self.main, step, secrets, lambda old, new, n=number: self._repaired(n, old, new))
             except Stopped:
                 # The run or the recipe's test was stopped during the step: no failure of it.
                 raise
@@ -302,6 +284,9 @@ class BrowserDriver(Driver):
                 self.skipped.append({"number": number, "label": recipes.step_label(step), "why": short_error(error)})
             except Exception as error:  # pylint: disable=broad-exception-caught
                 self._failed(number, step, error)
+
+    def _repaired(self, number: int, old: str, new: str) -> None:
+        self.repaired.append(selectors.repair_line(f"step {number}", old, new))
 
     def _failed(self, number: int, step: dict, error: Exception) -> None:
         """A required step failed: the page asking for a person (ChallengeError), else SourceError
@@ -348,7 +333,7 @@ class BrowserDriver(Driver):
         return page.eval_on_selector_all(selector, "els => els.map(e => [e.href || '', (e.innerText || '').trim()])")
 
     def valued_links(self, page: Any, selector: str, specs: list[dict]) -> list[tuple[str, str, list]]:
-        return [tuple(link) for link in page.eval_on_selector_all(selector, VALUES, specs)]
+        return [tuple(link) for link in page.eval_on_selector_all(selector, near.VALUES, specs)]
 
     def next(self, page: Any, selector: str) -> Any:
         link = page.query_selector(selector)
@@ -397,24 +382,6 @@ class BrowserDriver(Driver):
                     self._guard.stop()
             finally:
                 browser.SLOTS.release("job")
-
-
-def soup_value(link: Any, spec: dict) -> str | None:
-    """A value's text for a link of a page read over HTTP, as VALUES finds it in the browser: the
-    link's closest match of closest, the match of selector in it, its attribute or its text; None
-    where there is none (or a selector BeautifulSoup cannot read)."""
-    try:
-        at = link.css.closest(spec["closest"]) if spec.get("closest") else link
-        if at is not None and spec.get("selector"):
-            at = at.select_one(spec["selector"])
-    except Exception:  # pylint: disable=broad-exception-caught
-        return None  # soupsieve's SelectorSyntaxError and its kin: the value is missing
-    if at is None:
-        return None
-    if spec.get("attribute"):
-        value = at.get(spec["attribute"])
-        return " ".join(value) if isinstance(value, list) else value
-    return at.get_text(" ", strip=True)
 
 
 def skipped_line(skipped: dict) -> str:
@@ -519,18 +486,6 @@ def filled(step: dict, secrets: dict[str, str]) -> str:
     return str(step.get("value", ""))
 
 
-def mail_code(page, step: dict, secrets: dict[str, str], began: float) -> str:
-    """The code of a step "mail-code" (harvester.sources.mail.code_from_mail): from a message that
-    came after the step began, waited for in the page's pauses, so a run or a test stopped
-    meanwhile ends there."""
-
-    def pause(seconds: float) -> None:
-        check_stop()
-        page.wait_for_timeout(seconds * 1000)
-
-    return mail.code_from_mail(step, secrets, began, pause)
-
-
 class FrameMissing(SourceError):
     """The frame a step acts in is not on the page."""
 
@@ -577,9 +532,11 @@ def in_frame(page, frames: list[dict], timeout: float):
     return target
 
 
-def replay(page, step: dict, secrets: dict[str, str]) -> None:
+def replay(page, step: dict, secrets: dict[str, str], repaired: Callable[[str, str], None] | None = None) -> None:
     """Does one recorded step, in its frame if it has one; an optional step waits for its frame
-    and element OPTIONAL_TIMEOUT at most (a required one the page's default, STEP_TIMEOUT)."""
+    and element OPTIONAL_TIMEOUT at most (a required one the page's default, STEP_TIMEOUT). A
+    step with alternative selectors finds its element by the first that does (selectors.resolve,
+    an alternative told to repaired) within the same time."""
     action = step["action"]
     started, began = time.monotonic(), time.time()
     budget = OPTIONAL_TIMEOUT if step.get("optional") else STEP_TIMEOUT
@@ -588,19 +545,23 @@ def replay(page, step: dict, secrets: dict[str, str]) -> None:
     # What is left of an optional step's time for its element (never 0: Playwright's "no limit").
     left = max(1.0, budget - (time.monotonic() - started) * 1000)
     wait = {"timeout": left} if step.get("optional") else {}
+    selector = step.get("selector", "")
+    if action in recipes.ON_ELEMENTS and step.get("alternatives"):
+        selector = selectors.resolve(target, step, left, repaired)
+        wait = {"timeout": max(1.0, budget - (time.monotonic() - started) * 1000)}
     if action == "goto":
         page.goto(step["url"], wait_until="domcontentloaded")
     elif action == "fill":
-        target.fill(step["selector"], filled(step, secrets), **wait)
+        target.fill(selector, filled(step, secrets), **wait)
         return
     elif action == "click":
-        target.click(step["selector"], **wait)
+        target.click(selector, **wait)
     elif action == "press":
-        target.press(step["selector"], step.get("key", "Enter"), **wait)
+        target.press(selector, step.get("key", "Enter"), **wait)
     elif action == "mail-code":
         # The message first, then the field: the page may show the field only once it is due.
-        code = mail_code(page, step, secrets, began)
-        target.fill(step["selector"], code, **wait)
+        code = near.mail_code(page, step, secrets, began)
+        target.fill(selector, code, **wait)
         return
     elif action == "scroll":
         scroll_to_load(page, int(step.get("rounds") or recipes.SCROLL_ROUNDS))
@@ -728,9 +689,14 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
         self.driver: Driver | None = None
         self.kept: dict | None = None
         self.sleep: Callable[[float], None] = time.sleep
-        # Told of each listing page the walk reads (survey(): the recipe's test).
-        self.observe: Callable[[dict], None] = lambda event: None
+        # Told of each listing page the walk reads (survey(): the recipe's test; a job's run:
+        # what each level found, watch.Watch). It may answer what went wrong there: the walk then
+        # keeps a picture of the page (noticed), apart from a failure's (shot).
+        self.observe: Callable[[dict], str | None] = lambda event: None
+        self.noticed: dict | None = None
         self._shot: dict | None = None
+        # The picks whose links an alternative selector found in this run (each said once).
+        self.repairs: list[str] = []
 
     def _saw(self, shot: dict) -> None:
         self._shot = shot
@@ -765,6 +731,8 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
                 )
                 for skipped in self.driver.skipped:
                     self.report("info", skipped_line(skipped))
+                for line in self.driver.repaired:
+                    self.report("info", line)
             else:
                 # Without recorded steps, the account's user name and password are HTTP Basic's.
                 self.sign_client(start)
@@ -781,7 +749,8 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
             pattern = spec.get("pattern") or ""
             found = []
             specs = spec.get("values") or []
-            links, where = self.listed(driver, page, spec)
+            what = "file links" if spec is self.recipe["links"] else f"level {level + 1}"
+            links, where = self.listed(driver, page, spec, what)
             for url, text, *texts in links:
                 # A person's pattern, within its time limit (a slow one fails the run).
                 match = pattern_search(pattern, url) if url else None
@@ -792,9 +761,11 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
                         # A date's year, month and day where the link's pattern gives none.
                         groups |= patterns.page_values(specs, texts[0], pattern_search, groups)
                     found.append((url, text, groups))
-            kind = "follow" if spec is not self.recipe["links"] else "links"
-            where |= {"level": level, "page": number, "kind": kind}
-            self.observe(where | {"found": len(links), "matching": len(found)})
+            where |= {"level": level, "page": number, "kind": "follow" if spec is not self.recipe["links"] else "links"}
+            what = self.observe(where | {"found": len(links), "matching": len(found)})
+            # A JSON listing has no page to picture.
+            if what and not isinstance(page, jsonlist.JsonPage):
+                self.noticed = snapshot(page, what)
             return found
 
         # A page without the links it should have may be asking for a person instead; the start
@@ -849,7 +820,7 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
 
         # A JSON listing's pages, read one after another while its files go on.
         def json_files(level: int, values: dict, outcome: dict) -> Iterator[Item]:
-            for number, page in enumerate(self.json_pages(driver, values), 1):
+            for number, page in enumerate(near.json_pages(self.recipe["links"], self.settings, driver, values), 1):
                 if (yield from files(page, number, values, outcome, level)):
                     return
 
@@ -878,7 +849,7 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
                     if after.get("kind") == "number":
                         later = driver.numbered(page, after["selector"], number)
                     else:
-                        later = driver.next(page, after["selector"])
+                        later = self._next(driver, page, after)
                     if later is None:
                         return
                     page = later
@@ -888,30 +859,62 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
 
         yield from listing(self.recipe.get("start") or None, 0, {}, {"found": False, "new": False})
 
-    @staticmethod
-    def listed(driver: Driver, page: Any, spec: dict) -> tuple[list, dict]:
+    def listed(self, driver: Driver, page: Any, spec: dict, what: str) -> tuple[list, dict]:
         """A level's links on the page (address, text and, where the level has values, their
-        texts), and where they were read: a page's address and the selector, or a JSON listing's
-        address and its items' path."""
+        texts; _links), and where they were read: a page's address and the selector, or a JSON
+        listing's address and its items' path."""
         if isinstance(page, jsonlist.JsonPage):
             return jsonlist.entries(page, spec), {"url": page.url, "selector": spec.get("items") or "(the answer)"}
         # The values' texts only where the level has values: other recipes read as before.
         specs = spec.get("values") or []
-        found = driver.valued_links(page, spec["selector"], specs) if specs else driver.links(page, spec["selector"])
-        return found, {"url": driver.address(page), "selector": spec["selector"]}
+        read = (lambda selector: driver.valued_links(page, selector, specs)) if specs else None
+        return self._links(driver, page, spec, what, read), {"url": driver.address(page), "selector": spec["selector"]}
 
-    def json_pages(self, driver: Driver, values: dict) -> Iterator[jsonlist.JsonPage]:
-        """The pages of the JSON listing (harvester.jsonlist), its address made of the walk's
-        values, up to the job's pages; one without a page parameter."""
-        spec = self.recipe["links"]
+    def _repaired(self, what: str, old: str, new: str) -> None:
+        line = selectors.repair_line(what, old, new)
+        if line not in self.repairs:
+            self.repairs.append(line)
+            self.report("info", line)
+
+    def _links(
+        self, driver: Driver, page: Any, spec: dict, what: str, read: Callable[[str], list] | None = None
+    ) -> list[tuple]:
+        """A pick's links on the page: its selector's, else (none of them matching its pattern)
+        the first alternative's of which the pattern matches any (a repair, said once). read
+        reads a selector's links (with the values' texts, say); driver.links without."""
+        read = read or (lambda selector: driver.links(page, selector))
+        tries = selectors.candidates(spec)
+        links = read(tries[0])
+        pattern = spec.get("pattern") or ""
+        if len(tries) < 2 or any(url and pattern_search(pattern, url) for url, *_ in links):
+            return links
+        for alternative in tries[1:]:
+            try:
+                found = read(alternative)
+            except selectors.SELECTOR_ERRORS:
+                continue  # an engine this driver lacks (the browser's, over HTTP)
+            if any(url and pattern_search(pattern, url) for url, *_ in found):
+                self._repaired(what, tries[0], alternative)
+                return found
+        return links
+
+    def _next(self, driver: Driver, page: Any, after: dict) -> Any:
+        """The page after this one by the next page's selector, else (not on the page) by the
+        first alternative that is (a repair, said once); None at the last page."""
+        tries = selectors.candidates(after)
+        if len(tries) > 1 and not self._finds(driver, page, tries[0]):
+            for alternative in tries[1:]:
+                if self._finds(driver, page, alternative):
+                    self._repaired("next page", tries[0], alternative)
+                    return driver.next(page, alternative)
+        return driver.next(page, tries[0])
+
+    @staticmethod
+    def _finds(driver: Driver, page: Any, selector: str) -> bool:
         try:
-            first = patterns.render(str(spec["url"]), patterns.link_values(str(spec["url"]), "", 1) | values)
-        except (KeyError, ValueError, IndexError) as error:
-            raise SourceError(f"the JSON listing's address: {str(error).strip(chr(39))}") from error
-        pages = int(self.settings["max_pages"]) if (spec.get("page") or {}).get("param") else 1
-        for number in range(1, pages + 1):
-            url = jsonlist.page_url(first, spec.get("page"), number)
-            yield jsonlist.JsonPage(url, driver.read_json(url))
+            return bool(driver.links(page, selector))
+        except selectors.SELECTOR_ERRORS:
+            return False
 
     def item(self, link: str, text: str, page: int, groups: dict) -> Item:
         """The file of a link: its download URL and path from the link's values (an item that
@@ -937,8 +940,10 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
         pattern matched, the first file links with their file names, and the problems met. It
         ends after that many files or pages, or when stopped (Stopped)."""
         result: dict = {"pages": [], "problems": [], "files": 0, "ended": "complete", "shot": None, "skipped": []}
+        # An observer set before (a job's weekly test) hears of the pages too.
+        outer = self.observe
 
-        def observe(event: dict) -> None:
+        def observe(event: dict) -> str | None:
             if len(result["pages"]) >= pages:
                 raise Stopped("pages")
             where = "the listing" if event["level"] == 0 else f"a level {event['level']} page"
@@ -948,6 +953,7 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
             elif not event["matching"]:
                 result["problems"].append(f"{where}: none of its {event['found']} links matched the pattern")
             result["pages"].append(event | {"files": []})
+            return outer(event)
 
         self.observe = observe
         items = self.items(lambda key: False)
@@ -965,16 +971,20 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
             result["ended"] = str(stop) if str(stop) in ("pages", "time") else "stopped"
         except (SourceError, PlaywrightError) as error:
             result["ended"] = "failed"
+            # Its kind: a page that asks for a person, or a refused sign-in, is no changed site.
+            result["error"] = type(error).__name__
             result["problems"].append((str(error) or type(error).__name__).splitlines()[0])
         finally:
             # The walk's pages close; a test stopped meanwhile cannot close them (its browser
             # context goes as a whole).
             with contextlib.suppress(Exception):
                 items.close()
-            self.observe = lambda event: None
+            self.observe = outer
         result["shot"] = self.shot
         # The optional steps it went on without: listed apart, no problems of the recipe.
         result["skipped"] = list(self.driver.skipped if self.driver else [])
+        # The selectors alternatives stood in for (the recipe unchanged).
+        result["repaired"] = [*(self.driver.repaired if self.driver else []), *self.repairs]
         return result
 
     def close(self) -> None:

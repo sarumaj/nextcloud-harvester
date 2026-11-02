@@ -39,6 +39,61 @@
   browser context at the recipe's window (recorded with it; jobs use it too), the job's stored
   account resolved by the app, the form's file types and names, and the first 64 KB of the first
   file fetched to tell a file from a sign-in page.
+- **The site changed:** a website job's runs keep what each level of the recipe found; a level
+  that found links before and finds none, or whose links no longer match its pattern, ends the
+  run *Changed* with the level, its selector and a picture of its page, and its person is told
+  once. *Test the recipe* from a changed job's row runs the recipe's test as a job's turn
+  (nothing downloaded), and the option *Test the recipe weekly* does so on Sundays.
+- **Recipes as files:** *Export recipe* in a job's form downloads its recipe and settings
+  (without the account, session or folder); *Import a recipe* on the *New job* page checks such a
+  file and opens the form filled in; *Save as template* keeps it as a template of one's own.
+- **Browser network guard** in the admin's settings (and `HARVESTER_GUARD`): on by default; off,
+  the browsers connect by themselves as before the guard (the home connection given to
+  Chromium), the routes still checking what Playwright sees, while a web worker's WebSockets and
+  DNS rebinding are left to the External Apps' firewall. For the browsers started afterwards;
+  switch it off only when that network is already firewalled from private networks and the
+  cloud's metadata service.
+- **Selectors with alternatives:** the recorder finds each step's element by several selectors
+  that matched it alone (a test id, a stable id, its role and name, `aria-label`, `name`,
+  stable classes, its text, its place last), keeps the best and the others as
+  `"alternatives"`; picks keep alternatives that matched the same links. A replay tries them
+  in turn when the selector finds nothing, and the log says `step 3: selector repaired (old →
+  new)` (levels, file links, the next page alike; **Test the recipe** lists them). The recipe
+  is not changed; recipes without alternatives run as before. The pick panels list a pick's
+  alternatives.
+- **Tokens in addresses:** the recorder warns of a step's or the listing's address carrying a
+  token of the visit (`code`, `ticket`, `sid`, a signature, …), likely spent when the job runs.
+
+### Changed
+
+- **The browser's guard is fast under load:** it runs in a process of its own (without the
+  app's secrets, ending with the app), so it no longer waits for the interpreter while runners
+  and recordings keep the app busy; it relays in larger chunks with one idle timer per
+  connection, keeps a name's checked addresses for a minute (one lookup for the connections a
+  page opens at once; it still connects only to addresses it checked), and tries an address
+  family that did not connect (IPv6 without a route) second for a while. Under load, a download
+  through the guard went from about 2 MB/s to some 1.4 GB/s, and a page from 50 sites from 10 s
+  to a quarter of a second.
+- **Each browser's guard serves that browser alone:** it asks for credentials of the browser's
+  own (Proxy-Authorization, which Playwright answers), so a browser that reaches another
+  browser's guard, one that took the port of a guard that crashed, say, is refused there.
+
+### Fixed
+
+- The recorder's "Sites see …" check asked Cloudflare through the browser's own request context,
+  so Cloudflare's cookie (`__cf_bm`) landed in the recording and in the job's kept session; it
+  asks through a request context of its own now, on the browser's way out.
+- The next page's link of a pager without classes was its first link, "‹ previous" on page 2:
+  a `rel="next"` or the link's text (`›`, *Next*) comes first now.
+- A listing reached through the recorded steps kept its address with a sign-in's spent
+  `?code=` or `?ticket=`: the job starts where the steps end then.
+- Proposed patterns held a session's id (`&sid=abc`) and never matched a link with a fragment
+  (`1.pdf#page=1`); volatile and tracking parameters and fragments are no part of them now.
+- `Report%202024.pdf` was proposed with the number 202024 instead of the year 2024.
+- Links of one script (`download.php?id=N`) were all proposed the file name `download.php`:
+  their text or their groups now, with `{disposition}` offered.
+- The recorder outlined a pattern as JavaScript reads it: Python's own syntax (`(?P=name)`, a
+  leading `(?i)`, `(?x)`) outlined wrongly or not at all.
 
 ## 0.10.0 - 2026-11-02
 

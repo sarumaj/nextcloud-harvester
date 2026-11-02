@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     challenge_url TEXT,
     timezone TEXT NOT NULL DEFAULT 'UTC',
     retag_from TEXT,
-    once INTEGER NOT NULL DEFAULT 0
+    once INTEGER NOT NULL DEFAULT 0,
+    tested REAL
 );
 CREATE TABLE IF NOT EXISTS seen (
     job INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
@@ -72,11 +73,33 @@ CREATE TABLE IF NOT EXISTS fetches (
     at REAL NOT NULL,
     UNIQUE (job, url)
 );
+-- What a website job's last runs and recipe tests found, level by level (watch.Watch): its good
+-- ones are what a run is judged by ("the site changed"), the newest few of each kind.
+CREATE TABLE IF NOT EXISTS summaries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    at REAL NOT NULL,
+    good INTEGER NOT NULL,
+    summary TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS summaries_job ON summaries (job, good, id);
+-- A person's own templates: recipe files (recipe_file.py) saved from a job's form, theirs alone.
+CREATE TABLE IF NOT EXISTS templates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user TEXT NOT NULL,
+    name TEXT NOT NULL,
+    file TEXT NOT NULL,
+    at REAL NOT NULL
+);
 """
 # The lines of the progress log kept per job (its last runs).
 LOG_KEPT = 500
 # The lines one request of the log returns at most.
 LOG_PAGE = 300
+# The summaries of runs kept per job, of good runs and of the others each.
+SUMMARIES_KEPT = 5
+# A person's own templates at most.
+TEMPLATES_KEPT = 50
 
 
 @dataclass
@@ -128,6 +151,8 @@ class Store:  # pylint: disable=too-many-public-methods
             self._db.execute("ALTER TABLE jobs ADD COLUMN retag_from TEXT")
         if "once" not in columns:
             self._db.execute("ALTER TABLE jobs ADD COLUMN once INTEGER NOT NULL DEFAULT 0")
+        if "tested" not in columns:
+            self._db.execute("ALTER TABLE jobs ADD COLUMN tested REAL")
         # After the columns: the table made anew keeps them.
         self._never_reuse_ids()
         self._lock = threading.Lock()
@@ -167,8 +192,9 @@ class Store:  # pylint: disable=too-many-public-methods
     @staticmethod
     def _job(row: sqlite3.Row) -> Job:
         values = dict(row)
-        # Not a setting of the job: the executor's (retag_from).
+        # Not settings of the job: the executor's (retag_from, tested).
         values.pop("retag_from", None)
+        values.pop("tested", None)
         values["options"] = json.loads(values["options"])
         values["tags"] = json.loads(values["tags"])
         values["enabled"] = bool(values["enabled"])
@@ -318,6 +344,83 @@ class Store:  # pylint: disable=too-many-public-methods
                 "UPDATE jobs SET last_run = ?, last_status = ?, last_message = ?, challenge_url = ? WHERE id = ?",
                 (time.time(), status, message, challenge_url, job_id),
             )
+
+    def mark(self, job_id: int, status: str, message: str) -> None:
+        """Records the job's status without a run (a recipe's test): its last run, which its
+        schedule counts from, stays."""
+        with self._lock, self._db:
+            self._db.execute(
+                "UPDATE jobs SET last_status = ?, last_message = ? WHERE id = ?", (status, message, job_id)
+            )
+
+    def add_summary(self, job_id: int, summary: dict, good: bool) -> None:
+        """Keeps what a run found (watch.Watch.summary), the newest SUMMARIES_KEPT of its kind
+        (good, or not). Nothing for a job deleted meanwhile."""
+        try:
+            with self._lock, self._db:
+                self._db.execute(
+                    "INSERT INTO summaries (job, at, good, summary) VALUES (?, ?, ?, ?)",
+                    (job_id, time.time(), int(good), json.dumps(summary)),
+                )
+                self._db.execute(
+                    "DELETE FROM summaries WHERE job = ? AND good = ? AND id <= (SELECT id FROM summaries"
+                    " WHERE job = ? AND good = ? ORDER BY id DESC LIMIT 1 OFFSET ?)",
+                    (job_id, int(good), job_id, int(good), SUMMARIES_KEPT),
+                )
+        except sqlite3.IntegrityError:
+            pass
+
+    def summaries(self, job_id: int, good: bool = True) -> list[dict]:
+        """The summaries the job kept of its good runs (or of the others), newest first."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT summary FROM summaries WHERE job = ? AND good = ? ORDER BY id DESC", (job_id, int(good))
+            ).fetchall()
+        return [json.loads(row["summary"]) for row in rows]
+
+    def forget_summaries(self, job_id: int) -> None:
+        """Forgets what the job's runs found: its listing changed (another recipe), so they are
+        nothing to compare with."""
+        with self._lock, self._db:
+            self._db.execute("DELETE FROM summaries WHERE job = ?", (job_id,))
+
+    def tested(self, job_id: int) -> float | None:
+        """When the job's recipe was last tested by the schedule (or its weekly test turned on)."""
+        with self._lock:
+            row = self._db.execute("SELECT tested FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        return row["tested"] if row else None
+
+    def set_tested(self, job_id: int, at: float) -> None:
+        """The job's weekly test counts from then."""
+        with self._lock, self._db:
+            self._db.execute("UPDATE jobs SET tested = ? WHERE id = ?", (at, job_id))
+
+    def add_template(self, user: str, name: str, file: dict) -> dict:
+        """Keeps a recipe file as the user's own template; the oldest beyond TEMPLATES_KEPT go."""
+        with self._lock, self._db:
+            cursor = self._db.execute(
+                "INSERT INTO templates (user, name, file, at) VALUES (?, ?, ?, ?)",
+                (user, name, json.dumps(file), time.time()),
+            )
+            self._db.execute(
+                "DELETE FROM templates WHERE user = ? AND id <= (SELECT id FROM templates WHERE user = ?"
+                " ORDER BY id DESC LIMIT 1 OFFSET ?)",
+                (user, user, TEMPLATES_KEPT),
+            )
+        return {"id": cursor.lastrowid, "name": name, "file": file}
+
+    def templates(self, user: str) -> list[dict]:
+        """The user's own templates (id, name, file), oldest first."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT id, name, file FROM templates WHERE user = ? ORDER BY id", (user,)
+            ).fetchall()
+        return [{"id": row["id"], "name": row["name"], "file": json.loads(row["file"])} for row in rows]
+
+    def delete_template(self, user: str, template_id: int) -> bool:
+        """Removes the user's template; False when they have none of that id."""
+        with self._lock, self._db:
+            return self._db.execute("DELETE FROM templates WHERE id = ? AND user = ?", (template_id, user)).rowcount > 0
 
     def seen(self, job_id: int, key: str) -> bool:
         """Tells whether the job has downloaded the item already."""
