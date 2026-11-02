@@ -202,8 +202,6 @@ def test_a_recipes_pattern_that_takes_too_long_fails_the_run():
 
 
 def test_a_step_cut_short_by_a_stop_is_no_failure(monkeypatch):
-    import pytest  # pylint: disable=import-outside-toplevel
-
     from harvester.sources import Stopped  # pylint: disable=import-outside-toplevel
     from harvester.sources import site as site_module  # pylint: disable=import-outside-toplevel
 
