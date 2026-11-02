@@ -215,6 +215,20 @@ class Option:
     placeholder: str = ""
 
 
+# A job's choice to have its HTTP clients present themselves as a browser does (headers and TLS
+# fingerprint), with the established libraries that do it: yt-dlp's impersonation (curl_cffi),
+# gallery-dl's browser emulation, curl_cffi for the downloads. For sites behind Cloudflare and
+# similar checks that refuse plain HTTP clients (403). Harvester's own browser is not disguised.
+IMPERSONATE = Option(
+    "Impersonate a browser",
+    0,
+    "The job's downloads present themselves as a browser does (headers and TLS, with yt-dlp's, gallery-dl's "
+    "and curl_cffi's impersonation), for sites behind Cloudflare and similar checks that answer plain "
+    "downloads with 403. Only where a site refuses them otherwise.",
+    kind="flag",
+)
+
+
 class Source(abc.ABC):
     """A site files are fetched from."""
 

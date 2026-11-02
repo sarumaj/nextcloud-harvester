@@ -20,11 +20,12 @@ from collections.abc import Callable, Iterator
 from typing import Any, BinaryIO
 
 import yt_dlp
+from yt_dlp.networking.impersonate import ImpersonateTarget
 
 from .. import browser, cookies, patterns
 from ..browser import allowed_url
 from . import download
-from .base import ACCOUNT_HELP, Item, Option, Refused, Source, SourceError, Stopped, stop_requested
+from .base import ACCOUNT_HELP, IMPERSONATE, Item, Option, Refused, Source, SourceError, Stopped, stop_requested
 
 # The quiet, offline-safe options every YoutubeDL here starts from.
 # Timeouts and retries: a stalled server must not hold the executor (one run at a time).
@@ -59,6 +60,15 @@ def dated(value: str | None) -> dict:
     except (TypeError, ValueError):
         return {}
     return {"year": day.year, "month": day.month, "day": day.day}
+
+
+def explained(error: Exception, settings: dict) -> str:
+    """yt-dlp's error for the page, and where it asks for impersonation (a site behind
+    Cloudflare's bot check), the job's option that does it."""
+    text = "yt-dlp: " + str(error).removeprefix("ERROR: ")
+    if "impersonat" in text.lower() and not int(settings.get("impersonate", 0) or 0):
+        text += " (the job's option Impersonate a browser does what yt-dlp asks for here)"
+    return text
 
 
 def cancel_when_stopped(_progress: dict) -> None:
@@ -128,6 +138,7 @@ class Media(Source):
             ),
         ),
         "max_size": download.DOWNLOAD_OPTIONS["max_size"],
+        "impersonate": IMPERSONATE,
     }
     pause = 5.0
     listing_options = ("url", "max_entries")
@@ -155,7 +166,14 @@ class Media(Source):
         if self.secrets.get("username"):
             account |= {"username": self.secrets["username"], "password": self.secrets.get("password", "")}
         tools = {"ffmpeg_location": FFMPEG} if os.path.isdir(FFMPEG) else {}
-        return BASE | tools | {"merge_output_format": MERGED} | account
+        return BASE | tools | {"merge_output_format": MERGED} | account | self.impersonation()
+
+    def impersonation(self) -> dict:
+        """yt-dlp's impersonation when the job asks for it: any browser target its curl_cffi offers,
+        for its requests and for the generic extractor's (--extractor-args "generic:impersonate")."""
+        if not int(self.settings.get("impersonate", 0) or 0):
+            return {}
+        return {"impersonate": ImpersonateTarget(), "extractor_args": {"generic": {"impersonate": [""]}}}
 
     def close(self) -> None:
         if self.cookie_file:
@@ -168,7 +186,7 @@ class Media(Source):
             with self.downloader(self.base() | options) as ydl:
                 return ydl.sanitize_info(ydl.extract_info(url, download=False))
         except yt_dlp.utils.DownloadError as error:
-            raise SourceError(f"yt-dlp: {str(error).removeprefix('ERROR: ')}") from error
+            raise SourceError(explained(error, self.settings)) from error
 
     def items(self, seen: Callable[[str], bool]) -> Iterator[Item]:
         listing = self._info(
@@ -249,7 +267,7 @@ class Media(Source):
             except (yt_dlp.utils.DownloadError, yt_dlp.utils.DownloadCancelled) as error:
                 if stop_requested():
                     raise Stopped("stopped") from error
-                raise SourceError(f"yt-dlp: {str(error).removeprefix('ERROR: ')}") from error
+                raise SourceError(explained(error, self.settings)) from error
             files = [path for path in pathlib.Path(directory).iterdir() if path.is_file()]
             if len(files) != 1:
                 raise SourceError(f"yt-dlp left {len(files)} files for {item.url}")

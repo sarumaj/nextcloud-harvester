@@ -26,7 +26,7 @@ import httpx
 from .. import browser, cookies, patterns
 from ..browser import allowed_url, child_env
 from . import download
-from .base import ACCOUNT_HELP, Item, Option, Source, SourceError, stoppable_run
+from .base import ACCOUNT_HELP, IMPERSONATE, Item, Option, Source, SourceError, stoppable_run
 
 # gallery-dl's message types in its JSON output (gallery_dl.extractor.message.Message).
 URL_MESSAGE = 3
@@ -79,6 +79,7 @@ class Gallery(Source):
             ),
         ),
         **download.DOWNLOAD_OPTIONS,
+        "impersonate": IMPERSONATE,
     }
     pause = 1.0
     listing_options = ("url",)
@@ -136,6 +137,9 @@ class Gallery(Source):
         # which every process in the container may read.
         if self.home and browser.PROXY:
             extractor["proxy"] = browser.PROXY
+        # gallery-dl's own browser emulation: Chrome's headers and TLS ciphers.
+        if int(self.settings.get("impersonate", 0) or 0):
+            extractor["browser"] = "chrome"
         if extractor:
             handle, path = tempfile.mkstemp(prefix="harvester-gallery-dl-", suffix=".json")
             with os.fdopen(handle, "w", encoding="utf-8") as file:
