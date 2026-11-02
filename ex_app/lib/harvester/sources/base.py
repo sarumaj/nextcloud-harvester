@@ -1,6 +1,9 @@
 """What a source is: it lists the items a site offers and downloads one of them."""
 
 import abc
+import contextlib
+import subprocess
+import threading
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import BinaryIO, ClassVar
@@ -14,6 +17,72 @@ from .. import cookies as cookie_jar
 class Stopped(Exception):
     """The run was stopped by its user during a wait (the sources' sleep raises it): it ends
     there, and the file it was at comes next run."""
+
+
+# The running job's stop, for the runner's thread (one job per thread, Executor.run sets it): a
+# download in progress (its chunks, yt-dlp's progress, a helper program) ends at once, not only
+# between files and in waits.
+_RUN = threading.local()
+
+
+def watch_stop(event: threading.Event | None) -> None:
+    """The stop of the job this thread runs now (None: none)."""
+    _RUN.stopped = event
+
+
+def stop_requested() -> bool:
+    """Whether this thread's job was stopped."""
+    event = getattr(_RUN, "stopped", None)
+    return bool(event and event.is_set())
+
+
+def check_stop() -> None:
+    """Ends the job's work here (Stopped) if it was stopped."""
+    if stop_requested():
+        raise Stopped("stopped")
+
+
+@contextlib.contextmanager
+def killed_on_stop(process: subprocess.Popen) -> Iterator[None]:
+    """Kills the helper program as soon as the job is stopped (its pipe may stall, so the
+    program cannot wait for the next chunk); Stopped afterwards, instead of its failure."""
+    event = getattr(_RUN, "stopped", None)
+
+    def watch() -> None:
+        while process.poll() is None:
+            if event is not None and event.wait(0.5):
+                process.kill()
+                return
+
+    if event is not None:
+        threading.Thread(target=watch, name="stop-watch", daemon=True).start()
+    yield
+    check_stop()
+
+
+def stoppable_run(  # pylint: disable=too-many-arguments
+    command: list[str],
+    *,
+    timeout: float,
+    env: dict[str, str] | None = None,
+    capture_output: bool = False,
+    text: bool = False,
+    check: bool = False,
+) -> subprocess.CompletedProcess:
+    """subprocess.run with these of its options, but the program is killed when the job is
+    stopped (then Stopped)."""
+    pipe = subprocess.PIPE if capture_output else None
+    with subprocess.Popen(command, stdout=pipe, stderr=pipe, text=text, env=env) as process:
+        with killed_on_stop(process):
+            try:
+                stdout, stderr = process.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.communicate()
+                raise
+    if check and process.returncode:
+        raise subprocess.CalledProcessError(process.returncode, command, stdout, stderr)
+    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
 class SourceError(Exception):

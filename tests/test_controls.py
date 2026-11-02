@@ -2,6 +2,7 @@
 
 # pylint: disable=missing-function-docstring,protected-access
 
+import contextlib
 import threading
 import time
 
@@ -374,3 +375,73 @@ def test_the_recorder_tells_the_page_which_address_sites_see(monkeypatch):
         {"type": "network", "via": "the home connection", "proxied": True, "ip": "203.0.113.10", "country": "DE"},
         {"type": "network", "via": "directly", "proxied": False, "ip": "203.0.113.10", "country": "DE"},
     ]
+
+
+def test_a_stop_ends_a_download_in_progress():
+    import io  # pylint: disable=import-outside-toplevel
+
+    import pytest  # pylint: disable=import-outside-toplevel
+
+    from harvester.sources import Stopped, download  # pylint: disable=import-outside-toplevel
+    from harvester.sources.base import watch_stop  # pylint: disable=import-outside-toplevel
+
+    stop = threading.Event()
+    sent: list[int] = []
+
+    def chunks():
+        for number in range(100):
+            sent.append(number)
+            if number == 2:
+                stop.set()  # the person presses Stop while the file comes
+            yield b"x" * 1000
+
+    @contextlib.contextmanager
+    def opener(url):
+        yield download.Response(200, url, {"content-type": "application/pdf"}, chunks())
+
+    watch_stop(stop)
+    try:
+        with pytest.raises(Stopped):
+            download.fetch(opener, "https://files.example/a.pdf", io.BytesIO(), {}, lambda seconds: None)
+    finally:
+        watch_stop(None)
+    assert len(sent) == 3, "it ended at the next chunk, not at the end of the file"
+
+
+def test_a_stop_kills_a_helper_program_at_once():
+    import pytest  # pylint: disable=import-outside-toplevel
+
+    from harvester.sources import Stopped  # pylint: disable=import-outside-toplevel
+    from harvester.sources.base import stoppable_run, watch_stop  # pylint: disable=import-outside-toplevel
+
+    stop = threading.Event()
+    threading.Timer(0.3, stop.set).start()
+    watch_stop(stop)
+    began = time.monotonic()
+    try:
+        with pytest.raises(Stopped):
+            stoppable_run(["sleep", "30"], timeout=60, capture_output=True, text=True)
+    finally:
+        watch_stop(None)
+    assert time.monotonic() - began < 3, "killed, not waited for"
+    assert (
+        stoppable_run(["echo", "hi"], timeout=5, capture_output=True, text=True).stdout == "hi\n"
+    ), "unwatched: as run"
+
+
+def test_yt_dlps_progress_cancels_a_stopped_download():
+    import pytest  # pylint: disable=import-outside-toplevel
+    import yt_dlp  # pylint: disable=import-outside-toplevel
+
+    from harvester.sources.base import watch_stop  # pylint: disable=import-outside-toplevel
+    from harvester.sources.media import cancel_when_stopped  # pylint: disable=import-outside-toplevel
+
+    stop = threading.Event()
+    watch_stop(stop)
+    try:
+        cancel_when_stopped({"status": "downloading"})
+        stop.set()
+        with pytest.raises(yt_dlp.utils.DownloadCancelled):
+            cancel_when_stopped({"status": "downloading"})
+    finally:
+        watch_stop(None)

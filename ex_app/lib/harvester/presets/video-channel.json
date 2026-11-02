@@ -64,6 +64,14 @@
         {
           "value": "30 4 * * 1",
           "label": "Mondays 04:30"
+        },
+        {
+          "value": "*/15 * * * *",
+          "label": "Every 15 minutes"
+        },
+        {
+          "value": "*/30 * * * *",
+          "label": "Every 30 minutes"
         }
       ]
     }

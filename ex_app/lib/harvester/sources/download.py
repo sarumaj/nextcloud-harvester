@@ -14,7 +14,7 @@ from typing import BinaryIO
 import httpx
 
 from ..browser import allowed_url, challenge_in_html, reachable
-from .base import AuthError, ChallengeError, Option, SourceError
+from .base import AuthError, ChallengeError, Option, SourceError, check_stop
 
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) Nextcloud-Harvester"
 # Waits a site asks for, per file; and the longest one honoured.
@@ -220,6 +220,8 @@ def _attempt(
             raise SourceError(f"{url} is {int(announced) // 1048576} MB, more than the job's largest file")
         size = 0
         for chunk in response.chunks:
+            # A stop ends the download at once; what was written is dropped with the run's file.
+            check_stop()
             if size == 0 and not accepts(types, content_type, chunk):
                 raise SourceError(f"{url} is not of the job's file types ({', '.join(types)})")
             size += len(chunk)

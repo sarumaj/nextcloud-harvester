@@ -23,7 +23,7 @@ import yt_dlp
 
 from .. import browser, cookies, patterns
 from ..browser import allowed_url
-from .base import ACCOUNT_HELP, Item, Option, Source, SourceError
+from .base import ACCOUNT_HELP, Item, Option, Source, SourceError, Stopped, stop_requested
 
 # The quiet, offline-safe options every YoutubeDL here starts from.
 # Timeouts and retries: a stalled server must not hold the executor (one run at a time).
@@ -58,6 +58,12 @@ def dated(value: str | None) -> dict:
     except (TypeError, ValueError):
         return {}
     return {"year": day.year, "month": day.month, "day": day.day}
+
+
+def cancel_when_stopped(_progress: dict) -> None:
+    """yt-dlp's progress hook: cancels the download when the job was stopped."""
+    if stop_requested():
+        raise yt_dlp.utils.DownloadCancelled("stopped")
 
 
 class Media(Source):
@@ -219,12 +225,16 @@ class Media(Source):
                 "outtmpl": str(pathlib.Path(directory) / "%(id)s.%(ext)s"),
                 # Only the joining of streams (base's merge_output_format), no other processing.
                 "postprocessors": [],
+                # yt-dlp reports its progress often: a stop ends the download there.
+                "progress_hooks": [cancel_when_stopped],
             }
             try:
                 with self.downloader(options) as ydl:
                     info = ydl.extract_info(item.url, download=False)
                     ydl.process_info(info)
-            except yt_dlp.utils.DownloadError as error:
+            except (yt_dlp.utils.DownloadError, yt_dlp.utils.DownloadCancelled) as error:
+                if stop_requested():
+                    raise Stopped("stopped") from error
                 raise SourceError(f"yt-dlp: {str(error).removeprefix('ERROR: ')}") from error
             files = [path for path in pathlib.Path(directory).iterdir() if path.is_file()]
             if len(files) != 1:

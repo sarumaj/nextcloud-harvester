@@ -61,6 +61,14 @@
         {
           "value": "0 7 1 * *",
           "label": "Monthly, the 1st, 07:00"
+        },
+        {
+          "value": "*/15 * * * *",
+          "label": "Every 15 minutes"
+        },
+        {
+          "value": "*/30 * * * *",
+          "label": "Every 30 minutes"
         }
       ]
     }

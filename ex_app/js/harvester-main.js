@@ -12,6 +12,8 @@
 	const BLANK = { name: '', source: 'site', target: '/Harvester', schedule: '0 6 * * *', options: {}, tags: [], enabled: true }
 	// Usual schedules, offered below the job's schedule (cron, UTC).
 	const SCHEDULES = [
+		{ value: '*/15 * * * *', label: 'Every 15 minutes' },
+		{ value: '*/30 * * * *', label: 'Every 30 minutes' },
 		{ value: '0 * * * *', label: 'Hourly' },
 		{ value: '0 */6 * * *', label: 'Every 6 hours' },
 		{ value: '0 6 * * *', label: 'Daily 06:00' },

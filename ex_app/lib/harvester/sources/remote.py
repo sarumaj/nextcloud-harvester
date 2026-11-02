@@ -25,7 +25,7 @@ from typing import BinaryIO
 
 from .. import patterns
 from ..browser import allowed_host, allowed_url, child_env
-from .base import Item, Option, Source, SourceError
+from .base import Item, Option, Source, SourceError, check_stop, killed_on_stop, stoppable_run
 
 # rclone's remotes that may not be used, and why (scripts/rclone_backends.py lists the rest from
 # rclone itself; a test fails while a remote of the pinned rclone is in neither list, so a new
@@ -232,7 +232,8 @@ class Remote(Source):  # pylint: disable=too-many-instance-attributes
         self._dir: str | None = None
         self._written = ""
         self.binary = os.environ.get("HARVESTER_RCLONE") or shutil.which("rclone") or ""
-        self.run: Callable[..., subprocess.CompletedProcess] = subprocess.run
+        # rclone is killed when the job is stopped.
+        self.run: Callable[..., subprocess.CompletedProcess] = stoppable_run
         self.popen: Callable[..., subprocess.Popen] = subprocess.Popen
 
     def restore(self, session: dict) -> None:
@@ -330,9 +331,11 @@ class Remote(Source):  # pylint: disable=too-many-instance-attributes
             command = self._command("cat", item.url)
             with self.popen(command, stdout=subprocess.PIPE, stderr=messages, env=child_env()) as process:
                 assert process.stdout is not None
-                for chunk in iter(lambda: process.stdout.read(1 << 20), b""):  # type: ignore[union-attr]
-                    dest.write(chunk)
-                code = process.wait(timeout=TIMEOUT)
+                with killed_on_stop(process):
+                    for chunk in iter(lambda: process.stdout.read(1 << 20), b""):  # type: ignore[union-attr]
+                        check_stop()
+                        dest.write(chunk)
+                    code = process.wait(timeout=TIMEOUT)
             if code != 0:
                 messages.seek(0)
                 error = messages.read().decode("utf-8", "replace")

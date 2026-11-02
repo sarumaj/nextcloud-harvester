@@ -21,6 +21,7 @@ from nc_py_api import AsyncNextcloudApp
 from . import browser, runner, settings
 from .nextcloud import NextcloudLibrary
 from .sources import SOURCES, AuthError, ChallengeError, Stopped
+from .sources.base import watch_stop
 from .sources.download import guarded_client
 from .store import Job, Store
 
@@ -317,8 +318,7 @@ class Executor:
         # Its controls: a runner made them when it took the job; a direct call (tests) makes them.
         with self._lock:
             control = self.controls.setdefault(job_id, Control())
-        # The last run's message goes: the page shows this run's progress (its log) instead.
-        self.store.begin(job_id)
+        self._begin(job_id, control)
         nc = self.connect()
         try:
             self.call(nc.set_user(job.user))
@@ -383,8 +383,16 @@ class Executor:
             if (job.last_status, job.last_message) != (status, message):
                 self.notify(nc, f"Harvester: {job.name} failed", message)
         finally:
+            watch_stop(None)
             with self._lock:
                 self.controls.pop(job_id, None)
+
+    def _begin(self, job_id: int, control: Control) -> None:
+        """A run's start: the last run's message goes (the page shows this run's progress, its
+        log, instead), and its downloads in progress end at once when it is stopped (one job
+        per thread)."""
+        self.store.begin(job_id)
+        watch_stop(control.stopped)
 
     def notify(self, nc: AsyncNextcloudApp, subject: str, message: str) -> None:
         """Tells the job's user, with a link to the app's page; a notification that fails is lost."""

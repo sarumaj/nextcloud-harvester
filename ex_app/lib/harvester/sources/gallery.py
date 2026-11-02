@@ -26,7 +26,7 @@ import httpx
 from .. import browser, cookies, patterns
 from ..browser import allowed_url, child_env
 from . import download
-from .base import ACCOUNT_HELP, Item, Option, Source, SourceError
+from .base import ACCOUNT_HELP, Item, Option, Source, SourceError, stoppable_run
 
 # gallery-dl's message types in its JSON output (gallery_dl.extractor.message.Message).
 URL_MESSAGE = 3
@@ -90,8 +90,8 @@ class Gallery(Source):
         problems = download.problems(self.settings)
         if problems:
             raise SourceError("; ".join(problems))
-        # How gallery-dl is run, so that tests can stand in for it.
-        self.run: Callable[..., subprocess.CompletedProcess] = subprocess.run
+        # How gallery-dl is run (killed when the job is stopped), so that tests can stand in for it.
+        self.run: Callable[..., subprocess.CompletedProcess] = stoppable_run
         self.sleep: Callable[[float], None] = time.sleep
 
     def listing(self) -> list:

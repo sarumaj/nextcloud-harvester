@@ -51,6 +51,14 @@
         {
           "value": "0 */6 * * *",
           "label": "Every 6 hours"
+        },
+        {
+          "value": "*/15 * * * *",
+          "label": "Every 15 minutes"
+        },
+        {
+          "value": "*/30 * * * *",
+          "label": "Every 30 minutes"
         }
       ]
     }

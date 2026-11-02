@@ -99,7 +99,8 @@ the app's browser or taken from a template, not by code.
   **Stop**. Both act before the next file: a paused run waits (its time does not count against
   the two hours; after six hours unresumed it stops), a stopped one ends and keeps what it saved,
   and its next run goes on from there; a stop also ends a wait (a retry, the site asking to wait)
-  at once, and the file it was at comes next run.
+  and a download in progress at once (its chunks, yt-dlp's, gallery-dl's and rclone's: a helper
+  program is killed), and the file it was at comes next run.
 - **Runners:** `HARVESTER_RUNNERS` jobs run at once (2 by default), each in a thread of its own;
   a job never runs twice at once, and jobs of the same site (the host of the job's address) wait
   for each other, so no site gets more than one job's requests. The schedule and **Run now** only
