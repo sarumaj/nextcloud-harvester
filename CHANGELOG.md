@@ -22,6 +22,23 @@
   into the job's *Cookies* field (saved with the form, or stored after a confirmation in the
   job's browser); *Use for this job* keeps the session for the job without ending the browser.
   A cookies.txt keeps the HttpOnly mark when read and written.
+- **Values from the page:** a level of links or the file links may take values from the page
+  around each link (its text, an attribute, an element of its row or card), narrowed by a
+  pattern, as text, numbers or dates (English, German and Polish forms, with year, month and
+  day), for file names and tags. The recorder's **Pick a value** proposes them from a click near a
+  link and shows them in the examples.
+- **Listings in JSON:** the file links may be the items of a JSON answer (a site's XHR), with the
+  fields of each file's address, text and values and a page parameter; read over the guarded
+  HTTP client with the job's cookies, with size, depth and item caps. The recorder's **Network**
+  panel lists the page's JSON answers and proposes a listing from the one chosen.
+- **Codes by e-mail:** a step types a code the site sends by e-mail, from a new message of a
+  sender and subject in the account's *Mailbox for codes* (IMAP, read-only; the job's own
+  username and password without one of its own), waiting up to 3 minutes; the code is never
+  logged.
+- **Test as the job runs:** *Test the recipe* of a saved job can run as the job does: a new
+  browser context at the recipe's window (recorded with it; jobs use it too), the job's stored
+  account resolved by the app, the form's file types and names, and the first 64 KB of the first
+  file fetched to tell a file from a sign-in page.
 
 ## 0.10.0 - 2026-11-02
 

@@ -144,6 +144,35 @@ the app's browser or taken from a template, not by code.
 - **Values:** the download URL (`{url}/download`), the file's name
   (`{year}/iX {year}-{issue:02d}`) and the tags (`{year}`) are templates of the link's values:
   the pattern's groups and `url`, `text`, `page`, `host`, `filename`, `stem`, `ext`.
+- **Values from the page** (`patterns.page_values`): a level of links to follow or the file
+  links may take `"values"` from the page around each link, not only from its address: the
+  link's text, an attribute, or an element near it (`{"name": "date", "closest": "tr",
+  "selector": "td.date", "attribute": "", "regex": "...", "type": "date"}`: the link's row or
+  card, the element in it, its attribute or else its text, narrowed by a pattern whose named
+  groups are values too). A value is `text`, a `number` or a `date`: dates as English, German and
+  Polish pages write them (`2026-11-02`, `02.11.2026`, `2. November 2026`, `2 listopada 2026`,
+  `November 2, 2026`, `listopad 2026`; numbers day first) become `2026-11-02`, with `{year}`,
+  `{month}` and `{day}` where the address's pattern gives none. They name files and tags as the
+  pattern's groups do; a value its element or pattern does not find is missing (a file name
+  naming it fails that file, a tag naming it is left out). Read alike over HTTP and in the
+  browser; a level without values reads its links as before.
+- **Listings in JSON** (`harvester/jsonlist.py`): the file links may be `"kind": "json"`, for a
+  site whose page fetches its listing (an XHR): the request's address (`{year}` and the like from
+  the levels before), the path to its items (`data.items`: JSONPath's dotted form, with `[n]` and
+  `*`), an item's fields for the file's address and its text, values from fields
+  (`{"name": "date", "field": "issued", "type": "date"}`), and a page parameter (`{"param":
+  "page", "first": 1, "step": 1}`: a page number, or an offset) set for each page until one has
+  no items, or the job's *Pages*. The job asks for it as for a file: the guarded HTTP client,
+  with the browser's cookies when it has a browser (not the browser's own `context.request`,
+  which passes by its routes); at most 16 MB, 64 levels deep and 1000 items a page.
+- **Codes by e-mail:** a step `{"action": "mail-code", "selector": ..., "from": ..., "subject":
+  ...}` types a code the site sends by e-mail. The job waits (`"wait"`: 180 s by default, 10 to
+  600) for a message of that sender and subject (patterns, empty: any) that came into the
+  account's **Mailbox for codes** after the step began (with a minute's grace: the click before
+  it sent the message while its page settled), newest first, and types its code: the step's
+  `regex` (its group `code`, else its first group), else the first number of 6 to 8 digits, in
+  the subject, the text or the HTML's text. Read-only (the folder selected read-only,
+  `BODY.PEEK`): nothing is marked; the code is never logged.
 - **Recorder** (`ex_app/lib/harvester/browser/`): a headless Chromium in the app, shown on the
   page and driven from it over a WebSocket. Sign in and go to the listing (recorded as steps),
   browse without recording, then pick the links to follow and the file links: the app proposes
@@ -161,12 +190,28 @@ the app's browser or taken from a template, not by code.
   there. Picking a number of a numbered pagination as the next page proposes numbered pages,
   showing this page's number and the next one's (**Use the picked link alone** switches back).
   **Add: scroll to load more** (while recording) adds that step and scrolls the page.
+  **Pick a value** (with each pick of links), then a click on a text near one of its links (a
+  date in its row, a title in its card), adds a value: where it is from the link, and a type and
+  pattern proposed from what it reads beside every link (a date's form recognised); the examples
+  show the values, and their names, types and patterns can be changed. **Network** lists the
+  page's answers in JSON to its XHR and fetch() requests (address, size); **Use as the file
+  links** makes one the JSON listing, its items, fields, date and page parameter proposed from
+  the answer, to check and change. In the Steps list a code typed into a field offers **code from
+  e-mail?** (its sender and subject), which makes it the step above. The window's size the steps
+  were recorded and the links picked in is the recipe's `"viewport"`; the job's browser takes it
+  (1280 × 800 without one).
   **Test the recipe** runs it as a job would (the site source's own walk, `Site.survey`, in a
   browser context of its own with the recorder's session, shown on the screen; nothing recorded,
   nothing downloaded) and lists the pages it read with the links matched, the first 20 file
   links with the names the job's *File name* gives them, and the problems: a step that failed
   (with the page it was on), a selector that matched nothing, a pattern none matched. It reads
   at most 30 listing pages and three minutes; **Stop the test** ends it, and its context closes.
+  **Test as the job runs** (a saved job) is the honest one: a new browser context at the
+  recipe's window, without the recorder's session, signed in by the steps with the job's stored
+  account (its one-time code, its mailbox for codes, its cookies; the app reads it, the page never
+  has it), so a sign-in that only the recorder's session got past fails here as in a run; with
+  the form's file types and file names (their extension); and the first 64 KB of the first file
+  fetched, to tell a file of the job's types from a web page (a sign-in page, say).
   A recipe without steps is fetched over HTTP by the job: the test says so. **⛶ Full window** gives
   the browser the whole screen (the browser's full screen, above Nextcloud's header; Esc leaves it):
   it takes the screen's size, pages lay out for it, the controls float over it and the recipe is in
@@ -319,6 +364,10 @@ the app's browser or taken from a template, not by code.
     host and scheme;
   - **OAuth2** for mail (Gmail, Outlook or any provider's token endpoint): a client ID and secret
     and a refresh token sign in with XOAUTH2; a refresh token the provider replaces is kept.
+  - **a mailbox for codes** (`code_mailbox`, websites): the IMAP mailbox a sign-in's code comes
+    to, `key = value` per line: `host`, `user`, `password`; `port`, `folder`, and `auth` with
+    OAuth2's `client_id`, `client_secret`, `refresh_token` (and `token_url`) as for mail. Without
+    a user and password of its own, the job's username and password sign in to it.
 - **Safety:** the browser's pages and the downloads reach only http(s) addresses outside local
   and private networks, checked on the addresses a name resolves to and on every request and
   redirect (a `file://` page would show the app's secret): a page's WebSockets too (one refused
