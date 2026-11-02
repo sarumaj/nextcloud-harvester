@@ -25,11 +25,12 @@ COMMON_OPTIONS = {
         "after two hours, and goes on in the next).",
         minimum=-1,
     ),
+    # Its title names the proxy as the admin calls it (browser.PROXY_NAME, given by the page).
     "home": Option(
-        "Through the home connection",
+        "Through the proxy",
         0,
-        "The site sees the family's home connection instead of the server's (some sites refuse servers, or ask "
-        "them to prove they are human more often). Slower: the files come through the home's upload.",
+        "The site sees the proxy's address instead of the server's (some sites refuse servers, or ask them "
+        "to prove they are human more often). Slower: the files come through the proxy.",
         kind="flag",
     ),
 }

@@ -218,12 +218,25 @@ def test_the_admins_settings_change_the_runners_and_browsers(tmp_path, monkeypat
         appconfig_ex = Config()
 
     monkeypatch.setattr(browser, "SLOTS", browser.Slots(3))
+    monkeypatch.setattr(browser, "PROXY", "")
+    monkeypatch.setattr(browser, "PROXY_NAME", "the proxy")
+    monkeypatch.setattr(settings, "DEFAULT_PROXY", "http://10.0.0.1:3128")
     executor = Executor(Store(str(tmp_path / "db")), connect=Nc, runners=2)
     executor.read_settings()
     assert (executor.runners, browser.SLOTS.limit) == (2, browser.BROWSERS), "unset: the environment's"
-    Config.values = {settings.RUNNERS: "4", settings.BROWSERS: "1"}
+    assert browser.PROXY == "http://10.0.0.1:3128", "unset: the environment's proxy"
+    Config.values = {
+        settings.RUNNERS: "4",
+        settings.BROWSERS: "1",
+        settings.PROXY: "http://u:p@proxy.example:8080",
+        settings.PROXY_NAME: "the home connection",
+    }
     executor.read_settings()
     assert (executor.runners, browser.SLOTS.limit) == (4, 1)
+    assert (browser.PROXY, browser.PROXY_NAME) == ("http://u:p@proxy.example:8080", "the home connection")
+    Config.values = {settings.PROXY: "", settings.PROXY_NAME: ""}
+    executor.read_settings()
+    assert (browser.PROXY, browser.PROXY_NAME) == ("", settings.DEFAULT_PROXY_NAME), "emptied: none"
     Config.values = {settings.RUNNERS: "99", settings.BROWSERS: "x"}
     executor.read_settings()
     assert (executor.runners, browser.SLOTS.limit) == (settings.MAX_RUNNERS, browser.BROWSERS)
@@ -253,3 +266,37 @@ def test_the_admins_form_offers_the_environments_values():
     assert fields[settings.RUNNERS]["default"] == "2" and fields[settings.BROWSERS]["default"] == "3"
     assert settings.form(2, 3).section_type == "admin"
     assert settings.number(None, 2, 8) == 2 and settings.number("0", 2, 8) == 1
+
+
+def test_the_proxy_setting_takes_only_http_addresses_and_hides_its_password():
+    from harvester import settings  # pylint: disable=import-outside-toplevel
+
+    assert settings.proxy(None, "http://env:1") == "http://env:1"
+    assert settings.proxy(" ", "http://env:1") == ""
+    assert settings.proxy("socks5://x:1", "http://env:1") == "", "Chromium and httpx here speak http(s)"
+    assert settings.proxy("proxy.example:3128", "") == "", "an address needs its scheme"
+    assert settings.shown("http://u:secret@p.example:3128") == "http://u:***@p.example:3128"
+
+
+def test_the_browser_gets_the_proxys_credentials_apart(monkeypatch):
+    from harvester import browser  # pylint: disable=import-outside-toplevel
+
+    monkeypatch.setattr(browser, "PROXY", "http://anna%40home:p%3Ass@proxy.example:3128")
+    assert browser.launch_options(home=True)["proxy"] == {
+        "server": "http://proxy.example:3128",
+        "username": "anna@home",
+        "password": "p:ss",
+    }
+
+
+def test_the_jobs_form_names_the_proxy_as_the_admin_does(monkeypatch):
+    import main  # pylint: disable=import-outside-toplevel
+
+    from harvester import browser  # pylint: disable=import-outside-toplevel
+
+    monkeypatch.setattr(browser, "PROXY", "http://proxy.example:3128")
+    monkeypatch.setattr(browser, "PROXY_NAME", "the home connection")
+    options = main.list_sources()[0]["options"]
+    assert options["home"]["title"] == "Through the home connection"
+    monkeypatch.setattr(browser, "PROXY", "")
+    assert "home" not in main.list_sources()[0]["options"], "no proxy: not offered"

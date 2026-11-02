@@ -92,15 +92,17 @@ the app's browser or taken from a template, not by code.
   300-600 MB): each running website job takes one, recordings the others, so people record side
   by side and while jobs run. When all are taken, the recorder's screen says so instead of staying
   empty.
-- **Admin settings:** *Administration settings > Additional settings > Harvester* sets both
-  numbers (1 to 8 each); the environment's values are the defaults. The app reads them each
-  minute, so a change needs no restart: a lowered number lets the running jobs and open browsers
-  finish first.
-- **Home connection:** with `HARVESTER_PROXY` (an HTTP proxy at the family's home, e.g.
-  `http://192.168.178.33:3128`, reached through the WireGuard tunnel) a job may go **Through the
-  home connection**: its downloads, its browser, yt-dlp and gallery-dl use the proxy, and sites
-  that refuse servers' addresses see a home's. Slower: the files come through the home's upload.
-  Without `HARVESTER_PROXY` the option is not offered. The recorder follows the form's choice.
+- **Admin settings:** *Administration settings > Additional settings > Harvester* sets the
+  numbers of jobs and browsers at once (1 to 8 each) and the proxy; the environment's values
+  (`HARVESTER_RUNNERS`, `HARVESTER_BROWSERS`, `HARVESTER_PROXY`, `HARVESTER_PROXY_NAME`) are the
+  defaults. The app reads them each minute, so a change needs no restart: a lowered number lets
+  the running jobs and open browsers finish first.
+- **Proxy:** with a proxy (an http(s) address, credentials in it if it needs them:
+  `http://user:password@host:3128`) a job may go **Through the proxy**: its downloads, its
+  browser, yt-dlp and gallery-dl use it, and sites that refuse servers' addresses see the
+  proxy's. The proxy's name changes what the form says, e.g. *Through the home connection* for a
+  proxy at home. Without one the option is not offered, and a job that chose it goes directly.
+  The recorder follows the form's choice.
 - **Notifications:** a job that needs a person, or fails, notifies its user; the same failure
   again on the next runs does not.
 - **Templates** (`ex_app/lib/harvester/presets/*.json`), jobs with a few parameters, one card

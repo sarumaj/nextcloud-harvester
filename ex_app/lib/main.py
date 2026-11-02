@@ -147,7 +147,7 @@ def list_sources() -> list[dict]:
             "credentials": list(source.credentials),
             "credential_help": {name: list(help_) for name, help_ in source.credential_help.items()},
             "options": {
-                key: vars(option)
+                key: vars(option) | ({"title": f"Through {browser.PROXY_NAME}"} if key == "home" else {})
                 for key, option in (source.options | COMMON_OPTIONS).items()
                 if key != "home" or browser.PROXY
             },
@@ -393,7 +393,9 @@ async def enabled_handler(enabled: bool, nc: AsyncNextcloudApp) -> str:
     if enabled:
         await nc.ui.resources.set_script("top_menu", "harvester", "js/harvester-main")
         await nc.ui.top_menu.register("harvester", "Harvester", "img/app.svg")
-        await nc.ui.settings.register_form(settings.form(RUNNERS, browser.BROWSERS))
+        await nc.ui.settings.register_form(
+            settings.form(RUNNERS, browser.BROWSERS, settings.DEFAULT_PROXY, settings.DEFAULT_PROXY_NAME)
+        )
     else:
         await nc.ui.top_menu.unregister("harvester")
         await nc.ui.settings.unregister_form("harvester_admin")

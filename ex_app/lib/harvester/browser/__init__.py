@@ -15,7 +15,7 @@ import socket
 import threading
 import time
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 
 class Slots:
@@ -86,10 +86,12 @@ LAUNCH_ARGS = ["--disable-dev-shm-usage"]
 # user agent and one language and time zone for the recorder and the jobs alike.
 CHANNEL = os.environ.get("HARVESTER_BROWSER_CHANNEL", "chromium")
 LOCALE = os.environ.get("HARVESTER_LOCALE", "en-US")
-# The family's home connection (an HTTP proxy at home, reached through the WireGuard tunnel), for
-# the jobs that choose it: sites that refuse servers' addresses see a home's. Empty: none, and
-# the jobs' option is not offered.
+# A proxy for the jobs that choose it (http:// or https://, credentials in the address if it
+# needs them), e.g. a home connection: sites that refuse servers' addresses see the proxy's.
+# Empty: none, and the jobs' option is not offered. HARVESTER_PROXY and HARVESTER_PROXY_NAME (what
+# the job's form calls it) are the defaults; the admin's settings change both (settings.py).
 PROXY = os.environ.get("HARVESTER_PROXY", "").strip()
+PROXY_NAME = os.environ.get("HARVESTER_PROXY_NAME", "").strip() or "the proxy"
 TIMEZONE = os.environ.get("HARVESTER_TIMEZONE", "Europe/Berlin")
 # What the browser and the helper programs (rclone, gallery-dl) may see of the app's
 # environment: the app's AppAPI secret and HaRP's key stay out (a page that broke out of
@@ -114,13 +116,20 @@ def child_env() -> dict[str, str]:
 
 def launch_options(http1: bool = False, home: bool = False) -> dict:
     """How Chromium starts (CHANNEL; HTTP/1.1 only for the sites that cut HTTP/2 connections
-    of browsers they distrust; home: through PROXY, the family's home connection)."""
+    of browsers they distrust; home: through PROXY, its credentials given apart as Chromium
+    wants them)."""
     args = [*LAUNCH_ARGS, "--disable-blink-features=AutomationControlled", f"--lang={LOCALE}"]
     if http1:
         args.append("--disable-http2")
     options = {"args": args, "env": child_env()} | ({"channel": CHANNEL} if CHANNEL else {})
     if home and PROXY:
-        options["proxy"] = {"server": PROXY}
+        address = urlparse(PROXY)
+        server = address._replace(netloc=address.netloc.rpartition("@")[2]).geturl()
+        options["proxy"] = {"server": server} | (
+            {"username": unquote(address.username or ""), "password": unquote(address.password or "")}
+            if address.username
+            else {}
+        )
     return options
 
 

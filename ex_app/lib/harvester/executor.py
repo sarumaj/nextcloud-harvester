@@ -168,18 +168,21 @@ class Executor:
             threading.Thread(target=self._runner, args=(number,), name=f"runner-{number}", daemon=True).start()
 
     def read_settings(self) -> None:
-        """Takes the admin's settings (runners, browsers); unset, the environment's stay."""
+        """Takes the admin's settings (runners, browsers, the proxy); unset, the environment's
+        stay."""
         nc = self.connect()
-        values = {
-            record.key: record.value
-            for record in self.call(nc.appconfig_ex.get_values([settings.RUNNERS, settings.BROWSERS]))
-        }
+        values = {record.key: record.value for record in self.call(nc.appconfig_ex.get_values(list(settings.KEYS)))}
         runners = settings.number(values.get(settings.RUNNERS), RUNNERS, settings.MAX_RUNNERS)
         browsers = settings.number(values.get(settings.BROWSERS), browser.BROWSERS, settings.MAX_BROWSERS)
+        proxy = settings.proxy(values.get(settings.PROXY), settings.DEFAULT_PROXY)
+        name = (values.get(settings.PROXY_NAME) or "").strip() or settings.DEFAULT_PROXY_NAME
         if (runners, browsers) != (self.runners, browser.SLOTS.limit):
             LOG.info("%s jobs and %s browsers at once", runners, browsers)
+        if proxy != browser.PROXY:
+            LOG.info("the proxy: %s", settings.shown(proxy) or "none")
         self.runners = runners
         browser.SLOTS.limit = browsers
+        browser.PROXY, browser.PROXY_NAME = proxy, name
 
     def request(self, job_id: int) -> None:
         """Runs the job as soon as a runner and its site are free (once, if asked twice)."""
