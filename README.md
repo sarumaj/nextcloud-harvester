@@ -252,9 +252,16 @@ the app's browser or taken from a template, not by code.
   redirect (a `file://` page would show the app's secret): a page's WebSockets too (one refused
   is never connected), its service workers are off, and a file a recorded site links to is
   downloaded by the app's guarded HTTP client with the browser's cookies, not by the browser.
-  WebSockets a page's web worker opens pass by Playwright's routes: there, as for yt-dlp,
-  gallery-dl, rclone and mail servers, which connect by themselves (their addresses checked the
-  same way before, not their redirects), the External Apps' network rules stay the guard. Pages
+  Behind those checks, every connection of a browser goes through its own guard, a proxy in the
+  app on 127.0.0.1 (`browser/guard.py`; for loopback too), which sees what Playwright's routes
+  do not, such as a web worker's WebSockets: it looks the name up once, refuses it unless every
+  address is public, and connects to the address it checked, so a name that changes meanwhile
+  (DNS rebinding) gains nothing; the home connection is asked for that address, not the name.
+  WebRTC sends only through the proxy (no UDP of its own), and WebTransport does not connect
+  through one. rclone's sign-in browser alone may open rclone's listener (`127.0.0.1:53682`),
+  while rclone runs. yt-dlp, gallery-dl, rclone and mail servers connect by themselves (their
+  addresses checked the same way before, not their redirects), as do the guarded HTTP client's
+  downloads after their check: there the External Apps' network rules stay the guard. Pages
   and feeds are read up to 16 MB, a file in chunks up to the job's largest size. Chromium, its
   Playwright driver, rclone, gallery-dl and ffmpeg run without the app's secrets in their
   environment (a proxy's password goes to gallery-dl in a 0600 file), and the app's process is

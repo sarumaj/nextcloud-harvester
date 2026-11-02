@@ -9,6 +9,14 @@
 - A remote's configuration set up anew for a job wins over the tokens kept from the one before;
   the kept configuration names its account.
 
+### Security
+
+- Every connection of a browser goes through its own guard, a proxy in the app: a web worker's
+  WebSockets and anything else Playwright's routes do not see reach only public addresses, each
+  name looked up once and its checked address connected (no DNS rebinding), also through the home
+  connection. WebRTC sends nothing past the proxy. rclone's listener is open to the sign-in's
+  browser alone.
+
 ## 0.8.1 - 2026-11-02
 
 ### Added
