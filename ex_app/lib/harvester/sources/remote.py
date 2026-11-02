@@ -13,6 +13,7 @@ kept as the job's session and used by the next run (the stored account stays as 
 """
 
 import configparser
+import hashlib
 import json
 import os
 import posixpath
@@ -240,11 +241,15 @@ class Remote(Source):  # pylint: disable=too-many-instance-attributes
         newer = str(session.get("rclone_config", "") or "")
         if not newer or not self.remote:
             return
+        # Only the configuration kept from this account: one set up anew (the wizard names every
+        # remote "remote") wins over the tokens kept from the one before. A session kept before
+        # it named its account (before 0.8.2) counts while the remote's name is the same.
+        if "account" in session and session["account"] != account_sum(self.secrets.get("config", "")):
+            return
         try:
             name, _ = parse_config(newer)
         except SourceError:
             return
-        # Only a configuration of the same remote: a changed account wins over the kept tokens.
         if name == self.remote:
             self.config = newer
 
@@ -256,7 +261,9 @@ class Remote(Source):  # pylint: disable=too-many-instance-attributes
                 text = file.read()
         except OSError:
             return None
-        return {"rclone_config": text} if text != self._written else None
+        if text == self._written:
+            return None
+        return {"rclone_config": text, "account": account_sum(self.secrets.get("config", ""))}
 
     def _config_path(self) -> str:
         if self._dir is None:
@@ -345,6 +352,11 @@ class Remote(Source):  # pylint: disable=too-many-instance-attributes
         if self._dir:
             shutil.rmtree(self._dir, ignore_errors=True)
             self._dir = None
+
+
+def account_sum(config: str) -> str:
+    """Which account (the configuration its user gave) a kept configuration comes from."""
+    return hashlib.sha256(str(config or "").encode("utf-8")).hexdigest()
 
 
 def last_line(text: str) -> str:

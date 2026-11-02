@@ -274,3 +274,26 @@ def test_rclones_message_comes_without_its_log_prefix():
     assert last_line(text) == "failed to get token: invalid client"
     assert last_line("2026/11/02 10:03:34 ERROR : x.pdf: not found") == "x.pdf: not found"
     assert last_line("") == "no message"
+
+
+def test_an_account_set_up_anew_wins_over_the_tokens_kept_from_the_one_before():
+    made = remote(DRIVE)
+    fake = FakeRclone(refresh=True)
+    made.run = fake.run
+    try:
+        list(made.items(lambda key: False))
+        session = made.session()
+    finally:
+        made.close()
+    assert session and session["account"]
+    # Set up again with the wizard: the same remote's name, another drive and token.
+    anew = DRIVE.replace('"old"', '"another"').replace("drive.readonly", "drive")
+    again = remote(anew)
+    again.restore(session)
+    assert again.config == anew, "the new account, not the kept configuration of the old one"
+    same = remote(DRIVE)
+    same.restore(session)
+    assert '"access_token":"new"' in same.config, "the same account goes on with its refreshed token"
+    older = remote(DRIVE)
+    older.restore({"rclone_config": session["rclone_config"]})
+    assert '"access_token":"new"' in older.config, "a session from before 0.8.2: by the remote's name"
