@@ -395,7 +395,7 @@ def test_a_deleted_jobs_id_is_never_used_again(tmp_path):
     store.log(anna.id or 0, "info", "Downloading /x/anna-private.pdf")
     store.mark_seen(anna.id or 0, "https://anna.example/secret")
     store.finish(anna.id or 0, "ok", "1 file")
-    assert not store.log_lines("ben") and not store.seen_keys(ben.id or 0)
+    assert not store.log_lines([ben.id or 0]) and not store.seen_keys(ben.id or 0)
     assert (store.job(ben.id or 0) or ben).last_message is None
 
 
@@ -414,7 +414,7 @@ def test_an_earlier_database_keeps_its_ids_and_never_uses_them_again(tmp_path):
         db.execute("INSERT INTO log (job, at, level, message) VALUES (7, 0, 'info', 'm')")
     store = Store(path)
     assert [job.id for job in store.jobs()] == [1, 4, 7]
-    assert store.seen_keys(4) == {"k"} and store.log_lines("anna", 7)[0]["message"] == "m"
+    assert store.seen_keys(4) == {"k"} and store.log_lines([7])[0]["message"] == "m"
     store.delete(7)
     assert store.save(Job(user="ben", name="b", source="site", target="/y", schedule="0 6 * * *")).id == 8
     store.delete(4)

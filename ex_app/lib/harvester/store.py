@@ -62,6 +62,20 @@ CREATE TABLE IF NOT EXISTS shots (
     what TEXT NOT NULL,
     image BLOB NOT NULL
 );
+-- Who else may see or work on a job besides its owner, as Nextcloud's file shares: a user or a
+-- group (kind), the permissions granted (sharing.py's bits), who shared it (the owner, or one
+-- who may share it on) and when; the label is the sharee's display name when it was shared.
+CREATE TABLE IF NOT EXISTS shares (
+    job INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('user', 'group')),
+    sharee TEXT NOT NULL,
+    label TEXT NOT NULL,
+    permissions INTEGER NOT NULL,
+    by TEXT NOT NULL,
+    at REAL NOT NULL,
+    PRIMARY KEY (job, kind, sharee)
+);
+CREATE INDEX IF NOT EXISTS shares_sharee ON shares (kind, sharee);
 """
 # The lines of the progress log kept per job (its last runs).
 LOG_KEPT = 500
@@ -251,21 +265,69 @@ class Store:  # pylint: disable=too-many-public-methods
             row = self._db.execute("SELECT * FROM shots WHERE job = ?", (job_id,)).fetchone()
         return dict(row) if row else None
 
-    def log_lines(self, user: str, job_id: int | None = None, after: int = 0) -> list[dict]:
-        """The user's progress log after the line after (its id), oldest first: of one job, or
-        of all theirs; the newest LOG_PAGE when there are more."""
+    def log_lines(self, jobs: list[int], after: int = 0) -> list[dict]:
+        """The progress log of the jobs (those a user may see: their own and those shared with
+        them) after the line after (its id), oldest first; the newest LOG_PAGE when there are
+        more."""
+        if not jobs:
+            return []
         query = (
             "SELECT log.id, log.job, jobs.name, log.at, log.level, log.message,"
             " EXISTS (SELECT 1 FROM shots WHERE shots.log = log.id) AS shot FROM log JOIN jobs ON jobs.id = log.job"
-            " WHERE jobs.user = ? AND log.id > ?"
+            f" WHERE log.id > ? AND log.job IN ({', '.join('?' * len(jobs))})"
         )
-        values: list = [user, after]
-        if job_id is not None:
-            query += " AND log.job = ?"
-            values.append(job_id)
         with self._lock:
-            rows = self._db.execute(query + " ORDER BY log.id DESC LIMIT ?", (*values, LOG_PAGE)).fetchall()
+            rows = self._db.execute(query + " ORDER BY log.id DESC LIMIT ?", (after, *jobs, LOG_PAGE)).fetchall()
         return [dict(row) for row in reversed(rows)]
+
+    def shares(self, job_id: int) -> list[dict]:
+        """The job's shares (kind, sharee, label, permissions, by, at), oldest first."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT kind, sharee, label, permissions, by, at FROM shares WHERE job = ? ORDER BY at, kind, sharee",
+                (job_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def shared_with(self, user: str, groups: set[str]) -> list[Job]:
+        """The jobs of others shared with the user, or with one of their groups."""
+        query = (
+            "SELECT * FROM jobs WHERE user != ? AND id IN (SELECT job FROM shares WHERE (kind = 'user' AND sharee = ?)"
+        )
+        values: list = [user, user]
+        if groups:
+            query += f" OR (kind = 'group' AND sharee IN ({', '.join('?' * len(groups))}))"
+            values += sorted(groups)
+        with self._lock:
+            rows = self._db.execute(query + ") ORDER BY id", values).fetchall()
+        return [self._job(row) for row in rows]
+
+    def share(self, job_id: int, share: dict) -> None:
+        """Adds the share, or changes its permissions (and who gave them) if the job has one for
+        that sharee already."""
+        with self._lock, self._db:
+            self._db.execute(
+                "INSERT INTO shares (job, kind, sharee, label, permissions, by, at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+                " ON CONFLICT (job, kind, sharee) DO UPDATE SET label = excluded.label,"
+                " permissions = excluded.permissions, by = excluded.by",
+                (
+                    job_id,
+                    share["kind"],
+                    share["sharee"],
+                    share["label"],
+                    share["permissions"],
+                    share["by"],
+                    time.time(),
+                ),
+            )
+
+    def unshare(self, job_id: int, kind: str, sharee: str) -> bool:
+        """Removes the share; False when there was none."""
+        with self._lock, self._db:
+            cursor = self._db.execute(
+                "DELETE FROM shares WHERE job = ? AND kind = ? AND sharee = ?", (job_id, kind, sharee)
+            )
+        return cursor.rowcount > 0
 
     def finish(self, job_id: int, status: str, message: str, challenge_url: str | None = None) -> None:
         """Records the outcome of a run (and the page that asked for a person, if one did)."""

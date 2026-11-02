@@ -139,7 +139,7 @@ def test_the_newest_shot_is_kept_per_job_and_goes_with_it(tmp_path):
     second = store.log(job.id or 0, "error", "again")
     store.keep_shot(job.id or 0, second, SHOT | {"url": f"{SITE}/other"})
     assert store.shot(job.id or 0)["url"] == f"{SITE}/other", "replaced by the next failure"
-    lines = store.log_lines("u", job.id)
+    lines = store.log_lines([job.id or 0])
     assert [bool(line["shot"]) for line in lines] == [False, True], "only the newest line links to it"
     store.delete(job.id or 0)
     assert store.shot(job.id or 0) is None
@@ -179,7 +179,7 @@ def test_a_failed_run_keeps_what_its_browser_saw(tmp_path, monkeypatch):
 
     monkeypatch.setitem(executor_module.SOURCES, "shooting", Shooting)
     executor_module.Executor(store, FakeNextcloud).run(saved)
-    lines = store.log_lines("u", saved.id)
+    lines = store.log_lines([saved.id or 0])
     assert lines[-1]["message"].startswith("step 2 (click #go) failed") and lines[-1]["shot"]
     assert store.shot(saved.id or 0)["image"] == SHOT["image"]
     assert json.loads(json.dumps(lines))  # the log stays JSON for the page

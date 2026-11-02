@@ -60,7 +60,7 @@ def test_sizes_read_as_people_say_them():
     ]
 
 
-def test_the_log_is_kept_per_user_and_job_and_capped(tmp_path, monkeypatch):
+def test_the_log_is_kept_per_job_and_capped(tmp_path, monkeypatch):
     monkeypatch.setattr(store_module, "LOG_KEPT", 3)
     store = Store(str(tmp_path / "db"))
     mine = store.save(job())
@@ -68,14 +68,15 @@ def test_the_log_is_kept_per_user_and_job_and_capped(tmp_path, monkeypatch):
     for number in range(5):
         store.log(mine.id or 0, "info", f"line {number}")
     store.log(other.id or 0, "info", "not yours")
-    lines = store.log_lines("u")
+    lines = store.log_lines([mine.id or 0])
     assert [line["message"] for line in lines] == ["line 2", "line 3", "line 4"]
     assert {line["name"] for line in lines} == {"n"}
-    assert store.log_lines("u", after=lines[1]["id"])[0]["message"] == "line 4"
-    assert store.log_lines("u", job_id=other.id) == []
+    assert store.log_lines([mine.id or 0], after=lines[1]["id"])[0]["message"] == "line 4"
+    assert [line["message"] for line in store.log_lines([other.id or 0])] == ["not yours"]
+    assert store.log_lines([]) == [], "no jobs: no lines"
     store.log(9999, "info", "a job deleted meanwhile")  # no error
     store.delete(mine.id or 0)
-    assert store.log_lines("u") == []
+    assert store.log_lines([mine.id or 0]) == []
 
 
 def test_a_new_run_clears_the_last_message_and_logs_its_end(tmp_path, monkeypatch):
@@ -106,7 +107,7 @@ def test_a_new_run_clears_the_last_message_and_logs_its_end(tmp_path, monkeypatc
     monkeypatch.setattr(executor_module, "NextcloudLibrary", lambda nc, call: FakeLibrary())
     executor.run(store.job(saved.id or 0) or saved)
     assert started == [None], "the old error is gone as soon as the run starts"
-    messages = [(line["level"], line["message"]) for line in store.log_lines("u")]
+    messages = [(line["level"], line["message"]) for line in store.log_lines([saved.id or 0])]
     assert messages[0] == ("info", "Looking for new files")
     assert messages[-1] == ("error", "the listing broke")
     assert (store.job(saved.id or 0) or saved).last_message == "the listing broke"

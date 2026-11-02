@@ -322,7 +322,7 @@ def test_run_now_and_a_change_of_tags_meanwhile_do_both(tmp_path, monkeypatch):
     last_run = (store.job(job_id) or saved).last_run
     store.forget(job_id, "c")  # c again for the run: its file, recorded as c's, is there
     executor.run(saved, wanted=True)
-    lines = [line["message"] for line in store.log_lines("u", job_id)]
+    lines = [line["message"] for line in store.log_lines([job_id])]
     assert "Tags brought up to date on 3 files" in lines
     assert lines[-1] == "0 downloaded, 1 already there", "and then the run"
     assert store.retag_from(job_id) is None
