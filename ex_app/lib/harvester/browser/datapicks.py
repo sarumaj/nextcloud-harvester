@@ -14,7 +14,6 @@ import regex
 from playwright.async_api import Page
 
 from .. import jsonlist, patterns
-from ..recipe import steps_from_events
 from ..sources import near
 
 EXAMPLES = 8
@@ -30,7 +29,7 @@ REQUEST_BODY = 2 * 1024 * 1024
 VALUE_KEYS = ("name", "regex", "type", "attribute", "closest", "selector", "field")
 JSON_KEYS = ("url", "items", "file", "text", "pattern", "page")
 # The page's messages DataPicks.handle_data answers.
-DATA_MESSAGES = frozenset({"value", "value-add", "value-remove", "json-pick", "json-edit", "mail-code"})
+DATA_MESSAGES = frozenset({"value", "value-add", "value-remove", "json-pick", "json-edit"})
 
 
 def search_all(pattern: str, texts: list[str]) -> list:
@@ -67,18 +66,16 @@ def timed_search(pattern: str, text: str):
 
 
 class DataPicks:  # pylint: disable=too-few-public-methods
-    """The recorder's picks of values, JSON listings and codes by e-mail (mixed into Recorder,
+    """The recorder's picks of values and JSON listings (mixed into Recorder,
     whose state and methods these are)."""
 
     send: Callable[[dict], Awaitable[None]]
-    events: list[dict]
     start_url: str
     follow: list[dict]
     links: dict
     proposals: dict[str, dict]
     value_for: tuple[str, int] | None
     requests: list[dict]
-    mail_codes: dict[int, dict]
     _page: Page | None
     _context: object
     _json: tuple[str, object] | None
@@ -93,10 +90,9 @@ class DataPicks:  # pylint: disable=too-few-public-methods
         """Shows what a level's pick matches (the recorder's)."""
 
     async def handle_data(self, kind: str, message: dict) -> None:
-        """The page's messages about values, JSON listings and codes by e-mail (DATA_MESSAGES)."""
-        if kind == "mail-code":
-            await self._mail_code(message)
-        elif kind in ("value", "value-add", "value-remove"):
+        """The page's messages about values and JSON listings (DATA_MESSAGES); a code by e-mail is
+        an edit of the steps (steps.StepList)."""
+        if kind in ("value", "value-add", "value-remove"):
             await self._edit_value(kind, message)
         elif kind == "json-pick":
             await self._json_pick(message.get("id"))
@@ -238,13 +234,6 @@ class DataPicks:  # pylint: disable=too-few-public-methods
                 self.links[key] = changes[key].strip()
         await self._describe("links")
 
-    def _step_index(self, message: dict) -> int | None:
-        """The recorded step a message names (its index), or None for none of them."""
-        index = message.get("step")
-        if isinstance(index, int) and not isinstance(index, bool) and 0 <= index < len(steps_from_events(self.events)):
-            return index
-        return None
-
     async def _examples(self, page: Page, spec: dict, found: list, matches: list) -> tuple[list[dict], str]:
         """The examples of a level's links on the page (found: their addresses and texts, matches:
         the pattern's), with the values of the page beside each where the level has values; and
@@ -260,19 +249,6 @@ class DataPicks:  # pylint: disable=too-few-public-methods
             return await asyncio.to_thread(examples_of, found, matches, specs, texts), ""
         except (TimeoutError, regex.error) as error:
             return await asyncio.to_thread(examples_of, found, matches, [], []), f"a value's pattern: {error}"
-
-    async def _mail_code(self, message: dict) -> None:
-        """A filled step (a code typed) becomes "type the code from e-mail", of a sender and
-        subject; off takes it back. The steps the form held before the page changes itself."""
-        index = self._step_index(message)
-        if index is None:
-            return
-        if message.get("off"):
-            self.mail_codes.pop(index, None)
-        else:
-            code = {key: str(message.get(key) or "") for key in ("from", "subject")}
-            self.mail_codes[index] = code | ({"regex": str(message["regex"])} if message.get("regex") else {})
-        await self._update()
 
     async def _describe_json(self, proposal: dict) -> None:
         """What the JSON listing gives with the answer it was chosen from: its items, the first

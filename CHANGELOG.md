@@ -86,6 +86,20 @@
 - **Downloads:** `{disposition}`, the name the site gives the file (Content-Disposition, RFC
   6266 and 5987), made safe; the listing as `Referer`; a page standing in for the file (a meta
   refresh, one download link) followed once.
+- **Editing the steps:** the recorder's Steps list moves (↑ ↓) and removes (✕) any step, sets
+  what a fill fills in (a value of its own, edited there, or the account's user name, password
+  or one-time code), edits a list's choice and drops a step's wait. A recipe with steps opens in
+  *Browse*; recording on it asks where the new steps go (*Append* after a step, *Replace from
+  there*, *Replace all*) instead of replacing the form's steps.
+- **More that is recorded:** a list's choice (a step `select`, by value or by its text), the
+  keys of a combobox or autocomplete (↑ ↓ Escape Tab Enter), text edited in place
+  (contenteditable), a menu that opens under the mouse (a step `hover` before the click),
+  elements in open shadow roots, and a sign-in's popup (steps `popup` and `opener`; a job waits
+  for the popup and acts in it). One-time codes are recognised also as Microsoft's `otc`,
+  Nextcloud's `challenge`, a plain `code` or a field of 6 to 8 digits after a password.
+- **Waits:** a click or press that went to another address waits in a job for that address and
+  the next step's element, then briefly for the network, instead of up to 15 s for a page that
+  never goes quiet. Recipes without it wait as before.
 
 ### Changed
 
@@ -130,6 +144,19 @@
 - A next page that loops was read again silently; a next page that is a button ended an HTTP
   job after page one without a word; a link shown on several listings took the first one's
   values; a web page instead of a file always said "signed out?".
+- **A password shown as text was recorded:** with a "show password" switch on, the password
+  went into the recipe as a value, and the user name stayed one too. A field that was ever a
+  password's (or has a password's autocomplete) is one for good. A fill with a value of its own
+  in what looks like a password's field is pointed out in the job's form, the recorder and the
+  app's log (its step and field, never the value).
+- A sign-in submitted with Enter was recorded with the password filled twice and a click on the
+  submit button, and failed to replay; a list's choice was a fill (which fails), a checkbox's
+  label toggled the box twice, and a file input opened a file chooser: now one fill per field,
+  no click of the browser's own, a step `select`, one click, and a message.
+- A popup that closed itself left the recorder's screen on the closed tab ("Target closed"),
+  and a popup at its opener's origin was not recorded at all.
+- The cookies panel let a cookie be set for a public suffix (`co.uk` while at
+  `shop.example.co.uk`): such domains are refused, by the public suffix list.
 
 ## 0.10.0 - 2026-11-02
 

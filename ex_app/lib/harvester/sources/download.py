@@ -165,6 +165,12 @@ def impersonates(options: dict) -> bool:
     return bool(int(options.get("impersonate", 0) or 0))
 
 
+def impersonation(wanted: bool) -> dict:
+    """guarded_client's option for impersonating a browser, given only when wanted (a client
+    made otherwise takes no such option)."""
+    return {"impersonate": True} if wanted else {}
+
+
 def guarded_client(impersonate: bool = False, **options) -> httpx.Client:
     """An HTTP client for the sources: every request, a redirect's too, only to an address the
     app may reach (browser.reachable), else SourceError; the event_hooks given run after the

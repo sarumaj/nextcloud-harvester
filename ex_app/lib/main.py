@@ -30,6 +30,7 @@ from harvester.executor import (
     session_key,
 )
 from harvester.presets import PRESETS, make_job
+from harvester.recipe import leaked_passwords
 from harvester.runner import COMMON_OPTIONS
 from harvester.sources.download import DOWNLOAD_OPTIONS
 from harvester.sources import SOURCES, Option, SourceError
@@ -333,10 +334,23 @@ async def progress_log(nc: NC, job: int | None = None, after: int = 0) -> dict:
     }
 
 
+def warn_of_leaks(job: Job) -> None:
+    """Logs what a website job's recipe says of a password written into it (its step and field,
+    never the value): a recipe recorded before the recorder knew a field that showed its password.
+    The form says it too, as the recipe is shown."""
+    try:
+        recipe = json.loads(str(job.options.get("recipe") or "{}")) if job.source == "site" else {}
+    except ValueError:
+        return
+    for warning in leaked_passwords(recipe):
+        LOGGER.warning("job %s saved: %s", job.id, warning)
+
+
 @APP.post("/api/jobs")
 async def create_job(body: JobIn, nc: NC) -> dict:
     """Adds a job."""
     saved = store().save(Job(user=await nc.user, **checked(body).model_dump()))
+    warn_of_leaks(saved)
     weekly_test_from_now(None, saved)
     return vars(saved)
 
@@ -346,6 +360,7 @@ async def update_job(job_id: int, body: JobIn, nc: NC) -> dict:
     """Changes a job's settings."""
     job = await own_job(job_id, nc)
     saved = store().save(Job(id=job.id, user=job.user, created=job.created, **checked(body).model_dump()))
+    warn_of_leaks(saved)
     forget_changed(job, saved)
     if sign_in_changed(job, saved):
         await nc.preferences_ex.delete(session_key(saved))

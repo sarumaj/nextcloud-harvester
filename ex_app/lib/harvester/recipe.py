@@ -48,6 +48,17 @@ a download when clicked (a button, a form, a script), which only the browser can
 rounds of scrolling to the end, "load_more": the element of a "Load more" button, clicked until
 it is gone (harvester.sources.site).
 
+A step {"action": "select", "selector": ..., "value": ..., "label": ...} chooses an entry of a
+list (<select>): by its value, else by the text it shows. {"action": "hover", "selector": ...}
+moves the mouse over an element (a menu that opens under the mouse) before the click after it.
+{"action": "popup"} goes on in the tab or window the step before it opened (a sign-in's popup),
+{"action": "opener"} back in the page that opened it, once the popup closed itself.
+
+A click or a press that navigated has "wait": {"url": <a pattern of the address it led to>,
+"selector": <the next step's element>}: the replay waits for that address and that element
+instead of for the network to go quiet, then settles a short while. Without it, as recipes
+always did, it waits for the network.
+
 A step {"action": "mail-code", "selector": <the code's field>, "from": <a pattern on the sender>,
 "subject": <one on the subject>, "regex": <the code in the message>, "wait": <seconds>} types a
 code the site sends by e-mail: the job waits for a new message in the account's code mailbox
@@ -69,6 +80,7 @@ at, which the job's browser takes too (pages lay out for it); without one, 1280 
 
 import calendar
 import datetime
+import copy
 import re
 import string
 from urllib.parse import urlsplit
@@ -77,7 +89,7 @@ from . import patterns
 from .browser import VIEWPORT_MAX, VIEWPORT_MIN, allowed_url
 from .patterns import token_parameters
 
-ACTIONS = {"goto", "click", "fill", "press", "scroll", "mail-code"}
+ACTIONS = {"goto", "click", "fill", "press", "scroll", "select", "hover", "popup", "opener", "mail-code"}
 # A scroll step's rounds: by default, and at most.
 SCROLL_ROUNDS = 20
 SCROLL_ROUNDS_MAX = 100
@@ -85,9 +97,18 @@ SCROLL_ROUNDS_MAX = 100
 LOAD_MORE_MAX = 50
 NEXT_KINDS = ("link", "number")
 # The actions that act on an element, and so may do it inside a frame.
-ON_ELEMENTS = ("click", "fill", "press", "mail-code")
-# What a fill step may fill in from the job's account.
+ON_ELEMENTS = ("click", "fill", "press", "mail-code", "select", "hover")
+# The actions that switch the tab the steps act in, and so have no element.
+SWITCHES = ("popup", "opener")
+# What a fill step may fill in instead of a value of its own: the job's account's.
 CREDENTIALS = ("username", "password", "totp")
+# A fill step's element that looks like a password's field (#pw, [type=password], a name with
+# pass or pwd): a value of its own there is most likely a password written into the recipe.
+PASSWORD_FIELD = re.compile(r"pass|pwd|(?<![a-z])pw(?![a-z])|current-password|new-password", re.IGNORECASE)
+# A segment of an address that changes from visit to visit: a number, or a token (16 and more
+# letters and digits, with a digit).
+_NUMBER = re.compile(r"^\d+$")
+_TOKEN = re.compile(r"^(?=[^/]*\d)[\w~.-]{16,}$")
 # The values every link gives (patterns.link_values), besides its pattern's groups.
 LINK_VALUES = ("url", "text", "page", "host", "filename", "stem", "ext")
 # The keys a press step may press (Playwright's names), besides a single character, optionally
@@ -147,19 +168,20 @@ def step_label(step: dict) -> str:
 
 
 def _action_label(step: dict) -> str:
-    action = step.get("action")
-    if action == "goto":
-        return f"open {step.get('url', '')}"
-    if action == "scroll":
-        return "scroll to load more"
-    if action == "click":
-        text = str(step.get("text") or "").strip()
-        return f"click “{text}”" if text else f"click {step.get('selector', '')}"
-    if action == "press":
-        return f"press {step.get('key', 'Enter')} in {step.get('selector', '')}"
-    if action == "fill":
-        return f"fill in {step.get('credential') or 'a value'} ({step.get('selector', '')})"
-    return str(action)
+    action, selector = step.get("action"), step.get("selector", "")
+    text = str(step.get("text") or "").strip()
+    labels = {
+        "goto": f"open {step.get('url', '')}",
+        "scroll": "scroll to load more",
+        "click": f"click “{text}”" if text else f"click {selector}",
+        "press": f"press {step.get('key', 'Enter')} in {selector}",
+        "fill": f"fill in {step.get('credential') or 'a value'} ({selector})",
+        "select": f"choose “{step.get('label') or step.get('value', '')}” in {selector}",
+        "hover": f"hover over {selector}",
+        "popup": "go on in the popup",
+        "opener": "go back to the page that opened the popup",
+    }
+    return labels.get(str(action), str(action))
 
 
 def _framed(step: dict, event: dict) -> dict:
@@ -171,67 +193,151 @@ def _framed(step: dict, event: dict) -> dict:
     return step | {"frame": event["frame"]} if event.get("frame") else step
 
 
-def steps_from_events(events: list[dict]) -> list[dict]:  # pylint: disable=too-many-branches
-    """Turns what the recorder saw into the recipe's steps.
+def url_pattern(url: str) -> str:
+    """A pattern of the address a step led to, for its replay to wait for: the scheme, host and
+    path, with numbers and tokens left open (they change from visit to visit), and any query or
+    fragment."""
+    parts = urlsplit(url)
+    segments = [
+        r"\d+" if _NUMBER.match(segment) else r"[^/]+" if _TOKEN.match(segment) else re.escape(segment)
+        for segment in parts.path.split("/")
+    ]
+    return "^" + re.escape(f"{parts.scheme}://{parts.netloc}") + "/".join(segments) + r"(?:[?#].*)?$"
 
-    Typing into a field several times keeps the last value. A password is never kept: its step
-    fills in the job's password, and the field filled before it in the same form the job's
-    username, so neither is in the recipe. A one-time code is not kept either: its step fills in
-    the current code from the account's secret. An event inside a frame keeps its frame's path.
+
+def link_waits(steps: list[dict]) -> None:
+    """Gives each step that waits for an address the element of the step after it to wait for
+    too, when that one acts on the page's own element and is required (an optional one's element
+    may never come, a frame's is not the page's); a step after it removed or moved takes its
+    element along."""
+    for index, step in enumerate(steps):
+        wait = step.get("wait")
+        if not isinstance(wait, dict) or not wait.get("url"):
+            continue
+        after = steps[index + 1] if index + 1 < len(steps) else {}
+        if after.get("action") in ON_ELEMENTS and after.get("selector") and not after.get("frame"):
+            if not after.get("optional"):
+                wait["selector"] = after["selector"]
+                continue
+        wait.pop("selector", None)
+
+
+def _same_field(one: dict, other: dict) -> bool:
+    return (one.get("selector"), one.get("frame")) == (other.get("selector"), other.get("frame"))
+
+
+def _repeats(steps: list[dict], step: dict) -> bool:
+    """Whether the fill does again what one since the last click or address did: the same field
+    with the same value or credential (a field reported when Enter submitted it, and again as it
+    lost the focus)."""
+    for earlier in reversed(steps):
+        if earlier.get("action") in ("goto", "click", "popup", "opener"):
+            return False
+        if earlier.get("action") == "fill" and _same_field(earlier, step):
+            return (earlier.get("value"), earlier.get("credential")) == (step.get("value"), step.get("credential"))
+    return False
+
+
+def _fill(event: dict, steps: list[dict]) -> dict:
+    """A fill's step. A password is never kept: its step fills in the job's password, and the field
+    filled before it in the same form the job's username. A one-time code is not kept either: its
+    step fills in the current code; a field that only might be one (a number of 6 to 8 digits, a
+    field named code or challenge) is one after a password."""
+    selector = event["selector"]
+    after_password = any(step.get("credential") == "password" for step in steps)
+    if event.get("otp") or (event.get("code_like") and after_password):
+        # The code typed while recording is spent: the job fills in the current one.
+        return {"action": "fill", "selector": selector, "credential": "totp"}
+    if event.get("field") != "password":
+        return {"action": "fill", "selector": selector, "value": event.get("value", "")}
+    for earlier in reversed(steps):
+        same_form = (earlier.get("form"), earlier.get("frame")) == (event.get("form"), event.get("frame"))
+        if earlier["action"] == "fill" and "value" in earlier and same_form:
+            earlier.pop("value")
+            earlier["credential"] = "username"
+            break
+    return {"action": "fill", "selector": selector, "credential": "password"}
+
+
+def _step(event: dict, steps: list[dict]) -> dict | None:
+    """The event's step, without its frame (None: an event that is no step)."""
+    action = event.get("action")
+    if action == "goto":
+        return {"action": "goto", "url": event["url"]}
+    if action in ("scroll", "popup", "opener"):
+        return {"action": action}
+    if action == "fill":
+        return _fill(event, steps) | {"form": event.get("form", "")}
+    if action == "select":
+        return {"action": "select", "selector": event["selector"], "value": event.get("value", "")} | (
+            {"label": event["label"]} if event.get("label") else {}
+        )
+    if action == "click":
+        step = {"action": "click", "selector": event["selector"], "text": event.get("text", "")}
+    elif action == "press":
+        step = {"action": "press", "selector": event["selector"], "key": event.get("key", "Enter")}
+    else:
+        return None
+    if event.get("navigated"):
+        step["wait"] = {"url": url_pattern(event["navigated"])}
+    return step
+
+
+def steps_from_events(
+    events: list[dict], before: list[dict] | None = None, after: list[dict] | None = None, forms: bool = False
+) -> list[dict]:
+    """Turns what the recorder saw into the recipe's steps, between the steps before and after (a
+    copy of each).
+
+    Typing into a field several times keeps the last value, and a fill that repeats one since the
+    last click goes (_repeats); a password or one-time code is never kept (_fill). A click on an
+    element that showed only under the mouse comes after a step "hover" over its menu; a click or
+    press that navigated waits for the address it led to (link_waits). An event inside a frame
+    keeps its frame's path. forms keeps each fill's form (the recorder's own steps, for a password
+    recorded later to find its username), else it is left out.
     """
-    steps: list[dict] = []
+    steps: list[dict] = copy.deepcopy(before or [])
     for event in events:
-        action = event.get("action")
-        if action == "goto":
-            steps.append({"action": "goto", "url": event["url"]})
-        elif action == "scroll":
-            steps.append({"action": "scroll"})
-        elif action == "click":
-            steps.append(
-                _framed({"action": "click", "selector": event["selector"], "text": event.get("text", "")}, event)
+        step = _step(event, steps)
+        if step is None:
+            continue
+        step = _framed(step, event)
+        last = steps[-1] if steps else {}
+        if event.get("hover") and step["action"] == "click":
+            # The menu's own selector only: the click's alternatives are the clicked element's.
+            hover = {"action": "hover", "selector": event["hover"]} | (
+                {"frame": event["frame"]} if event.get("frame") else {}
             )
-        elif action == "press":
-            steps.append(
-                _framed({"action": "press", "selector": event["selector"], "key": event.get("key", "Enter")}, event)
-            )
-        elif action == "fill":
-            step = {"action": "fill", "selector": event["selector"], "value": event.get("value", "")}
-            if event.get("otp"):
-                # The code typed while recording is spent: the job fills in the current one.
-                step = {"action": "fill", "selector": event["selector"], "credential": "totp"}
-            elif event.get("field") == "password":
-                step = {"action": "fill", "selector": event["selector"], "credential": "password"}
-                for earlier in reversed(steps):
-                    same_form = (earlier.get("form"), earlier.get("frame")) == (event.get("form"), event.get("frame"))
-                    if earlier["action"] == "fill" and "value" in earlier and same_form:
-                        earlier.pop("value")
-                        earlier["credential"] = "username"
-                        break
-            step = _framed(step, event) | {"form": event.get("form", "")}
-            last = steps[-1] if steps else {}
-            if last.get("action") == "fill" and (last["selector"], last.get("frame")) == (
-                step["selector"],
-                step.get("frame"),
-            ):
-                steps[-1] = step
-            else:
-                steps.append(step)
-    for step in steps:
-        step.pop("form", None)
+            if last != hover:
+                steps.append(hover)
+        if step["action"] in ("fill", "select") and last.get("action") == step["action"] and _same_field(last, step):
+            steps[-1] = step
+        elif not (step["action"] == "fill" and _repeats(steps, step)):
+            steps.append(step)
+    steps += copy.deepcopy(after or [])
+    link_waits(steps)
+    if not forms:
+        for step in steps:
+            step.pop("form", None)
     return steps
 
 
 def sign_in_steps(steps: list[dict]) -> int:
     """How many of the steps sign in: those up to the last fill of a credential and the first
-    click or key after it (which sends the form); 0 without a credential (no sign-in, only the
-    way to the listing). The steps after them lead to the listing and are always replayed."""
+    click or key after it (which sends the form), and the return from a sign-in's popup; 0
+    without a credential (no sign-in, only the way to the listing). The steps after them lead
+    to the listing and are always replayed."""
     last = max((index for index, step in enumerate(steps) if step.get("credential")), default=-1)
     if last < 0:
         return 0
-    for index in range(last + 1, len(steps)):
-        if steps[index].get("action") in ("click", "press"):
-            return index + 1
-    return last + 1
+    end = next(
+        (index + 1 for index in range(last + 1, len(steps)) if steps[index].get("action") in ("click", "press")),
+        last + 1,
+    )
+    # A sign-in in a popup ends back in the page that opened it.
+    while end < len(steps) and steps[end].get("action") == "opener":
+        end += 1
+    return end
 
 
 def _shifted(today: datetime.date, shift: str, unit: str) -> datetime.date:
@@ -285,6 +391,25 @@ def key_ok(key: object) -> bool:
         head, last = head[:-1], "+"
     modifiers = head.split("+") if plus else []
     return all(modifier in MODIFIERS for modifier in modifiers) and (len(last) == 1 or last in KEYS | MODIFIERS)
+
+
+def leaked_passwords(recipe: object) -> list[str]:
+    """What the recipe's steps say of a password in the recipe: a fill with a value of its own in a
+    field that looks like a password's (PASSWORD_FIELD), recorded before the recorder knew it. Never
+    with the value."""
+    steps = recipe.get("steps") if isinstance(recipe, dict) else None
+    found = []
+    for number, step in enumerate(steps if isinstance(steps, list) else [], 1):
+        if not isinstance(step, dict) or step.get("action") != "fill" or step.get("credential"):
+            continue
+        selector = str(step.get("selector") or "")
+        if step.get("value") and PASSWORD_FIELD.search(selector):
+            found.append(
+                f"step {number} fills a value of its own into {selector}, which looks like a password field: "
+                "mark it as the account's password (the recorder's Steps), and change the password if the "
+                "recipe was shared"
+            )
+    return found
 
 
 def _check_pattern(where: str, pattern: object) -> list[str]:
@@ -386,6 +511,12 @@ def _check_fields(number: int, step: dict) -> list[str]:
     return []
 
 
+def _wait_ok(wait: object) -> bool:
+    if not isinstance(wait, dict) or not all(isinstance(wait.get(key, ""), str) for key in ("url", "selector")):
+        return False
+    return not _check_pattern("", wait.get("url", ""))
+
+
 def _mail_code_problem(step: dict) -> str:
     """What is wrong with a step "mail-code", or ""."""
     for key in ("from", "subject", "regex"):
@@ -417,8 +548,10 @@ def _check_steps(steps: list) -> list[str]:
             problems.append(f"step {number}: the browser may not open {step.get('url')}")
         elif step["action"] == "scroll" and not _rounds_ok(step.get("rounds", SCROLL_ROUNDS)):
             problems.append(f"step {number}: rounds of scrolling from 1 to {SCROLL_ROUNDS_MAX}")
-        elif step["action"] not in ("goto", "scroll") and not step.get("selector"):
+        elif step["action"] not in ("goto", "scroll", *SWITCHES) and not step.get("selector"):
             problems.append(f"step {number}: no element")
+        elif step["action"] != "mail-code" and "wait" in step and not _wait_ok(step["wait"]):
+            problems.append(f"step {number}: wait is an address's pattern (url) and an element (selector)")
         elif not _alternatives_ok(step):
             problems.append(f"step {number}: the alternatives are a list of selectors")
         elif step["action"] == "mail-code" and (problem := _mail_code_problem(step)):
@@ -575,3 +708,29 @@ def uses_browser(recipe: dict) -> bool:
     clicked = isinstance(links, dict) and bool(links.get("click"))
     loading = any("scroll" in spec or "load_more" in spec for spec in levels(recipe))
     return bool(recipe.get("steps")) or buttons or clicked or loading
+
+
+def edit_step(step: dict, message: dict) -> None:
+    """The step as the recorder's Steps list changes it (a message of the page): optional or not;
+    a fill's account's username, password or one-time code, or a value of its own ("" credential);
+    a value of its own (a fill's or a list's choice); no wait for the address it led to (wait:
+    null)."""
+    if "optional" in message:
+        if message["optional"] is True:
+            step["optional"] = True
+        else:
+            step.pop("optional", None)
+    if step.get("action") == "fill" and "credential" in message:
+        if message["credential"] in CREDENTIALS:
+            step.pop("value", None)
+            step["credential"] = message["credential"]
+        elif not message["credential"]:
+            step.pop("credential", None)
+            step.setdefault("value", "")
+    if "value" in message and isinstance(message["value"], str) and not step.get("credential"):
+        if step.get("action") in ("fill", "select"):
+            step["value"] = message["value"]
+            # A list's choice by the value given now, not by the text the old one showed.
+            step.pop("label", None)
+    if "wait" in message and message["wait"] is None:
+        step.pop("wait", None)

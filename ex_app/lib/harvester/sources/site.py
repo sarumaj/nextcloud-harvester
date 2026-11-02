@@ -21,6 +21,7 @@ the job's cookies (the browser's, when it has one) and walked page by page.
 import contextlib
 import dataclasses
 import datetime
+import functools
 import json
 import mimetypes
 import re
@@ -44,6 +45,7 @@ from .base import AuthError, ChallengeError, IMPERSONATE, Item, Option, Source, 
 from .download import Response
 from .driver import Driver, HttpDriver, accept_language, moved
 from .walk import StartEmpty, Walk
+from .tabs import PopupMissing, Tabs, arrived, settle
 
 # How long a browser step may take (ms), and how long a job waits for the browser (s).
 STEP_TIMEOUT = 30_000
@@ -195,16 +197,21 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes
         self._replay(self.main, todo, secrets)
 
     def _replay(self, page: Any, todo: list[tuple[int, dict]], secrets: dict[str, str]) -> None:
-        """Does the numbered steps on the page: an optional one that fails is skipped (and noted),
-        a required one fails the sign-in."""
+        """Does the numbered steps from the page (in the tabs they open: a sign-in's popup): an
+        optional one that fails is skipped (and noted), a required one fails the sign-in."""
         today = self.today()
-        for number, step in todo:
+        tabs = Tabs(page)
+        for index, (number, step) in enumerate(todo):
             try:
-                replay(page, dated_step(step, today), secrets, lambda old, new, n=number: self._repaired(n, old, new))
+                # A popup comes from the step before the one that goes on in it: the tabs open then.
+                if index + 1 < len(todo) and todo[index + 1][1].get("action") == "popup":
+                    tabs.opening()
+                if not tabs.switch(step, OPTIONAL_TIMEOUT if step.get("optional") else STEP_TIMEOUT):
+                    replay(tabs.page, dated_step(step, today), secrets, functools.partial(self._repaired, number))
             except Stopped:
                 # The run or the recipe's test was stopped during the step: no failure of it.
                 raise
-            except (PlaywrightError, FrameMissing) as error:
+            except (PlaywrightError, FrameMissing, PopupMissing) as error:
                 if not step.get("optional"):
                     self._failed(number, step, error, page)
                 # Best effort: no picture, no failure; the run says what it went on without.
@@ -361,7 +368,9 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes
         hooks = {"request": [session_cookies(self.context.storage_state()["cookies"])]}
         options = {"proxy": self.proxy} if self.proxy else {}
         headers = {"User-Agent": self.user_agent, "Accept-Language": accept_language(browser.LOCALE)}
-        with download.guarded_client(self.impersonate, event_hooks=hooks, headers=headers, **options) as client:
+        with download.guarded_client(
+            **download.impersonation(self.impersonate), event_hooks=hooks, headers=headers, **options
+        ) as client:
             with download.http(client, {"Referer": self.referer} if self.referer else None)(url) as response:
                 yield response
 
@@ -484,15 +493,6 @@ def scroll_to_load(page, rounds: int) -> None:
             return
 
 
-def settle(page) -> None:
-    """Waits for what a step started: a new page, or the requests of a script."""
-    page.wait_for_timeout(500)
-    try:
-        page.wait_for_load_state("networkidle", timeout=15_000)
-    except Exception:  # pylint: disable=broad-exception-caught
-        pass  # a page that never goes quiet (ads, polling) is used as it is
-
-
 def filled(step: dict, secrets: dict[str, str]) -> str:
     """What a fill step types: its value, an account's credential, or the current one-time code."""
     if step.get("credential") == "totp":
@@ -587,6 +587,13 @@ def replay(page, step: dict, secrets: dict[str, str], repaired: Callable[[str, s
     elif action == "fill":
         target.fill(selector, filled(step, secrets), **wait)
         return
+    elif action == "select":
+        # By its value, else by the text it shows (whichever the list has first).
+        chosen = {key: str(step[key]) for key in ("value", "label") if step.get(key) not in (None, "")}
+        target.select_option(selector, **chosen, **wait)
+    elif action == "hover":
+        target.hover(selector, **wait)
+        return
     elif action == "click":
         target.click(selector, **wait)
     elif action == "press":
@@ -599,7 +606,7 @@ def replay(page, step: dict, secrets: dict[str, str], repaired: Callable[[str, s
     elif action == "scroll":
         scroll_to_load(page, int(step.get("rounds") or recipes.SCROLL_ROUNDS))
         return
-    settle(page)
+    arrived(page, step, max(1.0, budget - (time.monotonic() - started) * 1000))
 
 
 class Site(Source):  # pylint: disable=too-many-instance-attributes

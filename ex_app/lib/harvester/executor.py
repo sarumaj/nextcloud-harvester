@@ -512,8 +512,8 @@ class Executor:
             credentials = self._credentials(nc, job)
             started = time.monotonic()
             home = bool(int(job.options.get("home", 0) or 0)) and bool(browser.PROXY)
-            impersonate = download.impersonates(job.options)
-            with guarded_client(impersonate, **({"proxy": browser.PROXY} if home else {})) as client:
+            posing = download.impersonation(download.impersonates(job.options))
+            with guarded_client(**posing, **({"proxy": browser.PROXY} if home else {})) as client:
                 if home:
                     self.store.log(job_id, "info", through_proxy(client))
                 source = source_class(job.options, credentials, client)
@@ -634,8 +634,8 @@ class Executor:
             self.call(nc.set_user(job.user))
             credentials = self._credentials(nc, job)
             home = bool(int(job.options.get("home", 0) or 0)) and bool(browser.PROXY)
-            impersonate = download.impersonates(job.options)
-            with guarded_client(impersonate, **({"proxy": browser.PROXY} if home else {})) as client:
+            posing = download.impersonation(download.impersonates(job.options))
+            with guarded_client(**posing, **({"proxy": browser.PROXY} if home else {})) as client:
                 source = SOURCES[job.source](job.options, credentials, client)
                 source.home = home
                 source.timezone = job.timezone

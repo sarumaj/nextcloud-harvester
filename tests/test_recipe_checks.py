@@ -130,3 +130,5 @@ def test_the_sign_in_ends_with_what_sends_the_last_credential():
     assert sign_in_steps(steps) == 5, "username first: the password's Enter ends the sign-in"
     assert sign_in_steps(steps[:4]) == 4
     assert sign_in_steps([{"action": "goto", "url": f"{SITE}/list"}, {"action": "click", "selector": "a"}]) == 0
+    popup = [{"action": "click", "selector": "#sso"}, {"action": "popup"}, *steps[1:5], {"action": "opener"}]
+    assert sign_in_steps(popup + steps[5:]) == 7, "back from the sign-in's popup is the sign-in's"

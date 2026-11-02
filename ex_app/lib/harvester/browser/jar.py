@@ -6,7 +6,8 @@ page only when the person asks to see that one (cookie-show) or to take them int
 account (cookies-export). Nothing here logs a value either. What the person adds or changes is
 checked first: a name and value without control characters, sizes a browser keeps, and a domain
 of the sites the browser is at or has cookies of (the page's host, a parent or a subdomain of
-one): the panel is no way to plant cookies for arbitrary sites.
+one), never a public suffix (com, co.uk, github.io: a cookie there would go to every site under
+it): the panel is no way to plant cookies for arbitrary sites.
 
 The messages from the page: {type: cookies, all} (the listing: the page's site's cookies, or all
 of them), {type: cookie-show, name, domain, path}, {type: cookie-set, cookie, original} (add, or
@@ -20,6 +21,8 @@ cookies-error, message}.
 import re
 import time
 from urllib.parse import urlparse
+
+from publicsuffixlist import PublicSuffixList
 
 from .. import cookies as cookie_jar
 
@@ -35,6 +38,10 @@ CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 NAME_BAD = re.compile(r"[\s;,=]")
 VALUE_BAD = re.compile(r"[;,]")
 COMMANDS = ("cookies", "cookie-show", "cookie-set", "cookie-delete", "cookies-delete-site", "cookies-export")
+# The public suffixes, as browsers know them: the list the package brings (its version pinned in
+# requirements.txt), read once and never fetched (no network at runtime). Its private part counts
+# too (github.io's sites belong to different people), as it does in Chromium.
+SUFFIXES = PublicSuffixList()
 
 
 class Refused(ValueError):
@@ -103,10 +110,12 @@ def known_hosts(cookies: list[dict], urls: list[str]) -> set[str]:
 
 
 def domain_allowed(domain: str, hosts: set[str]) -> bool:
-    """Whether a cookie may be set for the domain: one of the hosts, a parent of one (not a bare
-    top-level domain) or a subdomain of one."""
+    """Whether a cookie may be set for the domain: one of the hosts, a parent of one (not a public
+    suffix: co.uk is a parent of shop.example.co.uk, and no site's) or a subdomain of one."""
     name = bare(domain)
     if not name or "." not in name or not re.fullmatch(r"[a-z0-9.-]+", name) or ".." in name:
+        return False
+    if SUFFIXES.is_public(name):
         return False
     return any(name == host or host.endswith("." + name) or name.endswith("." + host) for host in hosts)
 
