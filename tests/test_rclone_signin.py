@@ -257,3 +257,37 @@ def test_the_real_rclone_listens_until_stopped(monkeypatch):
         asyncio.run(flow())
     finally:
         wizards.close()
+
+
+def test_ending_the_wizard_ends_its_sign_in_from_the_loop_or_a_worker(at_sign_in):
+    async def cancelled(in_worker: bool):
+        wizards, session = at_sign_in("time.sleep(60)")
+        authorization = wizards.authorization("anna", session)
+        await authorization.start()
+        token = asyncio.ensure_future(authorization.token())
+        if in_worker:
+            # A wizard ended in a worker thread (a third wizard of the person's, expiry).
+            await asyncio.to_thread(wizards.cancel, "anna", session)
+        else:
+            wizards.cancel("anna", session)
+        with pytest.raises(WizardError):
+            await asyncio.wait_for(token, 10)
+        assert await asyncio.wait_for(authorization.process.wait(), 10) is not None, "rclone is gone"
+        assert wizards.authorizing is None, "the app's sign-in is free again"
+
+    asyncio.run(cancelled(False))
+    asyncio.run(cancelled(True))
+
+
+def test_ending_another_wizard_leaves_a_sign_in_alone(at_sign_in):
+    wizards, session = at_sign_in("time.sleep(60)")
+    other = wizards.start("ben", "drive")["session"]
+
+    async def flow():
+        authorization = wizards.authorization("anna", session)
+        await authorization.start()
+        wizards.cancel("ben", other)
+        assert authorization.process.returncode is None and wizards.authorizing is authorization
+        await authorization.stop()
+
+    asyncio.run(flow())

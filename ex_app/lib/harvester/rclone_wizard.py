@@ -399,10 +399,15 @@ class Authorization:
         self.process: Process | None = None
         self._messages: list[str] = []
         self._reading: asyncio.Future | None = None
+        # The event loop rclone runs on: kill() from another thread (a wizard ended in a worker)
+        # is handed to it, as asyncio's tasks and processes are not to be touched from elsewhere.
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._ended = False
 
     async def start(self) -> str:
         """Starts rclone; the link it asks the browser to open (its listener's)."""
         session = self.session
+        self._loop = asyncio.get_running_loop()
         self.process = await asyncio.create_subprocess_exec(
             session.binary,
             f"--config={session.path}",
@@ -450,13 +455,34 @@ class Authorization:
                 await asyncio.wait_for(self._reading, 10)
         except asyncio.TimeoutError as error:
             raise WizardError(f"the sign-in took longer than {AUTHORIZE_TIMEOUT // 60} minutes", 504) from error
+        except asyncio.CancelledError as error:
+            # Ended by kill() (the wizard ended, the app stops): the page is told so. A
+            # cancellation of the waiting itself goes on as one.
+            task = asyncio.current_task()
+            if self._ended and not (task and task.cancelling()):
+                raise WizardError("the sign-in was ended", 409) from error
+            raise
         text = printed.decode("utf-8", "replace")
         if code != 0 or "<---" not in text:
             raise WizardError(f"rclone's sign-in failed: {last_line(''.join(self._messages))}")
         return pasted_token(text)
 
     def kill(self) -> None:
-        """Ends rclone (its listener with it) and gives the app's sign-in back; once."""
+        """Ends rclone (its listener with it) and gives the app's sign-in back; once. From
+        another thread than rclone's event loop, it is done there."""
+        loop = self._loop
+        if loop is not None and loop.is_running():
+            try:
+                current = asyncio.get_running_loop()
+            except RuntimeError:
+                current = None
+            if current is not loop:
+                loop.call_soon_threadsafe(self._kill)
+                return
+        self._kill()
+
+    def _kill(self) -> None:
+        self._ended = True
         if self.process and self.process.returncode is None:
             try:
                 self.process.kill()
@@ -501,7 +527,15 @@ class Wizards:
             for session in gone:
                 del self.sessions[session.id]
         for session in gone:
-            session.close()
+            self._end(session)
+
+    def _end(self, session: Session) -> None:
+        """Ends a wizard taken out of the list: its sign-in first, if one runs (rclone killed; the
+        browser closes and its slot is freed as the sign-in's token fails), then its directory."""
+        authorizing = self.authorizing
+        if authorizing is not None and authorizing.session is session:
+            authorizing.kill()
+        session.close()
 
     def start(self, user: str, kind: str) -> dict:
         """A new wizard of the user's for a remote of this type, at its first question."""
@@ -519,7 +553,7 @@ class Wizards:
             session = Session(user, kind, binary, self.run, used=self.clock())
             self.sessions[session.id] = session
         for old in ended:
-            old.close()
+            self._end(old)
         try:
             return self._step(session, session.start)
         except WizardError:
@@ -581,7 +615,7 @@ class Wizards:
             if session is None or session.user != user:
                 return
             del self.sessions[session_id]
-        session.close()
+        self._end(session)
 
     def close(self) -> None:
         """Ends every wizard and the sign-in (the app stops)."""

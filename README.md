@@ -120,7 +120,8 @@ the app's browser or taken from a template, not by code.
 - **Browsers:** up to `HARVESTER_BROWSERS` Chromiums at once (3 by default; each takes some
   300-600 MB): each running website job takes one, recordings the others, so people record side
   by side and while jobs run. When all are taken, the recorder's screen says so instead of staying
-  empty.
+  empty. A browser is freed whenever its view ends: Done, Cancel, another view of the page,
+  closing the page, the time limits, or (rclone's sign-in) the wizard's end.
 - **Admin settings:** *Administration settings > Additional settings > Harvester* sets the
   numbers of jobs and browsers at once (1 to 8 each) and the proxy; the environment's values
   (`HARVESTER_RUNNERS`, `HARVESTER_BROWSERS`, `HARVESTER_PROXY`, `HARVESTER_PROXY_NAME`) are the

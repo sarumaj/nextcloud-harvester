@@ -316,8 +316,11 @@
 	function rcloneWizard(textarea) {
 		const panel = el('div', { class: 'harvester-card harvester-wizard', 'aria-live': 'polite' })
 		let session = null
+		// The sign-in's connection, if one runs: the wizard's end ends it (and frees its browser).
+		let signIn = null
 		const error = el('p', { class: 'harvester-error' })
 		const close = () => {
+			if (signIn) signIn.close()
 			if (session) api('DELETE', `/rclone/wizard/${session}`).catch(() => {})
 			session = null
 			panel.remove()
@@ -419,6 +422,8 @@
 		// `rclone authorize`, and its token answers the question once the person signed in.
 		function signInHere(view) {
 			const socket = new WebSocket(`${RECORDER}?rclone=${encodeURIComponent(session)}`)
+			signIn = socket
+			socket.addEventListener('close', () => { if (signIn === socket) signIn = null })
 			const send = (message) => socket.readyState === WebSocket.OPEN && socket.send(JSON.stringify(message))
 			const screen = el('img', { class: 'harvester-screen', tabindex: '0', alt: 'The sign-in’s browser' })
 			const url = el('input', { class: 'harvester-url', readonly: '' })
@@ -428,6 +433,7 @@
 			socket.addEventListener('message', (event) => {
 				const data = JSON.parse(event.data)
 				if (data.type === 'frame') {
+					if (left(screen, socket)) return
 					screen.frame(data.data)
 					if (message.textContent === 'Starting rclone and the browser…') message.textContent = ''
 				} else if (data.type === 'cursor') screen.style.cursor = data.cursor
@@ -671,6 +677,14 @@
 		return bar
 	}
 
+	// A browser's view that is no longer on the page (another view of the app was opened without
+	// its Cancel): its connection closes, which ends the browser on the server and frees it.
+	function left(screen, socket) {
+		if (screen.isConnected) return false
+		socket.close()
+		return true
+	}
+
 	// Which address the sites see this browser come from (the server's, or the proxy's), as the
 	// server asked Cloudflare through the browser's own connection: the proof that a proxy is used.
 	function networkLine() {
@@ -703,6 +717,7 @@
 		socket.addEventListener('message', (event) => {
 			const data = JSON.parse(event.data)
 			if (data.type === 'frame') {
+				if (left(screen, socket)) return
 				screen.frame(data.data)
 				if (message.textContent === 'Starting the browser…') message.textContent = ''
 			} else if (data.type === 'cursor') screen.style.cursor = data.cursor
@@ -790,7 +805,7 @@
 
 		socket.addEventListener('message', (event) => {
 			const data = JSON.parse(event.data)
-			if (data.type === 'frame') screen.frame(data.data)
+			if (data.type === 'frame') { if (!left(screen, socket)) screen.frame(data.data) }
 			else if (data.type === 'cursor') screen.style.cursor = data.cursor
 			else if (data.type === 'url') url.value = data.url
 			else if (data.type === 'error') { message.textContent = data.message; screen.say(data.message) }
