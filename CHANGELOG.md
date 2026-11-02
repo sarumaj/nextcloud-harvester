@@ -22,6 +22,30 @@
   into the job's *Cookies* field (saved with the form, or stored after a confirmation in the
   job's browser); *Use for this job* keeps the session for the job without ending the browser.
   A cookies.txt keeps the HttpOnly mark when read and written.
+- **Selectors with alternatives:** the recorder finds each step's element by several selectors
+  that matched it alone (a test id, a stable id, its role and name, `aria-label`, `name`,
+  stable classes, its text, its place last), keeps the best and the others as
+  `"alternatives"`; picks keep alternatives that matched the same links. A replay tries them
+  in turn when the selector finds nothing, and the log says `step 3: selector repaired (old →
+  new)` (levels, file links, the next page alike; **Test the recipe** lists them). The recipe
+  is not changed; recipes without alternatives run as before. The pick panels list a pick's
+  alternatives.
+- **Tokens in addresses:** the recorder warns of a step's or the listing's address carrying a
+  token of the visit (`code`, `ticket`, `sid`, a signature, …), likely spent when the job runs.
+
+### Fixed
+
+- The next page's link of a pager without classes was its first link, "‹ previous" on page 2:
+  a `rel="next"` or the link's text (`›`, *Next*) comes first now.
+- A listing reached through the recorded steps kept its address with a sign-in's spent
+  `?code=` or `?ticket=`: the job starts where the steps end then.
+- Proposed patterns held a session's id (`&sid=abc`) and never matched a link with a fragment
+  (`1.pdf#page=1`); volatile and tracking parameters and fragments are no part of them now.
+- `Report%202024.pdf` was proposed with the number 202024 instead of the year 2024.
+- Links of one script (`download.php?id=N`) were all proposed the file name `download.php`:
+  their text or their groups now, with `{disposition}` offered.
+- The recorder outlined a pattern as JavaScript reads it: Python's own syntax (`(?P=name)`, a
+  leading `(?i)`, `(?x)`) outlined wrongly or not at all.
 
 ## 0.10.0 - 2026-11-02
 

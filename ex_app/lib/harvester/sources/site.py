@@ -24,7 +24,7 @@ from playwright.sync_api import Route, WebSocketRoute, sync_playwright
 
 from .. import browser
 from .. import cookies as cookie_jar
-from .. import otp, pagination, patterns
+from .. import otp, pagination, patterns, selectors
 from .. import recipe as recipes
 from ..browser.guard import Guard
 from . import download
@@ -71,6 +71,8 @@ class Driver(abc.ABC):
     saw: Callable[[dict], None] | None = None
     # The optional steps the sign-in went on without: {"number", "label", "why"} each.
     skipped: list[dict] = []
+    # The steps whose element an alternative selector found (selectors.repair_line's lines).
+    repaired: list[str] = []
 
     def keep_shot(self, page: Any, what: str) -> None:
         """Keeps what the page shows, and tells saw."""
@@ -146,7 +148,7 @@ class HttpDriver(Driver):
         page_url, soup = page
         return [
             (urljoin(page_url, str(link.get("href"))), link.get_text(" ", strip=True))
-            for link in soup.select(selector)
+            for link in selectors.soup_select(soup, selector)
             if link.get("href")
         ]
 
@@ -231,6 +233,7 @@ class BrowserDriver(Driver):
         todo = list(enumerate(steps, 1))
         self._start = start
         self.skipped = []
+        self.repaired = []
         if session and start:
             self.main.goto(start, wait_until="domcontentloaded")
             settle(self.main)
@@ -239,7 +242,7 @@ class BrowserDriver(Driver):
                 todo = todo[last:]
         for number, step in todo:
             try:
-                replay(self.main, step, secrets)
+                replay(self.main, step, secrets, lambda old, new, n=number: self._repaired(n, old, new))
             except Stopped:
                 # The run or the recipe's test was stopped during the step: no failure of it.
                 raise
@@ -250,6 +253,9 @@ class BrowserDriver(Driver):
                 self.skipped.append({"number": number, "label": recipes.step_label(step), "why": short_error(error)})
             except Exception as error:  # pylint: disable=broad-exception-caught
                 self._failed(number, step, error)
+
+    def _repaired(self, number: int, old: str, new: str) -> None:
+        self.repaired.append(selectors.repair_line(f"step {number}", old, new))
 
     def _failed(self, number: int, step: dict, error: Exception) -> None:
         """A required step failed: the page asking for a person (ChallengeError), else SourceError
@@ -492,9 +498,11 @@ def in_frame(page, frames: list[dict], timeout: float):
     return target
 
 
-def replay(page, step: dict, secrets: dict[str, str]) -> None:
+def replay(page, step: dict, secrets: dict[str, str], repaired: Callable[[str, str], None] | None = None) -> None:
     """Does one recorded step, in its frame if it has one; an optional step waits for its frame
-    and element OPTIONAL_TIMEOUT at most (a required one the page's default, STEP_TIMEOUT)."""
+    and element OPTIONAL_TIMEOUT at most (a required one the page's default, STEP_TIMEOUT). A
+    step with alternative selectors finds its element by the first that does (selectors.resolve,
+    an alternative told to repaired) within the same time."""
     action = step["action"]
     started = time.monotonic()
     budget = OPTIONAL_TIMEOUT if step.get("optional") else STEP_TIMEOUT
@@ -503,15 +511,19 @@ def replay(page, step: dict, secrets: dict[str, str]) -> None:
     # What is left of an optional step's time for its element (never 0: Playwright's "no limit").
     left = max(1.0, budget - (time.monotonic() - started) * 1000)
     wait = {"timeout": left} if step.get("optional") else {}
+    selector = step.get("selector", "")
+    if action in recipes.ON_ELEMENTS and step.get("alternatives"):
+        selector = selectors.resolve(target, step, left, repaired)
+        wait = {"timeout": max(1.0, budget - (time.monotonic() - started) * 1000)}
     if action == "goto":
         page.goto(step["url"], wait_until="domcontentloaded")
     elif action == "fill":
-        target.fill(step["selector"], filled(step, secrets), **wait)
+        target.fill(selector, filled(step, secrets), **wait)
         return
     elif action == "click":
-        target.click(step["selector"], **wait)
+        target.click(selector, **wait)
     elif action == "press":
-        target.press(step["selector"], step.get("key", "Enter"), **wait)
+        target.press(selector, step.get("key", "Enter"), **wait)
     elif action == "scroll":
         scroll_to_load(page, int(step.get("rounds") or recipes.SCROLL_ROUNDS))
         return
@@ -633,6 +645,8 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
         # Told of each listing page the walk reads (survey(): the recipe's test).
         self.observe: Callable[[dict], None] = lambda event: None
         self._shot: dict | None = None
+        # The picks whose links an alternative selector found in this run (each said once).
+        self.repairs: list[str] = []
 
     def _saw(self, shot: dict) -> None:
         self._shot = shot
@@ -666,6 +680,8 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
                 )
                 for skipped in self.driver.skipped:
                     self.report("info", skipped_line(skipped))
+                for line in self.driver.repaired:
+                    self.report("info", line)
             else:
                 # Without recorded steps, the account's user name and password are HTTP Basic's.
                 self.sign_client(start)
@@ -681,7 +697,8 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
         def matching(page, spec: dict, level: int, number: int) -> list[tuple[str, str, dict]]:
             pattern = spec.get("pattern") or ""
             found = []
-            links = driver.links(page, spec["selector"])
+            what = "file links" if spec is self.recipe["links"] else f"level {level + 1}"
+            links = self._links(driver, page, spec, what)
             for url, text in links:
                 # A person's pattern, within its time limit (a slow one fails the run).
                 match = pattern_search(pattern, url) if url else None
@@ -762,7 +779,7 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
                     if after.get("kind") == "number":
                         later = driver.numbered(page, after["selector"], number)
                     else:
-                        later = driver.next(page, after["selector"])
+                        later = self._next(driver, page, after)
                     if later is None:
                         return
                     page = later
@@ -771,6 +788,48 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
                     driver.done(page)
 
         yield from walk(self.recipe.get("start") or None, 0, {}, {"found": False, "new": False})
+
+    def _repaired(self, what: str, old: str, new: str) -> None:
+        line = selectors.repair_line(what, old, new)
+        if line not in self.repairs:
+            self.repairs.append(line)
+            self.report("info", line)
+
+    def _links(self, driver: Driver, page: Any, spec: dict, what: str) -> list[tuple[str, str]]:
+        """A pick's links on the page: its selector's, else (none of them matching its pattern)
+        the first alternative's of which the pattern matches any (a repair, said once)."""
+        tries = selectors.candidates(spec)
+        links = driver.links(page, tries[0])
+        pattern = spec.get("pattern") or ""
+        if len(tries) < 2 or any(url and pattern_search(pattern, url) for url, _ in links):
+            return links
+        for alternative in tries[1:]:
+            try:
+                found = driver.links(page, alternative)
+            except selectors.SELECTOR_ERRORS:
+                continue  # an engine this driver lacks (the browser's, over HTTP)
+            if any(url and pattern_search(pattern, url) for url, _ in found):
+                self._repaired(what, tries[0], alternative)
+                return found
+        return links
+
+    def _next(self, driver: Driver, page: Any, after: dict) -> Any:
+        """The page after this one by the next page's selector, else (not on the page) by the
+        first alternative that is (a repair, said once); None at the last page."""
+        tries = selectors.candidates(after)
+        if len(tries) > 1 and not self._finds(driver, page, tries[0]):
+            for alternative in tries[1:]:
+                if self._finds(driver, page, alternative):
+                    self._repaired("next page", tries[0], alternative)
+                    return driver.next(page, alternative)
+        return driver.next(page, tries[0])
+
+    @staticmethod
+    def _finds(driver: Driver, page: Any, selector: str) -> bool:
+        try:
+            return bool(driver.links(page, selector))
+        except selectors.SELECTOR_ERRORS:
+            return False
 
     def item(self, link: str, text: str, page: int, groups: dict) -> Item:
         """The file of a link: its download URL and path from the link's values (an item that
@@ -834,6 +893,8 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
         result["shot"] = self.shot
         # The optional steps it went on without: listed apart, no problems of the recipe.
         result["skipped"] = list(self.driver.skipped if self.driver else [])
+        # The selectors alternatives stood in for (the recipe unchanged).
+        result["repaired"] = [*(self.driver.repaired if self.driver else []), *self.repairs]
         return result
 
     def close(self) -> None:

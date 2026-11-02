@@ -104,7 +104,7 @@ the app's browser or taken from a template, not by code.
 - **Recipes** (`ex_app/lib/harvester/recipe.py`): the steps to sign in (replayed in Chromium;
   without steps the pages are fetched over HTTP), the listing to start at, levels of links to
   follow (a year, then its issues), the file links, and the next page's link. Each level has
-  a CSS selector and a pattern: a regular expression on the link's URL whose named groups
+  a selector and a pattern: a regular expression on the link's URL whose named groups
   (`(?P<year>\d{4})`) become values.
 - **Numbered pages:** a listing paged by numbers (`‹ 1 [2] 3 … 9 ›`) instead of one "next" link
   has `"next": {"kind": "number", "selector": <the numbers' container>, "level": 0}`
@@ -141,6 +141,33 @@ the app's browser or taken from a template, not by code.
   its switch **optional**; a click whose text reads like a consent button (*Accept*, *OK*,
   *Alle akzeptieren*, *Zgadzam się*, …) gets the hint **make optional?**, never more.
   **Test the recipe** lists the steps it went on without apart from the problems.
+- **Selectors with alternatives** (`harvester/selectors.py`): recorder.js finds a step's element
+  by every selector that matched it alone when it was recorded, ranked as Playwright's codegen
+  ranks them: a test id (`data-testid`, `data-test`, `data-qa`, `data-cy`), an id that does not
+  look generated (`:r1:`, `ember123`, hashes), its role and accessible name
+  (`internal:role=button[name="Sign in"s]`), `aria-label`, `name`, stable classes, its text
+  (`span:text-is("Accept all")`), its place among its siblings last; within the nearest
+  ancestor with a test id or id when that makes one unique (`#login input[name="user"]`). A
+  role is only written where its name is certain (no pictures, icons from CSS or hidden text
+  inside). The step keeps the best as `"selector"`, the rest as `"alternatives"`. A replay
+  (`selectors.resolve(page_or_frame, step)`) takes the selector once it finds anything; after
+  2 s without, the first alternative that finds exactly one element, within the step's time,
+  and the log says `step 3: selector repaired (#old → [data-testid="go"])`. Levels and the file
+  links keep alternatives that matched the same links (within a stable ancestor, the links'
+  own classes, their file type: `a[href$=".pdf" i]`), tried when the selector's links match
+  none of the pattern (`level 1: selector repaired (…)`, `file links: …`); the next page's link
+  its own, tried when it is not on the page (`next page: …`). The recipe stays as it is, each
+  repair is said once a run and **Test the recipe** lists them. Over HTTP the role selectors of
+  links and buttons and `text-is` work too. Recipes without alternatives run as before. For
+  the next page's link a `rel="next"` comes first, and its place only when nothing else finds
+  it: a pager without classes (`‹ 1 2 ›`) is found by its `›`, never as its first link, which
+  on page 2 is "‹ previous".
+- **The listing where the steps end:** a listing picked on the page the recorded steps lead to
+  (nothing browsed since), whose address carries a token of the visit (`code`, `ticket`,
+  `token`, `sid`, `session`, `state`, `sig`, `signature`, `expires`, `X-Amz-*`, …), is no
+  address in the recipe: the job starts where its steps end. The recorder warns of such tokens
+  in the listing's address and in a step's (an address typed, Back or Forward to a sign-in's
+  return address), as they are likely spent when the job runs.
 - **Values:** the download URL (`{url}/download`), the file's name
   (`{year}/iX {year}-{issue:02d}`) and the tags (`{year}`) are templates of the link's values:
   the pattern's groups and `url`, `text`, `page`, `host`, `filename`, `stem`, `ext`.
@@ -149,13 +176,22 @@ the app's browser or taken from a template, not by code.
   browse without recording, then pick the links to follow and the file links: the app proposes
   a pattern with named groups for each (`patterns.propose`), outlines what it matches in the
   page (solid) and what it leaves out (dashed), lists examples with their values, and proposes
-  a file name and tags. Edit a pattern and the outlines follow. Passwords are never recorded:
+  a file name and tags. A proposal leaves out what changes from visit to visit: a fragment
+  (`#page=2`), a token's parameters (above) and tracking ones (`utm_*`, `;jsessionid=`); the
+  pattern takes any or none of them. It reads `Report%202024.pdf` as `Report%20` and the year
+  2024. Links that share a generic name (`download.php?id=N`) are named after their texts
+  (`{text}`), or their groups (`{id}`) when the texts are the same, and the recorder offers
+  `{disposition}`, the server's name for the file. Edit a pattern and the outlines follow, as
+  Python reads it: JavaScript's RegExp outlines with Python's syntax translated (`(?P<n>`,
+  `(?P=n)`, a leading `(?i)`), and with Python's own matches where it cannot (`(?x)`, `(?i:…)`,
+  atomic groups). Passwords are never recorded:
   the job fills in its account. **Back**, **Forward**, **Reload** and the address field's
   **Go** are buttons (Tab and Enter reach them), here and in **Continue in the browser**. They
   are steps only while recording: an address typed, Back and Forward become a step "goto" to the
   page arrived at (a job's browser has no history to go back in), Reload none; browsing and
   picking record nothing. Every pick (each level of links to follow, the file links, the next
-  page) has the same controls: its element (CSS selector) and pattern to edit, **Pick again**
+  page) has the same controls: its element (a selector, its alternatives listed) and pattern to
+  edit (a selector edited drops its alternatives), **Pick again**
   and **Remove** (a removed level's later levels move up); **Undo pick** takes back the last
   change of the picks. The recorder starts with the form's recipe, so its picks can be changed
   there. Picking a number of a numbered pagination as the next page proposes numbered pages,

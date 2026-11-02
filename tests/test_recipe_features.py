@@ -205,7 +205,7 @@ def test_a_step_cut_short_by_a_stop_is_no_failure(monkeypatch):
     from harvester.sources import Stopped  # pylint: disable=import-outside-toplevel
     from harvester.sources import site as site_module  # pylint: disable=import-outside-toplevel
 
-    def replay(page, step, secrets):  # pylint: disable=unused-argument
+    def replay(page, step, secrets, repaired=None):  # pylint: disable=unused-argument
         raise Stopped("stopped")
 
     monkeypatch.setattr(site_module, "replay", replay)
