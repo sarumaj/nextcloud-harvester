@@ -75,6 +75,42 @@ def is_year(value: str) -> bool:
     return value.isdigit() and len(value) == 4 and 1900 <= int(value) <= 2099
 
 
+# The parts of a link's address that change from visit to visit while the file stays the same:
+# a session in the path (;jsessionid=...) or the query (sid, PHPSESSID), the signature and expiry
+# of a presigned address (S3's X-Amz-*, Google's X-Goog-*, CloudFront's Expires, Signature and
+# Key-Pair-Id), and trackers (utm_*, fbclid, gclid, ...). Lowercase; the prefixes end with a
+# dash or an underscore.
+VOLATILE = frozenset(
+    {"jsessionid", "phpsessid", "sid", "sessionid", "session_id", "sessid", "aspsessionid", "cfid", "cftoken"}
+    | {"expires", "signature", "key-pair-id", "googleaccessid", "fbclid", "gclid", "dclid", "msclkid", "yclid"}
+    | {"mc_cid", "mc_eid", "_ga", "_gl", "igshid"}
+)
+VOLATILE_PREFIXES = ("utm_", "x-amz-", "x-goog-")
+
+
+def _volatile(name: str) -> bool:
+    name = unquote(name).lower()
+    return name in VOLATILE or name.startswith(VOLATILE_PREFIXES)
+
+
+def stable_url(url: str) -> str:
+    """The address without what changes between visits (VOLATILE, the fragment): what tells
+    a file, or a page, from another across runs. Any other address (no such parts, or not of
+    http(s)) comes back as it is, character for character, so a key recorded before stays."""
+    if not url.lower().startswith(("http://", "https://")):
+        return url
+    base, _, _ = url.partition("#")
+    address, mark, query = base.partition("?")
+    segments = address.split("/")
+    # A parameter of a path's segment (;jsessionid=...): Java's servlets put the session there.
+    for index, segment in enumerate(segments[3:], 3):
+        name, semicolon, rest = segment.partition(";")
+        if semicolon and _volatile(rest.split("=", 1)[0]):
+            segments[index] = name
+    kept = [pair for pair in query.split("&") if pair and not _volatile(pair.split("=", 1)[0])] if mark else []
+    return "/".join(segments) + ("?" + "&".join(kept) if kept else "")
+
+
 def link_values(url: str, text: str, page: int) -> dict:
     """The values every link gives, whatever the pattern."""
     parsed = urlparse(url)

@@ -12,11 +12,14 @@
   answers no challenge. A page's WebSockets are checked by the guard alone (Patchright applies
   no WebSocket route), so no disguised browser starts while the guard is off. The image gains
   some 20 MB (Patchright shares Playwright's Chromium and Node.js).
-- **Impersonate a browser** (videos and galleries): yt-dlp's own impersonation (`curl_cffi`,
-  now in the image: extractors that need it, Dailymotion's say, use it by themselves) for all of
-  a job's requests and the generic extractor (`generic:impersonate`), for sites behind
-  Cloudflare's bot check that answer yt-dlp with 403; gallery-dl's browser emulation (Chrome's
-  headers and TLS ciphers). A yt-dlp error asking for impersonation names the option.
+- **Impersonate a browser** (videos, galleries, websites, feeds, releases): yt-dlp's own
+  impersonation (`curl_cffi`, now in the image: extractors that need it, Dailymotion's say, use it
+  by themselves) for all of a job's requests and the generic extractor (`generic:impersonate`), for
+  sites behind Cloudflare's bot check that answer yt-dlp with 403; gallery-dl's browser emulation
+  (Chrome's headers and TLS ciphers). A yt-dlp error asking for impersonation names the option.
+  Harvester's own requests too, for websites (listings over HTTP and files), feeds, releases and
+  gallery images: httpx over `curl_cffi` impersonating Chrome, each redirect still checked, the
+  cookies, headers, size limits and proxy the job's.
 - **Steps in frames:** the recorder records what is done inside frames, cross-origin ones (a
   consent banner, a sign-in) and frames in frames included; such a step keeps the frame's path
   (`"frame"`: each frame's element, its address without the query, its name), and a replay
@@ -76,6 +79,35 @@
   alternatives.
 - **Tokens in addresses:** the recorder warns of a step's or the listing's address carrying a
   token of the visit (`code`, `ticket`, `sid`, a signature, …), likely spent when the job runs.
+- **Kept sessions:** a kept session skips the sign-in only (the steps up to the last credential
+  and what sends it); the steps from there to the listing always run. A session that no longer
+  reaches the listing is given up for a sign-in anew, in a browser of its own, and forgotten if
+  that fails too; a recipe with other steps or another site forgets it when saved. A session
+  that ends in the middle of a run signs in anew once, and the file is asked for again; ten
+  failures in a row end a run.
+- **Recipes:** dates in a fill step's value (`{today-30d:%d.%m.%Y}`, `{year}`, `{month:02d}`, in
+  the job's time zone); a key template for the file links (`"key": "{year}-{issue}"`); file
+  links that are clicked to download (`"click": true`: scripts, forms, blobs), checked as any
+  download; levels that load more of their pages (`"scroll"`, `"load_more"`). A recipe is
+  checked when saved: the kinds of its parts, actions, credentials, keys, dates, the next page's
+  level and the key's values, with readable messages.
+- **Downloads:** `{disposition}`, the name the site gives the file (Content-Disposition, RFC
+  6266 and 5987), made safe; the listing as `Referer`; a page standing in for the file (a meta
+  refresh, one download link) followed once.
+- **Editing the steps:** the recorder's Steps list moves (↑ ↓) and removes (✕) any step, sets
+  what a fill fills in (a value of its own, edited there, or the account's user name, password
+  or one-time code), edits a list's choice and drops a step's wait. A recipe with steps opens in
+  *Browse*; recording on it asks where the new steps go (*Append* after a step, *Replace from
+  there*, *Replace all*) instead of replacing the form's steps.
+- **More that is recorded:** a list's choice (a step `select`, by value or by its text), the
+  keys of a combobox or autocomplete (↑ ↓ Escape Tab Enter), text edited in place
+  (contenteditable), a menu that opens under the mouse (a step `hover` before the click),
+  elements in open shadow roots, and a sign-in's popup (steps `popup` and `opener`; a job waits
+  for the popup and acts in it). One-time codes are recognised also as Microsoft's `otc`,
+  Nextcloud's `challenge`, a plain `code` or a field of 6 to 8 digits after a password.
+- **Waits:** a click or press that went to another address waits in a job for that address and
+  the next step's element, then briefly for the network, instead of up to 15 s for a page that
+  never goes quiet. Recipes without it wait as before.
 
 ### Changed
 
@@ -107,6 +139,32 @@
   their text or their groups now, with `{disposition}` offered.
 - The recorder outlined a pattern as JavaScript reads it: Python's own syntax (`(?P=name)`, a
   leading `(?i)`, `(?x)`) outlined wrongly or not at all.
+- Steps after the sign-in that lead to the listing (a tab, *Show all*, a filter) were skipped
+  with a kept session, and a username-first or single sign-on page was taken for the listing.
+- A listing page that was gone (404), failed (500) or asked to wait (429, 503) failed the whole
+  run with httpx's error; now a page below the listing is empty (logged), the listing's own
+  error is readable, and pauses are waited for. Listing pages are paced, `<base href>` is
+  honoured, the browser's language is sent.
+- A run whose deeper pages showed a sign-in, an error or another page counted as a complete
+  pass, so known files ended the next runs before those files came.
+- Addresses with a session or a signature in them (`;jsessionid=`, `sid`, `X-Amz-Signature`,
+  `utm_*`) were new files every run, saved again as "x (2).pdf".
+- A next page that loops was read again silently; a next page that is a button ended an HTTP
+  job after page one without a word; a link shown on several listings took the first one's
+  values; a web page instead of a file always said "signed out?".
+- **A password shown as text was recorded:** with a "show password" switch on, the password
+  went into the recipe as a value, and the user name stayed one too. A field that was ever a
+  password's (or has a password's autocomplete) is one for good. A fill with a value of its own
+  in what looks like a password's field is pointed out in the job's form, the recorder and the
+  app's log (its step and field, never the value).
+- A sign-in submitted with Enter was recorded with the password filled twice and a click on the
+  submit button, and failed to replay; a list's choice was a fill (which fails), a checkbox's
+  label toggled the box twice, and a file input opened a file chooser: now one fill per field,
+  no click of the browser's own, a step `select`, one click, and a message.
+- A popup that closed itself left the recorder's screen on the closed tab ("Target closed"),
+  and a popup at its opener's origin was not recorded at all.
+- The cookies panel let a cookie be set for a public suffix (`co.uk` while at
+  `shop.example.co.uk`): such domains are refused, by the public suffix list.
 
 ## 0.10.0 - 2026-11-02
 

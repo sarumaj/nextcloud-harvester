@@ -15,7 +15,7 @@ import feedparser
 
 from .. import browser, patterns
 from . import download
-from .base import ACCOUNT_HELP, Item, Option, Source, SourceError, pattern_search
+from .base import ACCOUNT_HELP, IMPERSONATE, Item, Option, Source, SourceError, pattern_search
 
 UNSAFE = re.compile(r"[\\/:*?\"<>|\s]+")
 TAKES = ("enclosures", "links")
@@ -82,6 +82,7 @@ class Feed(Source):
             ),
         ),
         **download.DOWNLOAD_OPTIONS,
+        "impersonate": IMPERSONATE,
     }
     pause = 2.0
     listing_options = ("url", "take", "link_pattern")

@@ -25,6 +25,7 @@ from .watch import Watch, test_due
 from .nextcloud import NextcloudLibrary
 from .sources import MARK, SOURCES, AuthError, ChallengeError, Source, SourceError, Stopped
 from .sources.base import watch_stop
+from .sources import download
 from .sources.download import guarded_client
 from .store import Job, Store
 
@@ -511,11 +512,13 @@ class Executor:
             credentials = self._credentials(nc, job)
             started = time.monotonic()
             home = bool(int(job.options.get("home", 0) or 0)) and bool(browser.PROXY)
-            with guarded_client(**({"proxy": browser.PROXY} if home else {})) as client:
+            posing = download.impersonation(download.impersonates(job.options))
+            with guarded_client(**posing, **({"proxy": browser.PROXY} if home else {})) as client:
                 if home:
                     self.store.log(job_id, "info", through_proxy(client))
                 source = source_class(job.options, credentials, client)
                 source.home = home
+                source.timezone = job.timezone
                 # Every wait of the source ends at once when the run is stopped.
                 if hasattr(source, "sleep"):
                     source.sleep = control.nap
@@ -530,12 +533,8 @@ class Executor:
                         watch = self._watch(job, source, fetch)
                         message = self._work(job, source, library, control, started, None, fetch)
                 finally:
-                    # Kept also after a failure: cookies set before it (a sign-in) still count;
-                    # not for a job deleted while it ran (its session went with it), nor when its
-                    # account changed meanwhile (the session is the old account's).
                     try:
-                        if self.store.job(job_id) and self._credentials(nc, job) == credentials:
-                            self.call(save_session(nc, job, source.session()))
+                        self._keep_session(nc, job, credentials, source)
                     finally:
                         source.close()
             if not self._changed(job, watch, source, nc, message):
@@ -552,6 +551,19 @@ class Executor:
                 self.store.drop_fetch(fetch["id"])
             with self._lock:
                 self.controls.pop(job_id, None)
+
+    def _keep_session(self, nc: AsyncNextcloudApp, job: Job, credentials: dict[str, str], source: Source) -> None:
+        """Keeps the source's session for the job's next run, also after a failure: cookies set
+        before it (a sign-in) still count; not for a job deleted while it ran (its session went
+        with it), nor when its account changed meanwhile (the session is the old account's). One
+        the source gave up (stale: it no longer signed in) goes, unless a new one came."""
+        if not self.store.job(job.id or 0) or self._credentials(nc, job) != credentials:
+            return
+        session = source.session()
+        if session:
+            self.call(save_session(nc, job, session))
+        elif source.stale:
+            self.call(nc.preferences_ex.delete(session_key(job)))
 
     def _watch(self, job: Job, source: Source, fetch: dict | None) -> Watch | None:
         """What the run's walk finds, level by level, for a website job's own runs (not a fetch's:
@@ -622,9 +634,11 @@ class Executor:
             self.call(nc.set_user(job.user))
             credentials = self._credentials(nc, job)
             home = bool(int(job.options.get("home", 0) or 0)) and bool(browser.PROXY)
-            with guarded_client(**({"proxy": browser.PROXY} if home else {})) as client:
+            posing = download.impersonation(download.impersonates(job.options))
+            with guarded_client(**posing, **({"proxy": browser.PROXY} if home else {})) as client:
                 source = SOURCES[job.source](job.options, credentials, client)
                 source.home = home
+                source.timezone = job.timezone
                 setattr(source, "sleep", control.nap)
                 kept = self.call(load_session(nc, job))
                 if kept:
@@ -635,8 +649,7 @@ class Executor:
                     result = getattr(source, "survey")()
                 finally:
                     try:
-                        if self.store.job(job_id) and self._credentials(nc, job) == credentials:
-                            self.call(save_session(nc, job, source.session()))
+                        self._keep_session(nc, job, credentials, source)
                     finally:
                         source.close()
             self._tested(job, result, watch, source, nc)

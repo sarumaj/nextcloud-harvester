@@ -170,6 +170,10 @@
 		if (step.action === 'scroll') return `Scroll to load more${step.rounds ? ` (at most ${step.rounds} times)` : ''}`
 		if (step.action === 'click') return `Click ${step.text ? `“${step.text}”` : step.selector}`
 		if (step.action === 'press') return `Press ${step.key} in ${step.selector}`
+		if (step.action === 'select') return `Choose “${step.label || [].concat(step.value).join(', ')}” in ${step.selector}`
+		if (step.action === 'hover') return `Hover over ${step.selector}`
+		if (step.action === 'popup') return 'Go on in the popup it opened'
+		if (step.action === 'opener') return 'Back to the page that opened the popup (once it closed)'
 		if (step.action === 'mail-code') {
 			const of = [step.from ? `from ${step.from}` : '', step.subject ? `subject ${step.subject}` : ''].filter(Boolean).join(', ')
 			return `Type the code from e-mail${of ? ` (${of})` : ''} into ${step.selector}`
@@ -177,6 +181,18 @@
 		if (step.credential === 'totp') return `Fill in the current one-time code (${step.selector})`
 		if (step.credential) return `Fill in the account's ${step.credential} (${step.selector})`
 		return `Fill in “${step.value}” (${step.selector})`
+	}
+
+	// Fill steps whose own value sits in what looks like a password's field (#pw, [type=password],
+	// a name with pass or pwd): a password written into the recipe before the recorder knew such
+	// fields. The same check as the app's (recipe.PASSWORD_FIELD); the value is never shown.
+	const PASSWORD_FIELD = /pass|pwd|(?<![a-z])pw(?![a-z])/i
+	function leakedPasswords(recipe) {
+		const steps = recipe && Array.isArray(recipe.steps) ? recipe.steps : []
+		return steps.flatMap((step, index) => step && step.action === 'fill' && !step.credential && step.value
+			&& PASSWORD_FIELD.test(String(step.selector || ''))
+			? [`Step ${index + 1} fills a value of its own into ${step.selector}, which looks like a password field: mark it as the account’s password in the recorder’s Steps (and change the password if the recipe was shared).`]
+			: [])
 	}
 
 	// What everyone's jobs and recordings hold now, without whose: "Runners 2/2 · Browsers 3/3
@@ -1509,6 +1525,11 @@
 		// The page's answers in JSON (the Network panel).
 		let requests = []
 		const suggestions = {}
+		// A recipe with steps opens in Browse: recording asks first where its new steps go (after
+		// which step, and whether the later ones stay), never replacing them unasked.
+		let placed = !(recipe.steps || []).length
+		// A password the recipe holds (the recorder's warning on load).
+		const leaks = el('div', { class: 'harvester-warning', 'aria-live': 'polite' })
 		// The form's "HTTP/1.1 only", "Through the proxy" and "Disguise the browser", known before
 		// the browser starts (a saved job's own options win for its recordings).
 		const flags = ['http1', 'home', 'stealth'].map((name) => page.querySelector(`[data-option="${name}"]`))
@@ -1537,7 +1558,7 @@
 			links: 'Click one file link: the similar ones are picked with it, and a pattern is proposed.',
 			next: 'Click the link to the next page of this listing (if there is one); for numbered pages (1 2 3 …), click the number of the next page.',
 		}
-		const modeHelp = el('small', { text: help.record })
+		const modeHelp = el('small', { text: (recipe.steps || []).length ? help.browse : help.record })
 		// Where the person acts: the page, or a frame in it (recorder.js reports it as the mouse
 		// or the focus comes in).
 		const ordinal = (n) => `${n}${n % 10 === 1 && n % 100 !== 11 ? 'st' : n % 10 === 2 && n % 100 !== 12 ? 'nd' : n % 10 === 3 && n % 100 !== 13 ? 'rd' : 'th'}`
@@ -1553,17 +1574,47 @@
 		})
 		const radios = {}
 		const labels = [['record', 'Record steps'], ['browse', 'Browse'], ['follow', 'Pick links to follow'], ['links', 'Pick file links'], ['next', 'Pick next-page link']]
+		const placing = el('div', { class: 'harvester-placing' })
+		let current = placed ? 'record' : 'browse'
 		const choose = (mode, text, level, target) => {
-			// Picking a value has no radio of its own: it is a level's, started from its box.
-			for (const [name, radio] of Object.entries(radios)) radio.checked = name === mode
+			// Picking a value has no radio of its own: it is a level's, started from its box. Recording
+			// on a recipe with steps waits for where the new ones go: the mode stays as it was.
+			const shown = mode === 'record' && !placed ? current : mode
+			for (const [name, radio] of Object.entries(radios)) radio.checked = name === shown
+			if (shown !== mode) {
+				askPlace()
+				return
+			}
+			placing.replaceChildren()
+			current = mode
 			send(level === undefined ? { type: 'mode', mode } : { type: 'mode', mode, level, target })
 			modeHelp.textContent = text || help[mode]
 			scroll.disabled = mode !== 'record'
 			screen.focusKeys()
 		}
+		// Where the new steps of a recipe with steps go: after a step (the last, unless chosen),
+		// keeping the later ones; from there on, instead of the later ones; or instead of all.
+		function askPlace() {
+			const count = (recipe.steps || []).length
+			const after = el('select', { 'aria-label': 'After which step' },
+				...Array.from({ length: count + 1 }, (_, n) => el('option', { value: String(n), text: n ? `after step ${n}` : 'before step 1' })))
+			after.value = String(count)
+			const start = (replace, at) => {
+				send({ type: 'record-at', after: at === undefined ? Number(after.value) : at, replace })
+				placed = true
+				choose('record')
+			}
+			placing.replaceChildren(
+				el('span', { text: 'This recipe has steps. Record new ones ' }), after, ' ',
+				el('button', { type: 'button', class: 'primary', text: 'Append', title: 'The new steps go in there; the steps after it stay after them', onclick: () => start(false) }),
+				el('button', { type: 'button', text: 'Replace from there', title: 'The steps after that place go; the new ones take their place', onclick: () => start(true) }),
+				el('button', { type: 'button', text: 'Replace all', title: 'All steps go (the sign-in too); the new ones are the recipe’s', onclick: () => start(true, 0) }),
+				el('button', { type: 'button', text: 'Cancel', onclick: () => placing.replaceChildren() }))
+			after.focus()
+		}
 		for (const [mode, label] of labels) {
 			const radio = el('input', { type: 'radio', name: 'harvester-mode', value: mode })
-			radio.checked = mode === 'record'
+			radio.checked = mode === current
 			radio.addEventListener('change', () => choose(mode))
 			radios[mode] = radio
 			modes.append(el('label', {}, radio, ` ${label} `))
@@ -1615,9 +1666,13 @@
 		})
 
 		// A step of the list, with its switch "optional" (best effort: the job goes on without it)
-		// and, for a click that looks like a consent banner's, the hint to make it so. The switch
-		// changes the page's recipe (the form's steps from before) and tells the recorder (its own).
-		function renderStep(step, index) {
+		// and, for a click that looks like a consent banner's, the hint to make it so; buttons to
+		// move it up or down and to remove it; for a fill what it fills in (a value of its own,
+		// edited here, or the account's user name, password or one-time code); a list's choice to
+		// edit; the address a step waits for, to drop. The recorder holds the steps: each change
+		// goes to it, and its recipe comes back (the switch shows at once).
+		function renderStep(step, index, count) {
+			const edit = (change) => send({ type: 'step-edit', step: index, ...change })
 			const toggle = (optional) => {
 				if (optional) step.optional = true
 				else delete step.optional
@@ -1627,13 +1682,43 @@
 			const box = el('input', { type: 'checkbox', class: 'harvester-optional' })
 			box.checked = Boolean(step.optional)
 			box.addEventListener('change', () => toggle(box.checked))
+			const tool = (text, label, message, usable = true) => {
+				const button = el('button', { type: 'button', class: 'harvester-link', text, title: label, 'aria-label': `${label}: step ${index + 1}`, onclick: () => send({ ...message, step: index }) })
+				button.disabled = !usable
+				return button
+			}
+			const tools = el('span', { class: 'harvester-step-tools' },
+				tool('↑', 'Move up', { type: 'step-move', by: -1 }, index > 0),
+				tool('↓', 'Move down', { type: 'step-move', by: 1 }, index < count - 1),
+				tool('✕', 'Remove', { type: 'step-delete' }))
+			const details = []
+			if (step.action === 'fill') {
+				const kind = el('select', { 'aria-label': `What step ${index + 1} fills in` },
+					...[['', 'a value of its own'], ['username', 'the account’s user name'], ['password', 'the account’s password'], ['totp', 'the current one-time code']]
+						.map(([value, text]) => el('option', { value, text })))
+				kind.value = step.credential || ''
+				kind.addEventListener('change', () => edit({ credential: kind.value }))
+				details.push(el('label', {}, 'Fills in ', kind))
+			}
+			if ((step.action === 'fill' && !step.credential) || (step.action === 'select' && !Array.isArray(step.value))) {
+				const value = el('input', { class: 'harvester-step-value', value: String(step.value || ''), 'aria-label': `The value of step ${index + 1}` })
+				value.addEventListener('change', () => edit({ value: value.value }))
+				details.push(value)
+			}
+			if (step.wait && (step.wait.url || step.wait.selector)) {
+				const what = [step.wait.url ? `an address like ${step.wait.url}` : '', step.wait.selector ? `${step.wait.selector} to show` : ''].filter(Boolean).join(' and ')
+				details.push(el('small', { class: 'harvester-muted', text: `then waits for ${what} ` }),
+					el('button', { type: 'button', class: 'harvester-link', text: 'wait for the network instead', onclick: () => edit({ wait: null }) }))
+			}
 			return el('li', { class: step.frame && step.frame.length ? 'harvester-framed' : '' },
 				el('span', { text: `${describe(step)} ` }),
 				mailCode(step, index),
 				el('label', { title: 'Best effort: when it fails (not there, not visible), the job waits a few seconds at most and goes on without it' }, box, ' optional'),
 				!step.optional && looksLikeConsent(step)
 					? el('button', { type: 'button', class: 'harvester-link harvester-hint', text: 'make optional?', title: 'A consent banner often shows only on the first visit', onclick: () => toggle(true) })
-					: '')
+					: '',
+				tools,
+				details.length ? el('div', { class: 'harvester-step-details' }, ...details) : '')
 		}
 
 		// A code typed into a field (a one-time code's, or digits) may come by e-mail instead: the
@@ -1669,8 +1754,9 @@
 			testJob.hidden = testing
 			panel.replaceChildren(
 				el('div', { class: 'harvester-level-head' }, el('h3', { text: 'Steps' })),
+				leaks,
 				warnings.length ? el('ul', { class: 'harvester-error harvester-warnings' }, ...warnings.map((warning) => el('li', { text: warning }))) : '',
-				el('ol', {}, ...(recipe.steps || []).map((step, index) => renderStep(step, index))),
+				el('ol', {}, ...(recipe.steps || []).map((step, index, all) => renderStep(step, index, all.length))),
 				el('div', { class: 'harvester-level-head' }, el('h3', { text: 'Listing' }),
 					el('button', { type: 'button', text: 'Undo pick', title: 'Take back the last change of the picks', onclick: () => send({ type: 'undo-pick' }) })),
 				el('p', { text: recipe.start || ((recipe.steps || []).length ? '(where the steps end)' : '(the page where you pick)') }),
@@ -1696,8 +1782,12 @@
 			root.replaceChildren(page)
 		}
 
-		// The recorder starts with the form's picks, to change or remove them there.
-		socket.addEventListener('open', () => send({ type: 'load', recipe }))
+		// The recorder starts with the form's recipe, to change its steps and picks there; with steps,
+		// in Browse (recording asks where the new ones go).
+		socket.addEventListener('open', () => {
+			send({ type: 'load', recipe })
+			if (!placed) send({ type: 'mode', mode: 'browse' })
+		})
 		socket.addEventListener('message', (event) => {
 			const data = JSON.parse(event.data)
 			if (cookies.handle(data)) return
@@ -1710,11 +1800,11 @@
 			else if (data.type === 'test-started') { testing = true; tested = null; renderPanel() }
 			else if (data.type === 'test') { testing = false; tested = data.result; renderPanel() }
 			else if (data.type === 'where') showWhere(data.frame)
+			else if (data.type === 'warning') leaks.append(el('p', { text: data.message }))
 			else if (data.type === 'requests') { requests = data.items; if (!networkBox.hidden) renderRequests() }
 			else if (data.type === 'recipe') {
-				// The picks are the recorder's (it started with the form's); the steps an earlier
-				// recording made stay until new ones are recorded.
-				recipe = { ...recipe, ...data.recipe, steps: data.recipe.steps.length ? data.recipe.steps : recipe.steps || [] }
+				// The steps and picks are the recorder's (it started with the form's).
+				recipe = { ...recipe, ...data.recipe }
 				if (!data.recipe.next) delete recipe.next
 				proposals = data.proposals
 				warnings = data.warnings || []
@@ -1748,7 +1838,7 @@
 					drawer,
 					el('button', { class: 'primary', text: 'Done', onclick: () => close(true) }),
 					el('button', { text: 'Cancel', onclick: () => close(false) })),
-				modes, el('div', { class: 'harvester-toolbar' }, modeHelp, scroll), where, network, message, cookies.box, networkBox),
+				modes, placing, el('div', { class: 'harvester-toolbar' }, modeHelp, scroll), where, network, message, cookies.box, networkBox),
 			el('div', { class: 'harvester-stage' }, box, panel))
 		root.replaceChildren(container)
 		renderPanel()
@@ -1911,7 +2001,17 @@
 				const textarea = el('textarea', { rows: '10', class: 'harvester-recipe' })
 				textarea.value = current
 				optionInputs[key] = textarea
-				options.append(field(option.title, textarea, option.description),
+				const leaks = el('div', { class: 'harvester-warning', 'aria-live': 'polite' })
+				const checkLeaks = () => {
+					let parsed = {}
+					try {
+						parsed = JSON.parse(textarea.value || '{}')
+					} catch (e) {}
+					leaks.replaceChildren(...leakedPasswords(parsed).map((text) => el('p', { text })))
+				}
+				textarea.addEventListener('input', checkLeaks)
+				checkLeaks()
+				options.append(field(option.title, textarea, option.description), leaks,
 					el('button', {
 						type: 'button',
 						text: 'Record in the browser',
@@ -2111,6 +2211,12 @@
 		#harvester .harvester-muted { color: var(--color-text-maxcontrast); }
 		#harvester .harvester-steps .harvester-optional { margin: 0 2px 0 8px; min-height: 0; }
 		#harvester .harvester-steps .harvester-hint { font-size: 90%; }
+		#harvester .harvester-steps .harvester-step-tools { margin-inline-start: 6px; white-space: nowrap; }
+		#harvester .harvester-steps .harvester-step-tools button { min-height: 0; padding: 0 4px; }
+		#harvester .harvester-steps .harvester-step-details { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; margin: 2px 0 6px; }
+		#harvester .harvester-steps .harvester-step-details select, #harvester .harvester-steps .harvester-step-value { min-height: 0; margin: 0; }
+		#harvester .harvester-placing:not(:empty) { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 4px 0; }
+		#harvester .harvester-warning p { margin: 4px 0; padding: 4px 8px; border-inline-start: 3px solid var(--color-warning); color: var(--color-warning-text, var(--color-main-text)); }
 		#harvester .harvester-where { display: block; color: var(--color-text-maxcontrast); }
 		#harvester .harvester-cookies-panel { max-height: 50vh; overflow: auto; padding: 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); background: var(--color-main-background); }
 		#harvester .harvester-cookies { border-collapse: collapse; overflow-wrap: anywhere; }

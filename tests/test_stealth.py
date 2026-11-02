@@ -148,7 +148,8 @@ class Browser:
 
     def new_context(self, **options):
         self._engine.calls.append((self._engine.name, "context", options))
-        return Context(self._engine)
+        # Of the engine's module, as engine.disguised tells them apart.
+        return type("Context", (Context,), {"__module__": f"{self._engine.name}.sync_api._generated"})(self._engine)
 
     def close(self):
         pass

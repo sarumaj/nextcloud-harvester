@@ -6,15 +6,20 @@ fetch() does the rest. DOWNLOAD_OPTIONS are the settings this reads, for a sourc
 """
 
 import contextlib
+import email.message
+import posixpath
 import re
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import BinaryIO
+from urllib.parse import unquote, urljoin, urlparse
 
 import httpx
+from bs4 import BeautifulSoup
 
 from ..browser import allowed_url, challenge_in_html, reachable
-from .base import ChallengeError, Denied, Option, Refused, SourceError, check_stop, pattern_search
+from .impersonate import CurlTransport
+from .base import ChallengeError, Denied, Option, Refused, SourceError, WebPage, check_stop, pattern_search
 
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) Nextcloud-Harvester"
 # Waits a site asks for, per file; and the longest one honoured.
@@ -26,6 +31,21 @@ MAX_PAGE = 16 * 1024 * 1024
 # Network failures (a dropped connection, a timeout) tried again per file, after growing pauses.
 RETRIES = 3
 RETRY_PAUSE = 10
+# A page standing in for the file ("Your download starts in 5 seconds…"): the address of its
+# meta refresh, else of its one link that reads like the download (its text, a download
+# attribute, or a file's extension), is followed once.
+DOWNLOAD_WORDS = re.compile(
+    r"download|herunterladen|t[ée]l[ée]charger|descargar|scarica|pobierz|st[aá]hnout|click here|hier klicken", re.I
+)
+FILE_EXTENSIONS = (".pdf", ".zip", ".epub", ".mobi", ".mp3", ".mp4", ".m4a", ".jpg", ".jpeg", ".png", ".gz", ".7z")
+REFRESH = re.compile(r"^\s*\d*\s*[;,]?\s*url\s*=\s*['\"]?([^'\"]+)", re.I)
+NO_FILE = "the download URL gives a page (add a level of links, or change Download URL)"
+# A sign-in page: a password field, or an address of a sign-in.
+LOGIN_PATH = re.compile(r"(^|/)(log-?in|sign-?in|sso|auth|oauth2?|session/new)(/|$)", re.I)
+# Content-Disposition's filename* (RFC 5987): a charset, a language, the encoded name.
+FILENAME_STAR = re.compile(r"filename\*\s*=\s*([\w-]*)'[^']*'([^;]+)", re.I)
+# The longest file name a site may give (Nextcloud's own limit is 250 bytes).
+MAX_NAME = 200
 # The sizes' megabyte: 1000 × 1000 bytes, as the job's form and the progress log show sizes, so
 # that "4096 MB" is the 4.1 GB they show (not 4.3 GB of 1024 × 1024).
 MB = 1000 * 1000
@@ -140,10 +160,22 @@ def with_extension(path: str, settings: dict) -> str:
     return path + extension_ if extension_ and not path.lower().endswith(extension_) else path
 
 
-def guarded_client(**options) -> httpx.Client:
+def impersonates(options: dict) -> bool:
+    """Whether a job's options ask its downloads to impersonate a browser (base.IMPERSONATE)."""
+    return bool(int(options.get("impersonate", 0) or 0))
+
+
+def impersonation(wanted: bool) -> dict:
+    """guarded_client's option for impersonating a browser, given only when wanted (a client
+    made otherwise takes no such option)."""
+    return {"impersonate": True} if wanted else {}
+
+
+def guarded_client(impersonate: bool = False, **options) -> httpx.Client:
     """An HTTP client for the sources: every request, a redirect's too, only to an address the
     app may reach (browser.reachable), else SourceError; the event_hooks given run after the
-    check."""
+    check. impersonate: its requests present themselves as Chrome's (impersonate.CurlTransport,
+    through the proxy given), httpx still following the redirects and keeping the cookies."""
 
     def check(request: httpx.Request) -> None:
         if not reachable(str(request.url)):
@@ -151,15 +183,18 @@ def guarded_client(**options) -> httpx.Client:
 
     hooks = options.pop("event_hooks", {})
     settings = {"follow_redirects": True, "timeout": 120, "headers": {"User-Agent": USER_AGENT}} | options
+    if impersonate:
+        settings["transport"] = CurlTransport(str(settings.pop("proxy", "") or ""), USER_AGENT)
     return httpx.Client(event_hooks=hooks | {"request": [check, *hooks.get("request", [])]}, **settings)
 
 
-def http(client: httpx.Client) -> Opener:
-    """Downloads over HTTP with the client (its cookies, its headers)."""
+def http(client: httpx.Client, headers: dict[str, str] | None = None) -> Opener:
+    """Downloads over HTTP with the client (its cookies, its headers, and these)."""
 
     @contextlib.contextmanager
     def open_url(url: str) -> Iterator[Response]:
-        with client.stream("GET", url) as response:
+        # Without headers, as it always was (a client of a source's own may take no more).
+        with client.stream("GET", url, **({"headers": headers} if headers else {})) as response:
             yield Response(
                 response.status_code,
                 str(response.url),
@@ -195,17 +230,104 @@ def pause(response: Response, wait_pattern: str) -> float | None:
     return None
 
 
-def fetch(
-    opener: Opener, url: str, dest: BinaryIO, settings: dict, sleep: Callable[[float], None]
-) -> None:  # pylint: disable=too-many-arguments,too-many-positional-arguments
+def login_page(html: str, url: str) -> bool:
+    """Whether a page is a sign-in: a password field, or a sign-in's address."""
+    return bool(re.search(r"<input[^>]+type=['\"]?password", html, re.I) or LOGIN_PATH.search(urlparse(url).path))
+
+
+def stand_in_target(html: str, url: str) -> str:
+    """The file's address a page standing in for it gives (DOWNLOAD_WORDS): its meta refresh's,
+    else its one link that reads like the download; "" when it gives none, or several."""
+    soup = BeautifulSoup(html, "html.parser")
+    base = soup.find("base", href=True)
+    base_url = urljoin(url, str(base["href"])) if base else url
+    for meta in soup.find_all("meta"):
+        if str(meta.get("http-equiv", "")).lower() == "refresh":
+            found = REFRESH.match(str(meta.get("content", "")))
+            if found:
+                return urljoin(base_url, found.group(1).strip())
+    found = set()
+    for link in soup.find_all("a", href=True):
+        href = str(link["href"]).strip()
+        if not href or href.startswith(("#", "javascript:", "mailto:")):
+            continue
+        address = urljoin(base_url, href)
+        named = urlparse(address).path.lower().endswith(FILE_EXTENSIONS)
+        if link.has_attr("download") or named or DOWNLOAD_WORDS.search(link.get_text(" ", strip=True)):
+            found.add(address)
+    return found.pop() if len(found) == 1 else ""
+
+
+def safe_name(name: str) -> str:
+    """A file name a site gave, safe as one part of a path: no folders, no control characters, no
+    leading dots, at most MAX_NAME characters (the extension kept); "" when nothing is left."""
+    name = posixpath.basename(name.replace("\\", "/"))
+    name = re.sub(r"[\x00-\x1f\x7f]+", " ", name).strip().lstrip(".").strip()
+    if len(name) > MAX_NAME:
+        stem, suffix = posixpath.splitext(name)
+        suffix = suffix if len(suffix) <= 16 else ""
+        name = stem[: MAX_NAME - len(suffix)].rstrip() + suffix
+    return name
+
+
+def disposition_name(headers: dict[str, str], url: str) -> str:
+    """The file's name as the answer gives it: Content-Disposition's (filename*, RFC 5987, before
+    filename, RFC 6266), else the last part of the address it came from; made safe (safe_name)."""
+    header = headers.get("content-disposition", "")
+    name = ""
+    extended = FILENAME_STAR.search(header)
+    if extended:
+        # RFC 5987's form wins over the plain one, which is there for older clients.
+        name = unquote(extended.group(2).strip().strip('"'), encoding=extended.group(1) or "utf-8", errors="replace")
+    elif header:
+        message = email.message.Message()
+        message["content-disposition"] = header
+        name = message.get_filename() or ""
+    name = safe_name(name)
+    return name or safe_name(unquote(posixpath.basename(urlparse(url).path))) or "download"
+
+
+def copy_file(path: str, dest: BinaryIO, settings: dict, content_type: str = "") -> None:
+    """Copies a file the browser downloaded to dest, with the checks of a download: the job's
+    largest file (before anything is copied), its types, its smallest."""
+    types, most = file_types(settings), largest(settings)
+    with open(path, "rb") as source:
+        source.seek(0, 2)
+        size = source.tell()
+        if size > most:
+            raise Refused(f"the download is {size // MB} MB, more than the job's largest file")
+        if size < int(settings.get("min_size", 0) or 0):
+            raise SourceError(f"the download gave only {size} bytes")
+        source.seek(0)
+        first = True
+        while chunk := source.read(1 << 20):
+            check_stop()
+            if first and not accepts(types, content_type, chunk):
+                raise Refused(f"the download is not of the job's file types ({', '.join(types)})")
+            first = False
+            dest.write(chunk)
+
+
+def fetch(  # pylint: disable=too-many-arguments
+    opener: Opener,
+    url: str,
+    dest: BinaryIO,
+    settings: dict,
+    sleep: Callable[[float], None],
+    *,
+    told: Callable[[Response], None] = lambda response: None,
+) -> None:
     """Writes the file at url to dest, after the checks; raises SourceError (or Denied,
-    Refused, ChallengeError) when the answer is not the file."""
+    Refused, ChallengeError, WebPage) when the answer is not the file. A page standing in for
+    the file is followed once to the file it names (stand_in_target). told hears the answer
+    the file came with (its headers: the name it gives)."""
     if not allowed_url(url):
         raise SourceError(f"{url} may not be opened")
     failures = 0
-    for _ in range(MAX_WAITS + RETRIES):
+    asked, followed = url, False
+    for _ in range(MAX_WAITS + RETRIES + 1):
         try:
-            done = _attempt(opener, url, dest, settings, sleep)
+            done = _attempt(opener, url, dest, settings, sleep, told)
         except (httpx.TransportError, ConnectionError, TimeoutError) as error:
             # A dropped connection or a timeout: tried again after a pause, a few times; what was
             # written so far is dropped.
@@ -216,15 +338,48 @@ def fetch(
             dest.truncate()
             sleep(RETRY_PAUSE * failures)
             continue
+        if isinstance(done, str):
+            # Followed once only: a second page is no stand-in.
+            if followed or not allowed_url(done):
+                raise WebPage(f"got a web page instead of a file for {asked}: {NO_FILE}")
+            url, followed = done, True
+            continue
         if done:
             return
     raise SourceError(f"the site kept asking to wait for {url}")
 
 
-def _attempt(
-    opener: Opener, url: str, dest: BinaryIO, settings: dict, sleep: Callable[[float], None]
-) -> bool:  # pylint: disable=too-many-arguments,too-many-positional-arguments
-    """One request for the file: True once it is written, False after a pause the site asked for."""
+def _stand_in(response: Response, url: str) -> str:
+    """The file's address a web page that came instead of it gives (stand_in_target); else what
+    the page is: a challenge, a sign-in, or the recipe's trouble (WebPage)."""
+    # Its start is enough to tell a challenge: a page without end is not read to it.
+    page = bytearray()
+    for chunk in response.chunks:
+        page += chunk
+        if len(page) > MAX_PAGE:
+            break
+    text = page.decode("utf-8", "replace")
+    kind = challenge_in_html(text)
+    if kind:
+        raise ChallengeError(response.url, kind)
+    if login_page(text, response.url):
+        raise WebPage(f"got a web page instead of a file for {url}: a sign-in (signed out?)", login=True)
+    target = stand_in_target(text, response.url)
+    if not target:
+        raise WebPage(f"got a web page instead of a file for {url}: {NO_FILE}")
+    return target
+
+
+def _attempt(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    opener: Opener,
+    url: str,
+    dest: BinaryIO,
+    settings: dict,
+    sleep: Callable[[float], None],
+    told: Callable[[Response], None],
+) -> bool | str:
+    """One request for the file: True once it is written, False after a pause the site asked
+    for, the file's address when a page stands in for it."""
     types = file_types(settings)
     with opener(url) as response:
         wait = pause(response, str(settings.get("wait_pattern", "")))
@@ -239,16 +394,7 @@ def _attempt(
             raise SourceError(f"{url} answered {response.status}")
         content_type = response.headers.get("content-type", "")
         if content_type.startswith("text/html") and "html" not in types:
-            # Its start is enough to tell a challenge: a page without end is not read to it.
-            page = bytearray()
-            for chunk in response.chunks:
-                page += chunk
-                if len(page) > MAX_PAGE:
-                    break
-            kind = challenge_in_html(page.decode("utf-8", "replace"))
-            if kind:
-                raise ChallengeError(response.url, kind)
-            raise SourceError(f"got a web page instead of a file for {url} (signed out?)")
+            return _stand_in(response, url)
         most = largest(settings)
         announced = response.headers.get("content-length", "")
         if announced.isdigit() and int(announced) > most:
@@ -265,4 +411,5 @@ def _attempt(
             dest.write(chunk)
         if size < int(settings.get("min_size", 0) or 0):
             raise SourceError(f"{url} gave only {size} bytes")
+        told(response)
         return True

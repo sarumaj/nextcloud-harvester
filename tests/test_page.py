@@ -190,7 +190,9 @@ def test_the_recorders_controls(page):
     page.get_by_role("button", name="Edit").click()
     page.get_by_role("button", name="Record in the browser").click()
     page.wait_for_function("window.__sockets.length && window.__sockets[0].sent.length")
-    assert sent(page)[0] == {"type": "load", "recipe": RECIPE}, "the recorder starts with the form's picks"
+    assert sent(page)[0] == {"type": "load", "recipe": RECIPE}, "the recorder starts with the form's recipe"
+    assert sent(page)[1] == {"type": "mode", "mode": "browse"}, "with steps: in Browse"
+    assert page.locator("input[value=browse]").is_checked()
 
     # Navigation: buttons, by mouse or by keyboard.
     page.get_by_role("button", name="Back", exact=True).click()
@@ -198,7 +200,7 @@ def test_the_recorders_controls(page):
     page.keyboard.press("Enter")
     page.get_by_role("button", name="Reload", exact=True).focus()
     page.keyboard.press("Space")
-    assert [m["type"] for m in sent(page)[1:]] == ["back", "forward", "reload"]
+    assert [m["type"] for m in sent(page)[2:]] == ["back", "forward", "reload"]
 
     proposals = {
         "next": {
@@ -210,8 +212,8 @@ def test_the_recorders_controls(page):
             "following": 2,
         }
     }
-    receive(page, {"type": "recipe", "recipe": {**RECIPE, "steps": []}, "proposals": proposals})
-    assert "Scroll to load more" in page.locator(".harvester-steps ol").inner_text(), "the form's steps stay"
+    receive(page, {"type": "recipe", "recipe": RECIPE, "proposals": proposals})
+    assert "Scroll to load more" in page.locator(".harvester-steps ol").inner_text(), "the form's steps"
     page.wait_for_selector(".harvester-level[data-target=next]")
     before = len(sent(page))
     level(page, "follow", 1).get_by_role("button", name="Remove").click()
@@ -237,9 +239,14 @@ def test_the_recorders_controls(page):
     # Scroll to load more: a step, so only while recording.
     scroll = page.get_by_role("button", name="Add: scroll to load more")
     assert scroll.is_disabled()
-    page.locator("input[value=record]").check()
+    page.locator("input[value=record]").click()
+    page.get_by_role("button", name="Append").click()
     scroll.click()
-    assert sent(page)[-1] == {"type": "scroll"}
+    assert sent(page)[-3:] == [
+        {"type": "record-at", "after": 2, "replace": False},
+        {"type": "mode", "mode": "record"},
+        {"type": "scroll"},
+    ]
 
     page.get_by_role("button", name="Test the recipe").click()
     test = sent(page)[-1]
@@ -269,11 +276,11 @@ def test_the_recorders_controls(page):
     panel = page.locator(".harvester-test").inner_text()
     assert "1 file links on 1 pages" in panel and "2026/A" in panel and "a.month matched nothing" in panel
 
-    # A recipe without a next page (removed) is kept without one.
-    receive(page, {"type": "recipe", "recipe": {**RECIPE, "steps": [], "next": None}, "proposals": {}})
+    # A recipe without a next page (removed) is kept without one, with the recorder's steps.
+    receive(page, {"type": "recipe", "recipe": {**RECIPE, "steps": RECIPE["steps"][:1], "next": None}, "proposals": {}})
     page.get_by_role("button", name="Done").click()
     kept = json.loads(page.locator("textarea.harvester-recipe").first.input_value())
-    assert "next" not in kept and kept["steps"] == RECIPE["steps"]
+    assert "next" not in kept and kept["steps"] == RECIPE["steps"][:1]
 
 
 @needs_chromium
@@ -407,7 +414,8 @@ def test_the_recorders_frames_and_optional_steps(page):
 
     items.nth(1).get_by_role("button", name="make optional?").click()
     assert sent(page)[-1] == {"type": "optional", "step": 1, "optional": True}
-    assert items.nth(1).get_by_role("checkbox").is_checked() and items.nth(1).get_by_role("button").count() == 0
+    assert items.nth(1).get_by_role("checkbox").is_checked()
+    assert items.nth(1).get_by_role("button", name="make optional?").count() == 0
     items.nth(2).get_by_role("checkbox").check()
     items.nth(2).get_by_role("checkbox").uncheck()
     assert sent(page)[-2:] == [
@@ -443,6 +451,84 @@ def test_the_recorders_frames_and_optional_steps(page):
     kept = json.loads(page.locator("textarea.harvester-recipe").first.input_value())
     assert kept["steps"][1]["optional"] is True and kept["steps"][1]["frame"] == frame
     assert "optional" not in kept["steps"][2]
+
+
+@needs_chromium
+def test_the_recorders_steps_are_edited_and_recorded_where_chosen(page):
+    page.get_by_role("button", name="Edit").click()
+    page.get_by_role("button", name="Record in the browser").click()
+    page.wait_for_function("window.__sockets.length && window.__sockets[0].sent.length")
+    steps = [
+        {"action": "goto", "url": "https://site.example/login"},
+        {"action": "fill", "selector": "#user", "value": "me"},
+        {"action": "fill", "selector": "#pw", "value": "hunter2"},
+        {"action": "select", "selector": "#lang", "value": "de", "label": "Deutsch"},
+        {
+            "action": "click",
+            "selector": "#go",
+            "text": "Go",
+            "wait": {"url": "^https://site\\.example/home", "selector": "#q"},
+        },
+        {"action": "popup"},
+    ]
+    receive(page, {"type": "recipe", "recipe": {**RECIPE, "steps": steps}, "proposals": {}})
+    receive(page, {"type": "warning", "message": "In this recipe, step 3 fills a value of its own into #pw, …"})
+    assert (
+        "step 3 fills a value of its own into #pw" in page.locator(".harvester-steps .harvester-warning").inner_text()
+    )
+    items = page.locator(".harvester-steps ol > li")
+    assert "Choose “Deutsch” in #lang" in items.nth(3).inner_text()
+    assert "Go on in the popup it opened" in items.nth(5).inner_text()
+    assert items.nth(0).get_by_role("button", name="Move up: step 1").is_disabled()
+    assert items.nth(5).get_by_role("button", name="Move down: step 6").is_disabled()
+    before = len(sent(page))
+    items.nth(2).get_by_role("button", name="Move up: step 3").click()
+    items.nth(1).get_by_role("button", name="Remove: step 2").click()
+    items.nth(2).get_by_label("What step 3 fills in").select_option("password")
+    items.nth(1).get_by_label("The value of step 2").fill("you")
+    items.nth(1).get_by_label("The value of step 2").press("Tab")
+    items.nth(3).get_by_label("The value of step 4").fill("en")
+    items.nth(3).get_by_label("The value of step 4").press("Tab")
+    assert "then waits for an address like" in items.nth(4).inner_text()
+    items.nth(4).get_by_role("button", name="wait for the network instead").click()
+    assert sent(page)[before:] == [
+        {"type": "step-move", "by": -1, "step": 2},
+        {"type": "step-delete", "step": 1},
+        {"type": "step-edit", "step": 2, "credential": "password"},
+        {"type": "step-edit", "step": 1, "value": "you"},
+        {"type": "step-edit", "step": 3, "value": "en"},
+        {"type": "step-edit", "step": 4, "wait": None},
+    ]
+
+    # Recording on a recipe with steps asks where the new ones go; Cancel keeps Browse.
+    page.locator("input[value=record]").click()
+    assert page.locator("input[value=browse]").is_checked()
+    page.locator(".harvester-placing").get_by_role("button", name="Cancel").click()
+    assert page.locator(".harvester-placing").inner_text() == ""
+    page.locator("input[value=record]").click()
+    page.get_by_label("After which step").select_option("2")
+    page.get_by_role("button", name="Replace from there").click()
+    assert sent(page)[-2:] == [{"type": "record-at", "after": 2, "replace": True}, {"type": "mode", "mode": "record"}]
+    assert page.locator("input[value=record]").is_checked()
+    page.locator("input[value=browse]").click()
+    page.locator("input[value=record]").click()
+    assert sent(page)[-1] == {"type": "mode", "mode": "record"}, "asked once"
+
+
+@needs_chromium
+def test_the_form_warns_of_a_password_in_the_recipe(page):
+    page.get_by_role("button", name="Edit").click()
+    recipe = page.locator("textarea.harvester-recipe").first
+    warning = page.locator("#harvester-job-form .harvester-warning")
+    assert warning.inner_text() == ""
+    leaked = {**RECIPE, "steps": [{"action": "fill", "selector": "input[name=pass]", "value": "hunter2"}]}
+    recipe.fill(json.dumps(leaked))
+    assert "Step 1 fills a value of its own into input[name=pass]" in warning.inner_text()
+    assert "hunter2" not in warning.inner_text()
+    recipe.fill(
+        json.dumps({**leaked, "steps": [{"action": "fill", "selector": "input[name=pass]", "credential": "password"}]})
+    )
+    assert warning.inner_text() == ""
 
 
 COOKIE_LIST = {

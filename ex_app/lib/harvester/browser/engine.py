@@ -29,7 +29,9 @@ browser"), and the disguise only keeps the browser from giving itself away.
 
 import functools
 import importlib
+import re
 import sys
+from collections.abc import Callable
 from types import ModuleType
 
 from playwright._impl import _errors  # type: ignore[import-not-found]
@@ -97,3 +99,21 @@ def main_world(target: object) -> dict:
     """The arguments of target.evaluate that run a script in the page's own world, where
     recorder.js's functions are: none for Playwright, which runs there anyway."""
     return {"isolated_context": False} if disguised(target) else {}
+
+
+def guard_routes(context, guard: Callable, socket_guard: Callable) -> None:
+    """A context's routes (sync API): every request through guard, every WebSocket through
+    socket_guard, except a disguised browser's, which Patchright would not route (its guard checks
+    them, check). The handlers are this context's own: each engine keeps its wrapper of a handler
+    on the handler, under the same name, and one function given to both engines' routes in a
+    process left the second's requests hanging."""
+    context.route("**/*", functools.partial(guard))
+    if not disguised(context):
+        context.route_web_socket(re.compile(".*"), functools.partial(socket_guard))
+
+
+async def guard_routes_async(context, guard: Callable, socket_guard: Callable) -> None:
+    """guard_routes, with the async API (the recorder's)."""
+    await context.route("**/*", functools.partial(guard))
+    if not disguised(context):
+        await context.route_web_socket(re.compile(".*"), functools.partial(socket_guard))

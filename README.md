@@ -71,7 +71,8 @@ the app's browser or taken from a template, not by code.
     `max_filesize`). *Impersonate a browser* has yt-dlp present itself as a browser (its own
     impersonation with `curl_cffi`, for sites behind Cloudflare that answer it with 403);
     extractors that need it use it anyway. For galleries, the same option is gallery-dl's browser
-    emulation (Chrome's headers and TLS ciphers).
+    emulation (Chrome's headers and TLS ciphers), and Harvester's own downloads of its files
+    impersonate a browser as below.
   - `gallery`: images of galleries, albums and profiles on the sites gallery-dl supports;
     gallery-dl lists them, Harvester downloads them with its checks and the page as `Referer`.
   - `remote`: the files in a folder of a WebDAV, SFTP, FTP or S3 server, a Nextcloud public
@@ -121,7 +122,7 @@ the app's browser or taken from a template, not by code.
   default) scrolls the page to its end until it stops growing (no new links, elements or
   height two rounds in a row, or after a minute), for a listing that loads more as it is
   scrolled. The listing the steps end on is read in their tab, as they left it; with a kept
-  session the sign-in is skipped but the scroll steps at the steps' end still run. Ordinary
+  session the sign-in is skipped but the steps after it still run. Ordinary
   scrolling is never recorded: a position depends on the window's size and the page's state,
   and replays wrongly in a job's window; a **Load more** button is a click, recorded as one.
 - **Steps in frames:** recorder.js runs in every frame of the page, cross-origin ones (a consent
@@ -171,9 +172,57 @@ the app's browser or taken from a template, not by code.
   address in the recipe: the job starts where its steps end. The recorder warns of such tokens
   in the listing's address and in a step's (an address typed, Back or Forward to a sign-in's
   return address), as they are likely spent when the job runs.
+- **What the recorder records:** clicks, fills (one per field: a field Enter submitted is not
+  filled again, and the click on the submit button the browser makes for Enter is none), a
+  list's choice (`{"action": "select", "value": …, "label": …}`, replayed by its value, else by
+  the text it shows), a checkbox's label as one click (not also the click the browser passes on
+  to the box), text edited in place (`contenteditable`, a fill), and the keys that work a list of
+  suggestions in a combobox or autocomplete (↑, ↓, Escape, Tab, Enter: steps "press"); Enter in a
+  field is a step too, other keys are what they type. A file to upload is refused with a message
+  (a job has none). A click on an element that showed only under the mouse (a menu opened by
+  `:hover` or by a script) comes after a step `{"action": "hover"}` over the menu. Elements in
+  open shadow roots are recorded with a selector through their host (`#box #user`, which
+  Playwright follows into the root); a click in a closed one is recorded on its host, and the
+  recorder says so. A password is never recorded: a field that was ever of type password, or has
+  `autocomplete="current-password"` or `new-password`, stays one when a "show password" switch
+  makes it text, and its step fills in the account's. A one-time code is recognised by its name
+  or `autocomplete="one-time-code"`, and after a password also as a field named `code`, `otc`
+  (Microsoft's) or `challenge` (Nextcloud's), or one for 6 to 8 digits.
+- **Popups:** a tab the page opens while recording (a "Sign in with …" window) is shown, and is a
+  step `{"action": "popup"}`: the steps after it act in that tab. When it closes itself, the page
+  that opened it is shown again, a step `{"action": "opener"}`. A job waits for the popup (the
+  step's time) and acts in it, and goes back once it closed.
+- **Waits:** a click or a press after which the page went to another address keeps it as a
+  pattern, numbers and tokens left open and any query
+  (`"wait": {"url": "^https://shop\\.example/orders/\\d+(?:[?#].*)?$", "selector": "#next"}`),
+  and the next step's element. The replay waits for both (the step's time), then a short while
+  for the network, instead of up to 15 seconds for a page that never goes quiet. A step without
+  `wait` waits for the network as before.
 - **Values:** the download URL (`{url}/download`), the file's name
   (`{year}/iX {year}-{issue:02d}`) and the tags (`{year}`) are templates of the link's values:
-  the pattern's groups and `url`, `text`, `page`, `host`, `filename`, `stem`, `ext`.
+  the pattern's groups and `url`, `text`, `page`, `host`, `filename`, `stem`, `ext`, and in the
+  file's name and tags `{disposition}`: the name the site gives the file as it sends it
+  (`Content-Disposition`, `filename*` before `filename`; else the last part of the address it
+  came from), without folders, control characters or leading dots, 200 characters at most. Such a
+  file is downloaded first and then put where its name says; what tells it apart from the next
+  run's files is still its link.
+- **More of a recipe:** a fill step's value may hold dates, filled in at each run in the job's
+  time zone: `{today}` (`2026-11-02`), `{today-30d:%d.%m.%Y}`, `{today+1w}`, `{today-1m}`,
+  `{year}`, `{year-1}`, `{month:02d}`, `{day}`; other braces are typed as they are. The file
+  links may have `"key": "{year}-{issue}"`, a template of their values that tells files apart
+  instead of their address (for addresses that change), and `"click": true` for elements that
+  start a download when clicked (a button, a form, a script, a blob; no address): the job clicks
+  each in the browser, its pattern searched in the element's text, and keeps the file the browser
+  downloads, checked as any download (its types, its smallest and largest size, before anything
+  is copied); `{disposition}` is the name the browser was given, and such a file is told apart
+  by its listing and its text unless the recipe has a key. Each level (an entry of `follow`, or
+  `links`) may load more of its pages before they are read: `"scroll": 20` (rounds, as the
+  scroll step) and `"load_more": "button.more"`, clicked until it is gone or the page stops
+  growing (50 times or a minute at most). These need the browser, as does a next page that is a
+  button (`"buttons": true`): over HTTP such a page says so instead of ending after page one.
+  A recipe is checked when the job is saved: the kinds of its parts (text, numbers, lists), the
+  actions, credentials (`username`, `password`, `totp`) and keys of its steps (`Enter`, `Tab`,
+  `Control+A`, one character, ...), its dates, the next page's level, the key's values.
 - **Values from the page** (`patterns.page_values`): a level of links to follow or the file
   links may take `"values"` from the page around each link, not only from its address: the
   link's text, an attribute, or an element near it (`{"name": "date", "closest": "tr",
@@ -216,9 +265,18 @@ the app's browser or taken from a template, not by code.
   `{disposition}`, the server's name for the file. Edit a pattern and the outlines follow, as
   Python reads it: JavaScript's RegExp outlines with Python's syntax translated (`(?P<n>`,
   `(?P=n)`, a leading `(?i)`), and with Python's own matches where it cannot (`(?x)`, `(?i:…)`,
-  atomic groups). Passwords are never recorded:
-  the job fills in its account. **Back**, **Forward**, **Reload** and the address field's
-  **Go** are buttons (Tab and Enter reach them), here and in **Continue in the browser**. They
+  atomic groups). Passwords are never recorded: the job fills in its account. The **Steps**
+  list edits the steps: **↑** and **↓** move one, **✕** removes one, a fill fills in a value of
+  its own (edited there), the account's user name, password or the current one-time code, a
+  list's choice can be edited, and a step's wait dropped (**wait for the network instead**). A
+  recipe with steps opens in **Browse**; **Record steps** then asks where the new ones go: after
+  a step (the last, unless chosen), keeping the later ones (**Append**), instead of them
+  (**Replace from there**), or instead of all (**Replace all**). A fill with a value of its own
+  in what looks like a password's field (`#pw`, `[type=password]`, a name with `pass` or `pwd`),
+  from an earlier recording, is pointed out in the job's form, in the recorder and in the app's
+  log when the job is saved, by its step and field, never its value. **Back**, **Forward**,
+  **Reload** and the address field's **Go** are buttons (Tab and Enter reach them), here and in
+  **Continue in the browser**. They
   are steps only while recording: an address typed, Back and Forward become a step "goto" to the
   page arrived at (a job's browser has no history to go back in), Reload none; browsing and
   picking record nothing. Every pick (each level of links to follow, the file links, the next
@@ -267,8 +325,10 @@ the app's browser or taken from a template, not by code.
   A change is the browser's at once. The app checks each: a name and value without control
   characters (nor `;`, `,`; a name without `=` or spaces), name and value 4 kB at most, a path
   from `/`, an expiry at most 400 days ahead, SameSite None only with Secure, and a domain of the
-  sites the browser is at or has cookies of (one of them, a parent short of a top-level domain,
-  or a subdomain): no cookies for other sites. **Into the account** writes the shown cookies as a
+  sites the browser is at or has cookies of (one of them, a parent that is no public suffix, or a
+  subdomain): no cookies for other sites. The public suffixes (`com`, `co.uk`, `github.io`) are
+  the list of the `publicsuffixlist` package, pinned in `requirements.txt` and never fetched.
+  **Into the account** writes the shown cookies as a
   cookies.txt into the job's *Cookies* account field: in the recorder the form's field, stored
   with the job's Save; in the job's browser after the person confirms (a new account forgets
   the kept session). **Use for this job** (the job's browser) keeps the browser's session for
@@ -302,50 +362,75 @@ the app's browser or taken from a template, not by code.
   until *Save*. Nothing in a file runs. **Save as template** keeps the form's job as such a file,
   the person's own (50 at most, in the app's database): *Your templates* on the *New job* page
   lists them, each to use (checked as an import) or **Remove**.
-- **Sessions and challenges:** a job keeps its browser session (cookies, local storage;
-  encrypted in Nextcloud, like its account) and replays the sign-in only when the listing shows
-  a login form. When a site asks for a person instead (reCAPTCHA, hCaptcha, Cloudflare, "verify
-  you are human") the run stops, the job shows **Needs you** and its user gets a notification;
-  scheduled runs wait. **Continue in the browser** opens the recorder's browser with the job's
-  session at that page: the person answers it, **Done** keeps the session and runs the job.
-  Harvester never answers a challenge itself. When a step fails or a page asks for a person,
+- **Sessions and challenges:** a job keeps its browser session (cookies, local storage; encrypted in
+  Nextcloud, like its account) and replays the sign-in only when the listing shows a sign-in (a
+  password or user name field, or a sign-in's address). The sign-in is the steps up to the last fill
+  of a credential and the click or key that sends it; the steps after it (a tab, *Show all*, a
+  filter, scrolling) lead to the listing and run every time. When the kept session does not reach
+  the listing (a step after the sign-in fails, or the start page has none of the recipe's links: a
+  username-first or single sign-on page taken for the listing), the run signs in once anew from no
+  session, in a browser of its own, and keeps the new session; if that fails too, the old one is
+  forgotten. A recipe with other steps or another site to start at forgets it when saved (other
+  links or patterns do not: it may be a person's answer to a challenge). A web page that comes
+  instead of a file after files came (the session ended in the middle of the run) signs in anew
+  once, and the file is asked for again. When a site asks for a person instead (reCAPTCHA, hCaptcha,
+  Cloudflare, "verify you are human") the run stops, the job shows **Needs you** and its user gets a
+  notification; scheduled runs wait. **Continue in the browser** opens the recorder's browser with
+  the job's session at that page: the person answers it, **Done** keeps the session and runs the
+  job. Harvester never answers a challenge itself. When a step fails or a page asks for a person,
   the job keeps what its browser showed (a JPEG of the window, at most 400 KB, with the page's
-  address and title; in the app's database, the newest per job, deleted with the job): its
-  line in the progress log gets **Show what the browser saw** (`GET /api/jobs/<id>/shot`, the
-  job's owner only), and from there **Open in the browser** opens the job's browser with its
-  session at that page. A failed step's line names its element when it has no text
-  (`step 2 (click a.overlay-b:nth-of-type(6)) failed`). A new value for any of the job's account
-  forgets its kept session (the cookies, a refresh token the provider replaced): those are the old
-  account's, and would be used instead.
+  address and title; in the app's database, the newest per job, deleted with the job): its line in
+  the progress log gets **Show what the browser saw** (`GET /api/jobs/<id>/shot`, the job's owner
+  only), and from there **Open in the browser** opens the job's browser with its session at that
+  page. A failed step's line names its element when it has no text (`step 2 (click
+  a.overlay-b:nth-of-type(6)) failed`). A new value for any of the job's account forgets its kept
+  session (the cookies, a refresh token the provider replaced): those are the old account's, and
+  would be used instead.
 - **A person's browser:** sites' bot protection (Cloudflare, ...) refuses a browser that says it is
   automated, or cuts its connection (`ERR_HTTP2_PROTOCOL_ERROR`). Chromium runs as the full browser
   in its new headless mode (not the headless shell), without the automation flag, with Chrome's
   user agent and one language and time zone for recordings and runs (`HARVESTER_LOCALE`,
   `HARVESTER_TIMEZONE`, default `en-US`, `Europe/Berlin`). A website job's **HTTP/1.1 only**
   serves the sites that cut HTTP/2 connections, in the recorder too.
-- **Disguise the browser** (`browser/engine.py`; a website job's option, off by default): for
-  sites whose bot check refuses the browser otherwise, the job's browser starts with
+- **Disguise the browser** (`browser/engine.py`; a website job's option, off by default): for sites
+  whose bot check refuses the browser otherwise, the job's browser starts with
   [Patchright](https://github.com/Kaliiiiiiiiii-Vinyzu/patchright-python), a fork of Playwright
   patched where Playwright gives an automated browser away, instead of Playwright: the page sees
-  none of Playwright's globals (`__playwright__binding__`, `__pwWebSocketDispatch`), its scripts
-  run in isolated worlds, and Chromium starts without the automation's switches. Everything else
-  is the same: the Chromium, the guard with the browser's credentials, the routes, the language,
-  time zone and window. The job's runs, its **Test the recipe** and **Continue in the browser**
-  take the job's flag (a challenge answered there is answered under the fingerprint the runs
-  have, so Cloudflare's `cf_clearance` fits them), a new recording the form's. What it does not
-  do: it answers no challenge (a person still does, in the browser), it does not change the
-  address sites see (from a server's address Cloudflare may refuse it all the same: **Through
-  the proxy** with a home connection helps most), and it does not make the downloads over HTTP
-  look like the browser. It hides what a page reads of the automation, not the server: in tests
-  from a server's address, bot.sannysoft.com found the same with and without it (only the WebGL
-  renderer, a software one, failed), and Cloudflare's managed challenge on a test page stayed
-  until a person answers it, either way. Patchright applies no WebSocket route, so a disguised
-  page's WebSockets are checked by its guard alone: while the admin has the guard off, a
-  disguised browser does not start (the job fails, saying so). In **Continue in the browser**
-  and the recorder, recorder.js and its binding are in the page, disguised or not.
-- **Downloads:** a pause between files; waits when the site asks (429 or 503 with
-  `Retry-After`, or a wait pattern on the URL it redirects to, like heise's `wait_sec=`) and
-  three retries of a broken transfer; never a web page instead of a file; expected file types
+  none of Playwright's globals (`__playwright__binding__`, `__pwWebSocketDispatch`), its scripts run
+  in isolated worlds, and Chromium starts without the automation's switches. Everything else is the
+  same: the Chromium, the guard with the browser's credentials, the routes, the language, time zone
+  and window. The job's runs, its **Test the recipe** and **Continue in the browser** take the job's
+  flag (a challenge answered there is answered under the fingerprint the runs have, so Cloudflare's
+  `cf_clearance` fits them), a new recording the form's. What it does not do: it answers no
+  challenge (a person still does, in the browser), it does not change the address sites see (from a
+  server's address Cloudflare may refuse it all the same: **Through the proxy** with a home
+  connection helps most), and the job's own requests over HTTP stay Harvester's (**Impersonate a
+  browser** has them present themselves as Chrome). It hides what a page reads of the automation,
+  not the server: in tests from a server's address, bot.sannysoft.com found the same with and
+  without it (only the WebGL renderer, a software one, failed), and Cloudflare's managed challenge
+  on a test page stayed until a person answers it, either way. Patchright applies no WebSocket
+  route, so a disguised page's WebSockets are checked by its guard alone: while the admin has the
+  guard off, a disguised browser does not start (the job fails, saying so). In **Continue in the
+  browser** and the recorder, recorder.js and its binding are in the page, disguised or not.
+- **Impersonate a browser** (`sources/impersonate.py`; websites, feeds, releases, galleries): the
+  job's own requests (a website's listing over HTTP and its files, also those of a recipe with the
+  browser, a feed and its enclosures, release files, a gallery's images) present themselves as
+  Chrome does: its TLS handshake, HTTP/2 and headers, by `curl_cffi` under httpx, for sites
+  behind Cloudflare and similar checks that answer plain HTTP clients with 403. httpx keeps the
+  rest: each redirect is a request of its own and checked as any (only public addresses), the
+  cookies are its jar's, the job's headers go along (the app's user agent gives way to Chrome's),
+  the answer comes in chunks under the job's largest file, and the proxy is the job's (http(s)
+  or socks, as curl takes them). Off by default: only where a site refuses the downloads
+  otherwise.
+- **Downloads:** a pause between files, and one of a second between listing pages; waits when
+  the site asks (429 or 503 with `Retry-After`, for listing pages too, or a wait pattern on the
+  URL it redirects to, like heise's `wait_sec=`) and three retries of a broken transfer; the
+  listing a file is linked from as `Referer`, and the browser's language (`Accept-Language`). A
+  web page instead of a file is a sign-in (*signed out?*), or else a page standing in for the
+  file (*Your download starts...*), whose meta refresh, or its one link that reads like the
+  download (its text, a `download` attribute, a file's extension), is followed once; any other
+  page says that the download URL gives a page (a level of links short, or another Download
+  URL). Expected file types
   (`pdf`, `zip`, `image`, ..., several separated by commas), a smallest and a largest size. A
   megabyte is 1000 × 1000 bytes everywhere (the largest file's MB, the form, the progress log),
   so 4096 MB is the 4.1 GB the form shows. A file of another type or over the largest size is
@@ -381,6 +466,19 @@ the app's browser or taken from a template, not by code.
   first page is its oldest, turn the option off. Only a change of what is listed (the source, a
   recipe, an address, a folder, patterns, the pages or entries read) starts over with a complete
   pass; files per run, file names, tags or the schedule do not.
+- **Runs that meet trouble:** a link's address is known without what changes from visit to
+  visit (`patterns.VOLATILE`: a session in the path or query, `;jsessionid=`, `sid`, `PHPSESSID`;
+  a presigned address's signature and expiry, S3's `X-Amz-*`, Google's `X-Goog-*`, CloudFront's
+  `Expires`, `Signature`, `Key-Pair-Id`; trackers, `utm_*`, `fbclid`, `gclid`; the fragment), so
+  those make no new files; a key recorded before still counts. A page below the listing that is
+  gone or refused (404, 500, 403) is read as empty, the listing itself failing the run (401 and
+  403: *Sign-in refused*). Such a page, or one that shows a sign-in or ended up at another
+  address, is a line in the log, and the run does not count as a complete pass (known files do
+  not end the next runs before it went through). A next page read already at its level (a last
+  page linking to itself, or back to the first) ends its listing, with a line in the log. A link
+  shown on another listing's page whose values disagree with the levels above it (each year's
+  page showing the newest issue) is taken on its own listing, with its own values. After files
+  came, ten failures in a row end the run; the rest comes next run.
 - **Pause and stop:** while a job runs, **Run now** becomes **Pause** (then **Resume**) and
   **Stop**. Both act before the next file: a paused run waits (its time does not count against
   the two hours; after six hours unresumed it stops), a stopped one ends and keeps what it saved,

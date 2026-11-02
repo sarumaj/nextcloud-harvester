@@ -18,9 +18,9 @@ The messages are JSON over the page's WebSocket:
   pattern}, {type: selector, target (follow, links, next), level, selector}, {type: remove,
   target, level}, {type: next-kind, kind (link, number)}, {type: undo} (the last step), {type:
   undo-pick} (the last change of the picks), {type: scroll} (a step: scroll to load more),
-  {type: optional, step (its index), optional} (a step best effort, or required again), {type:
-  test, recipe, settings, as_job, job} (as_job: the app adds the saved job's account, main.py),
-  {type: test-stop}, {type: clear}, and the cookies panel's (jar.py);
+  the Steps list's edits (steps.EDITS: optional, step-delete, step-move, step-edit, record-at,
+  mail-code), {type: test, recipe, settings, as_job, job} (as_job: the app adds the saved job's
+  account, main.py), {type: test-stop}, {type: clear}, and the cookies panel's (jar.py);
 - values from the page: {type: mode, mode: value, target, level} (pick a value near the level's
   links), {type: value, target, level, index, changes (name, regex, type, attribute, closest,
   selector, field)} (one changed), {type: value-add, target, level, field} (a JSON item's field as one),
@@ -28,8 +28,9 @@ The messages are JSON over the page's WebSocket:
 - JSON listings: to the page {type: requests, items: [{id, url, size, status}]} (the page's
   XHR and fetch answers in JSON, the Network panel); from it {type: json-pick, id} (one as the
   file links), {type: json-edit, changes} (its address, items, fields, pages, pattern);
-- {type: mail-code, step, from, subject} (a filled code becomes "type the code from e-mail"; off:
-  true takes it back).
+
+The steps are the recipe's: the form's (load), edited and recorded (steps.py); a popup is shown
+and recorded (popups.py). A click or press the page navigated after keeps the address it led to.
 
 Navigation (Back, Forward, Reload, an address) is never a step outside the mode record. In it,
 an address typed, Back and Forward are a step "goto" to the page arrived at (a job's browser has
@@ -56,6 +57,7 @@ import base64
 import contextlib
 import copy
 import json
+import logging
 import re
 import threading
 import time
@@ -76,12 +78,13 @@ from playwright.async_api import (
 )
 
 from .. import browser, pagination, patterns
-from ..recipe import SCROLL_ROUNDS, frame_address, steps_from_events, token_warnings, uses_browser
+from ..recipe import SCROLL_ROUNDS, frame_address, leaked_passwords, token_warnings, uses_browser
 from ..sources import site
 from ..sources.base import SourceError
 from . import jar, trial
 from .datapicks import DATA_MESSAGES, DataPicks, search_all
-from .engine import disguised, main_world, start_async
+from .engine import disguised, guard_routes_async, main_world, start_async
+from .popups import Popups
 from . import (
     SCRIPT,
     TRACE_URL,
@@ -95,6 +98,7 @@ from . import (
     seen_address,
 )
 from .guard import Guard
+from .steps import EDITS, StepList
 
 # record: steps; browse: go somewhere unrecorded; follow, links, next: pick links; value: pick a
 # value near a level's links.
@@ -134,6 +138,14 @@ FRAME_SELECTOR = (
     "el => window.__harvester && window.__harvester.frameSelector ? window.__harvester.frameSelector(el) : ''"
 )
 SET_MODE = "mode => window.__harvester && (window.__harvester.mode = mode)"
+# What recorder.js refuses to record, and why.
+REFUSED = {
+    "file": "Files to upload cannot be recorded: a job has none of yours to upload. Leave the upload "
+    "out of the recipe.",
+    "closed-shadow": "This element is inside a closed shadow root, which neither the recorder nor a job "
+    "can look into: the click is recorded on the element around it, which a job clicks in its middle.",
+}
+LOGGER = logging.getLogger("harvester")
 # The links a value is picked near (mode value): recorder.js finds the one the picked text belongs to.
 SET_VALUE_LINKS = "s => window.__harvester && (window.__harvester.valueLinks = s)"
 
@@ -182,12 +194,13 @@ def frame_place(frame) -> dict | None:
     return {"host": urlparse(frame.url).hostname or "", "url": frame_address(frame.url), "level": level}
 
 
-class Recorder(DataPicks):  # pylint: disable=too-many-instance-attributes
+class Recorder(DataPicks, Popups):  # pylint: disable=too-many-instance-attributes
     """One recording: a browser, the page shown and the recipe so far."""
 
     def __init__(self, send: Callable[[dict], Awaitable[None]]):
         self.send = send
-        self.events: list[dict] = []
+        # The steps: the form's, those edited, those recorded.
+        self.steps = StepList()
         self.start_url = ""
         self.follow: list[dict] = []
         self.links: dict = {}
@@ -195,9 +208,11 @@ class Recorder(DataPicks):  # pylint: disable=too-many-instance-attributes
         # Per picked level ("follow0", "links"): groups, examples, proposed file name and tags.
         self.proposals: dict[str, dict] = {}
         self.mode = "record"
-        # The steps (their indexes) the person made optional, and where they act now.
-        self.optional: set[int] = set()
+        # Where the person acts now.
         self._where: dict | None = None
+        # The page that opened each popup, and the popups recorded as a step "popup" (popups.py).
+        self._openers: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+        self._popups: weakref.WeakSet = weakref.WeakSet()
         # Whether the page shown is where the recorded steps lead (no browsing since the last).
         self._at_steps_end = False
         # The window's size: the page's, as the person makes the view larger or smaller.
@@ -219,8 +234,6 @@ class Recorder(DataPicks):  # pylint: disable=too-many-instance-attributes
         # The page's answers in JSON (Network), and the one chosen as the listing: (url, data).
         self.requests: list[dict] = []
         self._json: tuple[str, object] | None = None
-        # The filled steps (their indexes) whose code comes by e-mail: {from, subject} each.
-        self.mail_codes: dict[int, dict] = {}
         # The running test's stop, and the test itself.
         self._trial_stop: threading.Event | None = None
         self._trial: asyncio.Task | None = None
@@ -258,17 +271,14 @@ class Recorder(DataPicks):  # pylint: disable=too-many-instance-attributes
             return False
 
     @property
+    def events(self) -> list[dict]:
+        """What was recorded since the last edit of the steps."""
+        return self.steps.events
+
+    @property
     def recipe(self) -> dict:
         """The recipe so far."""
-        steps = steps_from_events(self.events)
-        for index, code in self.mail_codes.items():
-            if index < len(steps) and steps[index]["action"] == "fill":
-                framed = {"frame": steps[index]["frame"]} if steps[index].get("frame") else {}
-                steps[index] = {"action": "mail-code", "selector": steps[index]["selector"], **code, **framed}
-        for index in self.optional:
-            if index < len(steps):
-                steps[index]["optional"] = True
-        recipe: dict = {"steps": steps, "start": self.start_url, "follow": self.follow}
+        recipe: dict = {"steps": self.steps.all(), "start": self.start_url, "follow": self.follow}
         recipe["links"] = self.links
         if self.next:
             recipe["next"] = self.next
@@ -302,7 +312,7 @@ class Recorder(DataPicks):  # pylint: disable=too-many-instance-attributes
         self._context = await self._new_context(session)
         await self._context.expose_binding("__harvesterReport", self._report)
         await self._context.add_init_script(SCRIPT)
-        self._context.on("page", lambda page: asyncio.ensure_future(self._show(page)))
+        self._context.on("page", lambda page: asyncio.ensure_future(self._opened(page)))
         await self._show(await self._context.new_page())
         asyncio.ensure_future(self._tell_address(home and bool(browser.PROXY)))
         if url and (self.opens_loopback(url) or await asyncio.to_thread(allowed_url, url)) and self._page:
@@ -318,11 +328,7 @@ class Recorder(DataPicks):  # pylint: disable=too-many-instance-attributes
             accept_downloads=False,
             storage_state=session or None,  # type: ignore[arg-type]
         )
-        await context.route("**/*", self._guard)
-        # Patchright does not apply a WebSocket route (and would show the page its stand-in's
-        # global): a disguised browser starts only behind its guard, which checks them.
-        if not disguised(context):
-            await context.route_web_socket(re.compile(".*"), self._socket_guard)
+        await guard_routes_async(context, self._guard, self._socket_guard)
         return context
 
     async def _tell_address(self, proxied: bool) -> None:
@@ -380,6 +386,12 @@ class Recorder(DataPicks):  # pylint: disable=too-many-instance-attributes
         if self.opens_loopback(url) or await asyncio.to_thread(reachable, url):
             route.connect_to_server()
 
+    def _record(self, event: dict) -> None:
+        """A step's event, after the steps so far: the page is where the steps lead now; a click or
+        press may navigate it (its address to wait for)."""
+        self.steps.record(event)
+        self._at_steps_end = True
+
     async def _show(self, page: Page) -> None:
         """Shows this page (the first, or a new tab or window the site opened). Once per page:
         the context's "page" event also fires for the first one, which start() shows itself, and
@@ -397,7 +409,7 @@ class Recorder(DataPicks):  # pylint: disable=too-many-instance-attributes
         # A page shown again (the recorder's own after the recipe's test) has its listeners.
         if page not in self._watched:
             self._watched.add(page)
-            page.on("domcontentloaded", lambda _: asyncio.ensure_future(self._loaded()))
+            page.on("domcontentloaded", lambda loaded: asyncio.ensure_future(self._loaded(loaded)))
             page.on("framenavigated", lambda frame: asyncio.ensure_future(self._navigated(frame)))
             page.on("response", lambda response: asyncio.ensure_future(self._response(page, response)))
         # A page of the test as the job runs keeps the job's window.
@@ -439,8 +451,11 @@ class Recorder(DataPicks):  # pylint: disable=too-many-instance-attributes
             self._casting = True
             return
 
-    async def _loaded(self) -> None:
-        """A document of the page loaded: its mode, and its screen if it did not start before."""
+    async def _loaded(self, page: Page | None = None) -> None:
+        """A document of the page loaded: recorder.js in it, its mode, and its screen if it did not
+        start before."""
+        if page is not None:
+            await self._install(page)
         if not self._casting and self._cdp:
             await self._screencast()
         await self._apply_mode()
@@ -473,6 +488,11 @@ class Recorder(DataPicks):  # pylint: disable=too-many-instance-attributes
         if self._page and frame == self._page.main_frame:
             if self.mode != "record":
                 self._at_steps_end = False
+            # A click or press just before: the address it led to (the last, after redirects).
+            step = self.steps.navigation()
+            if step is not None and await asyncio.to_thread(allowed_url, frame.url):
+                step["navigated"] = frame.url
+                await self._update()
             await self.send({"type": "url", "url": frame.url})
 
     async def _apply_mode(self) -> None:
@@ -491,11 +511,6 @@ class Recorder(DataPicks):  # pylint: disable=too-many-instance-attributes
                     self._spec(*self.value_for).get("selector", "") if self.value_for else "",
                     **main_world(self._page),
                 )
-
-    def _record(self, event: dict) -> None:
-        """A step's event: the page is where the steps lead now."""
-        self.events.append(event)
-        self._at_steps_end = True
 
     async def _update(self) -> None:
         recipe = self.recipe
@@ -544,6 +559,8 @@ class Recorder(DataPicks):  # pylint: disable=too-many-instance-attributes
             await self._pick_value(event)
         elif action == "pick":
             await self._pick(event)
+        elif action == "refused":
+            await self.send({"type": "error", "message": REFUSED.get(str(event.get("what")), "Not recorded.")})
         elif self.mode == "record":
             if inside:
                 event["frame"] = await frame_path(frame)
@@ -584,7 +601,7 @@ class Recorder(DataPicks):  # pylint: disable=too-many-instance-attributes
         """Whether the listing picked on is better the page the steps end on than its address: the
         steps lead there (they open a page, nothing browsed since) and the address carries a token
         of this visit (a sign-in's ?code=, say), spent when the job runs."""
-        opens = any(event.get("action") == "goto" for event in self.events)
+        opens = any(step.get("action") == "goto" for step in self.steps.all())
         return self._at_steps_end and opens and bool(patterns.token_parameters(url))
 
     @staticmethod
@@ -699,10 +716,11 @@ class Recorder(DataPicks):  # pylint: disable=too-many-instance-attributes
             await self._update()
 
     def load(self, recipe: object) -> None:
-        """Takes the picks of the recipe the form holds (an earlier recording, a template), to
-        change, remove or keep; the steps stay the form's until new ones are recorded."""
+        """Takes the recipe the form holds (an earlier recording, a template): its steps, to edit
+        or record more after, and its picks, to change, remove or keep."""
         if not isinstance(recipe, dict):
             return
+        self.steps.load(recipe.get("steps"))
         follow = recipe.get("follow")
         if isinstance(follow, list) and all(isinstance(spec, dict) and spec.get("selector") for spec in follow):
             self.follow = copy.deepcopy(follow)
@@ -719,6 +737,7 @@ class Recorder(DataPicks):  # pylint: disable=too-many-instance-attributes
         page = self._page
         assert page is not None
         before = page.url
+        self.steps.navigating = None
         if kind == "reload":
             await page.reload(wait_until="domcontentloaded")
             return
@@ -878,6 +897,8 @@ class Recorder(DataPicks):  # pylint: disable=too-many-instance-attributes
         kind = message.get("type")
         if kind in INPUT and self._trial and not self._trial.done():
             return  # the test's page: the person watches it
+        if kind in INPUT and page.is_closed():
+            return  # a popup that closed itself: its opener comes back (_closed)
         if kind == "goto":
             url = str(message.get("url", "")).strip()
             if "://" not in url:
@@ -891,10 +912,7 @@ class Recorder(DataPicks):  # pylint: disable=too-many-instance-attributes
             await page.goto(url, wait_until="domcontentloaded")
             await self._update()
         elif kind == "mouse":
-            await page.mouse.move(float(message["x"]), float(message["y"]))
-            if message.get("event") in ("down", "up"):
-                button = message.get("button", "left")
-                await getattr(page.mouse, message["event"])(button=button if button in ("left", "right") else "left")
+            await self._mouse(page, message)
         elif kind == "wheel":
             await page.mouse.wheel(float(message.get("dx", 0)), float(message.get("dy", 0)))
         elif kind == "key":
@@ -915,10 +933,9 @@ class Recorder(DataPicks):  # pylint: disable=too-many-instance-attributes
             await self._apply_mode()
         elif kind == "pattern":
             await self._edit_pattern(message)
-        elif kind == "undo" and self.events:
-            self.events.pop()
-            self._forget_undone()
-            await self._update()
+        elif kind in EDITS:
+            if self.steps.edit(kind, message):
+                await self._update()
         elif kind in ("back", "forward", "reload"):
             await self._navigate(kind)
         elif kind in DATA_MESSAGES:
@@ -944,11 +961,13 @@ class Recorder(DataPicks):  # pylint: disable=too-many-instance-attributes
             await self._next_kind(message.get("kind"))
         elif kind == "load":
             self.load(message.get("recipe"))
+            # A password a recipe of before the recorder knew it holds: said, never shown.
+            for warning in leaked_passwords(message.get("recipe")):
+                LOGGER.warning("a recipe opened in the recorder: %s", warning)
+                await self.send({"type": "warning", "message": f"In this recipe, {warning}."})
             await self._update()
         elif kind == "scroll":
             await self._scroll()
-        elif kind == "optional":
-            await self._optional(message)
         elif kind == "test":
             # The page's own test: the recorder's session (as the job runs only with the account
             # the app adds, test()).
@@ -965,25 +984,6 @@ class Recorder(DataPicks):  # pylint: disable=too-many-instance-attributes
             self.start_url, self.follow, self.links, self.next, self.proposals = "", [], {}, {}, {}
             await page.evaluate(HIGHLIGHT, ["", None, None], **main_world(page))
             await self._update()
-
-    def _forget_undone(self) -> None:
-        """A step undone is no longer optional, nor a code from e-mail (one recorded in its place
-        is required, and typed as recorded)."""
-        steps = len(steps_from_events(self.events))
-        self.optional = {index for index in self.optional if index < steps}
-        self.mail_codes = {index: code for index, code in self.mail_codes.items() if index < steps}
-
-    async def _optional(self, message: dict) -> None:
-        """A recorded step made optional (best effort) or required again; the steps the form held
-        before (none recorded here) the page changes itself."""
-        index = self._step_index(message)
-        if index is None:
-            return
-        if message.get("optional"):
-            self.optional.add(index)
-        else:
-            self.optional.discard(index)
-        await self._update()
 
     async def _edit_pattern(self, message: dict) -> None:
         """Takes the person's pattern for a level and shows what it matches."""

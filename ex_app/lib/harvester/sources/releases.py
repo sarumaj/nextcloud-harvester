@@ -19,7 +19,7 @@ import httpx
 from .. import patterns
 from ..browser import allowed_url
 from . import download
-from .base import AuthError, Item, Option, Source, SourceError, pattern_search
+from .base import AuthError, IMPERSONATE, Item, Option, Source, SourceError, pattern_search
 from .download import Response
 
 PER_PAGE = 30
@@ -94,6 +94,7 @@ class Releases(Source):
             choices=FORGES,
         ),
         **download.DOWNLOAD_OPTIONS,
+        "impersonate": IMPERSONATE,
     }
     pause = 1.0
     listing_options = ("repository", "forge", "asset_pattern", "prereleases", "max_pages", "max_releases")

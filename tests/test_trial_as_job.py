@@ -5,6 +5,7 @@ file fetched to tell a file from a sign-in page. Served by route fulfilment; no 
 
 # pylint: disable=missing-function-docstring,protected-access
 
+import time
 import asyncio
 import json
 from urllib.parse import parse_qs, urlsplit
@@ -166,7 +167,10 @@ def test_as_the_job_runs_the_sign_in_is_replayed_with_the_account(downloads):
     assert skipped["ended"] == "complete"
     assert no_secret["ended"] == "failed" and "set the code's secret" in no_secret["problems"][0]
     assert as_job["ended"] == "complete" and as_job["as_job"] and not as_job["problems"]
-    assert shop.posted == [{"user": "anna", "pass": "pw", "otp": otp.code(SECRET)}], "the as-job test's sign-in alone"
+    # The code of the moment it was typed: this one's or, when the test crossed a 30 s window, the one before.
+    codes = {otp.code(SECRET), otp.code(SECRET, time.time() - 30)}
+    assert [entry | {"otp": "?"} for entry in shop.posted] == [{"user": "anna", "pass": "pw", "otp": "?"}]
+    assert shop.posted[0]["otp"] in codes, "the as-job test's sign-in alone, with the current code"
     assert [file["path"] for file in as_job["pages"][0]["files"]] == ["Invoice A.pdf", "Invoice B.pdf"], "file_type"
     assert as_job["probe"]["ok"] and as_job["probe"]["type"] == "application/pdf"
     assert as_job["probe"]["bytes"] == 64 * 1024, "the first bytes only"
