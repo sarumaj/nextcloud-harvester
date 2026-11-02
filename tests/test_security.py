@@ -20,7 +20,7 @@ from fastapi import HTTPException
 
 import main
 from harvester import browser, rclone_wizard
-from harvester.browser import recorder as recorder_module
+from harvester.browser import datapicks
 from harvester.browser.recorder import Recorder
 from harvester.presets import PRESETS, make_job
 from harvester.sources import SourceError, download
@@ -578,7 +578,7 @@ def test_a_pattern_that_backtracks_without_end_ends_in_time_and_leaves_the_app_f
     started = time.monotonic()
     proposal, ticks = asyncio.run(scenario())
     assert "takes too long" in proposal["error"]
-    assert time.monotonic() - started < recorder_module.PATTERN_TIMEOUT + 2
+    assert time.monotonic() - started < datapicks.PATTERN_TIMEOUT + 2
     assert ticks >= 10, "the event loop went on meanwhile"
 
 
