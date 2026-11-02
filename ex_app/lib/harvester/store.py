@@ -29,6 +29,14 @@ CREATE TABLE IF NOT EXISTS seen (
     at REAL NOT NULL,
     PRIMARY KEY (job, key)
 );
+CREATE TABLE IF NOT EXISTS placed (
+    job INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    key TEXT NOT NULL,
+    file INTEGER,
+    vals TEXT NOT NULL,
+    tags TEXT NOT NULL,
+    PRIMARY KEY (job, key)
+);
 CREATE TABLE IF NOT EXISTS log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     job INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
@@ -198,6 +206,34 @@ class Store:
             # The job may have been deleted while it ran: nothing to record then.
             if self._db.execute("SELECT 1 FROM jobs WHERE id = ?", (job_id,)).fetchone():
                 self._db.execute("INSERT OR IGNORE INTO seen VALUES (?, ?, ?)", (job_id, key, time.time()))
+
+    def seen_keys(self, job_id: int) -> set[str]:
+        """The keys of the items the job has downloaded."""
+        with self._lock:
+            rows = self._db.execute("SELECT key FROM seen WHERE job = ?", (job_id,)).fetchall()
+        return {row["key"] for row in rows}
+
+    def placed(self, job_id: int) -> dict[str, dict]:
+        """The files the job saved or found, by their item's key: file (its ID, or None), vals
+        (the values of its tags) and tags (those it was given)."""
+        with self._lock:
+            rows = self._db.execute("SELECT key, file, vals, tags FROM placed WHERE job = ?", (job_id,)).fetchall()
+        return {
+            row["key"]: {"file": row["file"], "vals": json.loads(row["vals"]), "tags": json.loads(row["tags"])}
+            for row in rows
+        }
+
+    def record_placed(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self, job_id: int, key: str, file_id: int | None, values: dict, tags: list[str]
+    ) -> None:
+        """Records a file the job saved or found (or, file_id None, did not find), and its tags."""
+        with self._lock, self._db:
+            # The job may have been deleted while it ran: nothing to record then.
+            if self._db.execute("SELECT 1 FROM jobs WHERE id = ?", (job_id,)).fetchone():
+                self._db.execute(
+                    "INSERT OR REPLACE INTO placed VALUES (?, ?, ?, ?, ?)",
+                    (job_id, key, file_id, json.dumps(values, default=str), json.dumps(tags)),
+                )
 
     def forget(self, job_id: int, key: str) -> None:
         """Forgets one recorded key (the mark of a complete pass, when the job's source changes)."""

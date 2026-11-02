@@ -96,6 +96,9 @@ def test_a_run_stops_at_its_time_limit():
         def tag(self, file_id, tags):
             return None
 
+        def untag(self, file_id, tags):
+            return None
+
     from test_runner import FakeSource  # pylint: disable=import-outside-toplevel
 
     job = Job(user="u", name="n", source="fake", target="/x", schedule="* * * * *")

@@ -20,7 +20,7 @@ from nc_py_api import AsyncNextcloudApp
 
 from . import browser, runner, settings
 from .nextcloud import NextcloudLibrary
-from .sources import SOURCES, AuthError, ChallengeError, Stopped
+from .sources import FULL_PASS, SOURCES, AuthError, ChallengeError, Source, Stopped
 from .sources.base import watch_stop
 from .sources.download import guarded_client
 from .store import Job, Store
@@ -166,6 +166,9 @@ class Executor:
         self.controls: dict[int, Control] = {}
         self._sites: dict[int, str] = {}
         self._queued: set[int] = set()
+        # The jobs whose tags changed, with their tags before (their first change since the
+        # last pass): their next turn brings the files' tags up to date instead of a run.
+        self._retags: dict[int, list[str]] = {}
         self._lock = threading.Lock()
         self._events: asyncio.AbstractEventLoop | None = None
         self._events_lock = threading.Lock()
@@ -207,6 +210,14 @@ class Executor:
                 return
             self._queued.add(job_id)
         self.requests.put(job_id)
+
+    def retag(self, job_id: int, previous: list[str]) -> None:
+        """Brings the job's new tags to the files it saved, as soon as a runner is free (the job's
+        tags were previous): no listing for the files it recorded, one without downloads for
+        those it saved before it recorded them."""
+        with self._lock:
+            self._retags.setdefault(job_id, list(previous))
+        self.request(job_id)
 
     def paused(self, job_id: int) -> bool:
         """Whether the job runs and is paused."""
@@ -318,7 +329,9 @@ class Executor:
         # Its controls: a runner made them when it took the job; a direct call (tests) makes them.
         with self._lock:
             control = self.controls.setdefault(job_id, Control())
-        self._begin(job_id, control)
+            # A change of its tags: this turn brings them to its files, the run comes on schedule.
+            previous = self._retags.pop(job_id, None)
+        self._begin(job_id, control, previous is None)
         nc = self.connect()
         try:
             self.call(nc.set_user(job.user))
@@ -341,17 +354,7 @@ class Executor:
                 if kept:
                     source.restore(kept)
                 try:
-                    message = runner.run(
-                        job,
-                        source,
-                        NextcloudLibrary(nc, self.call),
-                        lambda key: self.store.seen(job_id, key),
-                        lambda key: self.store.mark_seen(job_id, key),
-                        until=lambda: started + RUN_LIMIT + control.paused_for,
-                        report=lambda level, text: self.store.log(job_id, level, text),
-                        sleep=control.nap,
-                        stopped=lambda: control.checkpoint(lambda level, text: self.store.log(job_id, level, text)),
-                    )
+                    message = self._work(job, source, NextcloudLibrary(nc, self.call), control, started, previous)
                 finally:
                     # Kept also after a failure: cookies set before it (a sign-in) still count;
                     # not for a job deleted while it ran (its session went with it).
@@ -360,38 +363,118 @@ class Executor:
                             self.call(save_session(nc, job, source.session()))
                     finally:
                         source.close()
-            self.store.finish(job_id, "ok", message)
+            # A pass for the tags is no run: the job's last run (and its schedule) stay.
+            if previous is None:
+                self.store.finish(job_id, "ok", message)
             self.store.log(job_id, "done", message)
-        except ChallengeError as error:
-            # Not a failure of the job: it waits for its user to answer the page in the browser.
-            if not self.store.job(job_id):
-                return
-            self.store.finish(job_id, "challenge", str(error), challenge_url=error.url)
-            self.store.log(job_id, "error", str(error))
-            self.notify(nc, f"Harvester: {job.name} needs you", f"{error.url} asks for a person ({error.kind}).")
         except Exception as error:  # pylint: disable=broad-exception-caught
-            # Whatever broke, the job is marked and the thread goes on with the others; a job
-            # deleted while it ran ends quietly.
-            if not self.store.job(job_id):
-                return
-            message = str(error) or type(error).__name__
-            status = "auth" if isinstance(error, AuthError) else "failed"
-            LOG.warning("job %s (%s) %s: %s", job_id, job.user, status, message)
-            self.store.finish(job_id, status, message)
-            self.store.log(job_id, "error", message)
-            # Told once: the same failure on the next scheduled runs is no news.
-            if (job.last_status, job.last_message) != (status, message):
-                self.notify(nc, f"Harvester: {job.name} failed", message)
+            self._failed(job, nc, error, previous is not None)
         finally:
             watch_stop(None)
             with self._lock:
                 self.controls.pop(job_id, None)
 
-    def _begin(self, job_id: int, control: Control) -> None:
-        """A run's start: the last run's message goes (the page shows this run's progress, its
-        log, instead), and its downloads in progress end at once when it is stopped (one job
-        per thread)."""
-        self.store.begin(job_id)
+    def _failed(self, job: Job, nc: AsyncNextcloudApp, error: Exception, retagging: bool) -> None:
+        """Records why a run failed, and tells its user of a new failure; a job deleted while it
+        ran ends quietly, and a pass for the tags only logs it (the job's last run stays)."""
+        job_id = job.id or 0
+        if not self.store.job(job_id):
+            return
+        message = str(error) or type(error).__name__
+        self.store.log(job_id, "error", message)
+        if retagging:
+            return
+        if isinstance(error, ChallengeError):
+            # Not a failure of the job: it waits for its user to answer the page in the browser.
+            self.store.finish(job_id, "challenge", message, challenge_url=error.url)
+            self.notify(nc, f"Harvester: {job.name} needs you", f"{error.url} asks for a person ({error.kind}).")
+            return
+        status = "auth" if isinstance(error, AuthError) else "failed"
+        LOG.warning("job %s (%s) %s: %s", job_id, job.user, status, message)
+        self.store.finish(job_id, status, message)
+        # Told once: the same failure on the next scheduled runs is no news.
+        if (job.last_status, job.last_message) != (status, message):
+            self.notify(nc, f"Harvester: {job.name} failed", message)
+
+    def _work(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self,
+        job: Job,
+        source: Source,
+        library: runner.Library,
+        control: Control,
+        started: float,
+        previous: list[str] | None,
+    ) -> str:
+        """The run itself, its files' tags first brought up to date; with previous (the job's
+        tags before a change), only the tags: of the files it recorded, then of those it saved
+        before it recorded them, found by a listing without downloads."""
+        job_id = job.id or 0
+
+        def report(level: str, text: str) -> None:
+            self.store.log(job_id, level, text)
+
+        def record(placed: runner.Placed) -> None:
+            self.store.record_placed(job_id, placed.key, placed.file_id, placed.values, placed.tags)
+
+        known = self.store.placed(job_id)
+        placed = [runner.Placed(key, entry["file"], entry["vals"], entry["tags"]) for key, entry in known.items()]
+        changed = runner.retag_placed(job, placed, library, record)
+
+        def stopped() -> bool:
+            return control.checkpoint(report)
+
+        if previous is not None:
+            earlier = self.store.seen_keys(job_id) - {FULL_PASS} - set(known)
+            return self._earlier_tags(job, source, library, earlier, previous, changed, report, record, stopped)
+        if changed:
+            report("info", f"Tags brought up to date on {changed} files")
+        return runner.run(
+            job,
+            source,
+            library,
+            lambda key: self.store.seen(job_id, key),
+            lambda key: self.store.mark_seen(job_id, key),
+            until=lambda: started + RUN_LIMIT + control.paused_for,
+            report=report,
+            sleep=control.nap,
+            stopped=stopped,
+            record=record,
+        )
+
+    @staticmethod
+    def _earlier_tags(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        job: Job,
+        source: Source,
+        library: runner.Library,
+        earlier: set[str],
+        previous: list[str],
+        changed: int,
+        report: runner.Report,
+        record: Callable[[runner.Placed], None],
+        stopped: Callable[[], bool],
+    ) -> str:
+        """A pass for the tags after their change: those of the files saved before the job
+        recorded them (earlier, their keys), found by a listing without downloads; changed
+        recorded files were brought up to date already."""
+        tagged, whole = 0, True
+        if earlier:
+            report(
+                "info", f"Looking for {len(earlier)} files saved before their tags were kept (nothing is downloaded)"
+            )
+            tagged, whole = runner.retag_earlier(
+                job, source, library, earlier.__contains__, record, previous=previous, report=report, stopped=stopped
+            )
+        message = f"Tags brought up to date on {changed + tagged} files"
+        return message if whole else f"{message}; stopped, the others keep their tags until the next change"
+
+    def _begin(self, job_id: int, control: Control, run: bool) -> None:
+        """A turn's start: a run's clears the last run's message (the page shows this run's
+        progress, its log, instead); downloads in progress end at once when it is stopped (one
+        job per thread)."""
+        if run:
+            self.store.begin(job_id)
+        else:
+            self.store.log(job_id, "info", "The job's tags changed: bringing them to its files")
         watch_stop(control.stopped)
 
     def notify(self, nc: AsyncNextcloudApp, subject: str, message: str) -> None:

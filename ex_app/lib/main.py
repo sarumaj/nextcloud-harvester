@@ -235,6 +235,9 @@ async def update_job(job_id: int, body: JobIn, nc: NC) -> dict:
     # complete pass again.
     if saved.source != job.source or saved.options != job.options:
         store().forget(job.id or 0, FULL_PASS)
+    # Other tags: the files it saved get them (and lose those it gave and has no more) at once.
+    if saved.tags != job.tags:
+        STATE["executor"].retag(saved.id or 0, job.tags)
     return vars(saved)
 
 

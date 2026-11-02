@@ -90,6 +90,12 @@ the app's browser or taken from a template, not by code.
   Files go to Nextcloud in chunks of nc_py_api's first kind: its second numbers the first chunk 0,
   which Nextcloud refuses where the storage takes multipart uploads (S3), so every file over 5 MB
   failed with 400.
+- **Changed tags:** a job remembers each file it saved, with its ID and the tags it gave it.
+  When the job's tags change, a pass right away (no run, the schedule stays) brings them to
+  those files: the missing ones added, those the job gave and has no more taken off; tags their
+  people added stay, a file deleted since is left. Files saved before 0.8.1, which it did not
+  remember so, are found by listing the site once without downloads and looking for each in the
+  folder. Its progress log shows the pass.
 - **Repeat runs:** a job remembers what it downloaded; a file already in the folder is tagged
   and not downloaded again. At most `max_items` files per run (`-1`: no limit), the rest comes
   next time; a run ends after two hours in any case. One file that fails does not stop the

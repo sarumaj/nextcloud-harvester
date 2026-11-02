@@ -4,6 +4,7 @@
 
 import asyncio
 import datetime
+import io
 import json
 import sqlite3
 import time
@@ -43,6 +44,8 @@ class FakeLibrary(runner.Library):
     def __init__(self, files=None):
         self.files: dict[str, bytes] = dict(files or {})
         self.tags: dict[int, list[str]] = {}
+        # Files deleted by their user since: tagging them fails as in Nextcloud.
+        self.gone: set[int] = set()
 
     def find(self, path):
         return list(self.files).index(path) if path in self.files else None
@@ -52,7 +55,15 @@ class FakeLibrary(runner.Library):
         return list(self.files).index(path)
 
     def tag(self, file_id, tags):
-        self.tags[file_id] = tags
+        if file_id in self.gone:
+            raise runner.FileGone(file_id)
+        current = self.tags.setdefault(file_id, [])
+        current += [tag for tag in tags if tag not in current]
+
+    def untag(self, file_id, tags):
+        if file_id in self.gone:
+            raise runner.FileGone(file_id)
+        self.tags[file_id] = [tag for tag in self.tags.get(file_id, []) if tag not in tags]
 
 
 def test_run_downloads_new_files_tags_them_and_keeps_existing_ones():
@@ -238,6 +249,15 @@ class FakeFiles:
             raise NextcloudException(409, "Conflict")
         self.assigned.add((file_id, tag_id))
 
+    async def unassign_tag(self, file_id, tag_id):
+        # Nextcloud answers 404 for a file that is gone and for a tag the file does not have.
+        if (file_id, tag_id) not in self.assigned:
+            raise NextcloudException(404, "Not Found")
+        self.assigned.discard((file_id, tag_id))
+
+    async def by_id(self, file_id):
+        return object() if file_id in range(1, len(self.stored) + 1) else None
+
 
 def library_of(nc) -> NextcloudLibrary:
     """The Nextcloud library over the fake, its requests run to their end as the executor does."""
@@ -376,3 +396,92 @@ def test_minus_one_files_per_run_means_no_limit():
         "3 downloaded"
     )
     assert runner.FULL_PASS in seen
+
+
+def test_a_run_records_its_files_and_their_tags():
+    job = Job(user="u", name="n", source="fake", target="/In", schedule="* * * * *", tags=["letter {letter}"])
+    recorded: list[runner.Placed] = []
+    seen: set[str] = set()
+    runner.run(job, FakeSource({}, {}, None), FakeLibrary(), seen.__contains__, seen.add, record=recorded.append)
+    assert recorded == [
+        runner.Placed("a", 0, {"letter": "a"}, ["letter a"]),
+        runner.Placed("b", 1, {"letter": "b"}, ["letter b"]),
+        runner.Placed("c", 2, {"letter": "c"}, ["letter c"]),
+    ]
+
+
+def test_new_tags_reach_the_recorded_files_and_the_old_ones_go():
+    job = Job(user="u", name="n", source="fake", target="/In", schedule="", tags=["kept", "year {letter}"])
+    library = FakeLibrary()
+    library.tags = {0: ["kept", "old", "by hand"], 1: ["kept", "old"], 2: ["kept"]}
+    library.gone = {2}
+    placed = [
+        runner.Placed("a", 0, {"letter": "a"}, ["kept", "old"]),
+        runner.Placed("b", 1, {"letter": "b"}, ["kept", "old"]),
+        runner.Placed("c", 2, {"letter": "c"}, ["kept", "old"]),
+        runner.Placed("d", None, {"letter": "d"}, []),
+    ]
+    recorded: list[runner.Placed] = []
+    assert runner.retag_placed(job, placed, library, recorded.append) == 2
+    assert library.tags[0] == ["kept", "by hand", "year a"], "the user's own tag stays, the job's old one goes"
+    assert library.tags[1] == ["kept", "year b"]
+    assert recorded == [
+        runner.Placed("a", 0, {"letter": "a"}, ["kept", "year a"]),
+        runner.Placed("b", 1, {"letter": "b"}, ["kept", "year b"]),
+        runner.Placed("c", None, {"letter": "c"}, []),
+    ], "a deleted file is recorded as gone"
+    assert runner.retag_placed(job, [r for r in recorded if r.file_id is not None], library, recorded.append) == 0
+
+
+def test_files_saved_before_they_were_recorded_are_found_without_downloads():
+    job = Job(user="u", name="n", source="fake", target="/In", schedule="", tags=["new {letter}"])
+    library = FakeLibrary({"/In/a.txt": b"a", "/In/b.txt": b"b"})
+    library.tags = {0: ["old a", "by hand"], 1: ["old b"]}
+    recorded: list[runner.Placed] = []
+    tagged, whole = runner.retag_earlier(
+        job, FakeSource({}, {}, None), library, {"a", "c"}.__contains__, recorded.append, previous=["old {letter}"]
+    )
+    assert (tagged, whole) == (1, True)
+    assert library.tags[0] == ["by hand", "new a"], "the previous tags' file values, the user's own stays"
+    assert library.tags[1] == ["old b"], "b was recorded already: not this pass's"
+    assert library.files == {"/In/a.txt": b"a", "/In/b.txt": b"b"}, "nothing downloaded, c not fetched"
+    assert recorded == [
+        runner.Placed("a", 0, {"letter": "a"}, ["new a"]),
+        runner.Placed("c", None, {"letter": "c"}, []),
+    ]
+
+
+def test_the_store_keeps_the_files_and_the_executor_the_first_previous_tags(tmp_path):
+    store = Store(str(tmp_path / "db"))
+    job = store.save(Job(user="u", name="n", source="fake", target="/In", schedule=""))
+    store.record_placed(job.id or 0, "a", 7, {"year": 2026}, ["x"])
+    store.record_placed(job.id or 0, "a", 7, {"year": 2026}, ["y"])
+    store.record_placed(job.id or 0, "b", None, {}, [])
+    assert store.placed(job.id or 0) == {
+        "a": {"file": 7, "vals": {"year": 2026}, "tags": ["y"]},
+        "b": {"file": None, "vals": {}, "tags": []},
+    }
+    store.mark_seen(job.id or 0, "a")
+    assert store.seen_keys(job.id or 0) == {"a"}
+    executor = executor_module.Executor(store)
+    executor.retag(job.id or 0, ["first"])
+    executor.retag(job.id or 0, ["second"])
+    pending = executor._retags  # pylint: disable=protected-access
+    assert pending == {job.id: ["first"]}, "the tags the files have are the first change's"
+    store.delete(job.id or 0)
+    assert not store.placed(job.id or 0), "deleted with its job"
+
+
+def test_nextcloud_takes_tags_off_and_tells_a_gone_file_from_a_missing_tag():
+    nc = FakeNextcloud()
+    nc.files = FakeFiles()
+    library = library_of(nc)
+    file_id = library.put("/In/a.pdf", io.BytesIO(b"a"))
+    library.tag(file_id, ["x", "y"])
+    library.untag(file_id, ["x", "not on it"])
+    assert nc.files.assigned == {(file_id, nc.files.tags["y"])}
+    library.untag(file_id, ["x"])  # not on it any more: no matter
+    with pytest.raises(runner.FileGone):
+        library.untag(99, ["y"])
+    with pytest.raises(runner.FileGone):
+        library.tag(99, ["y"])

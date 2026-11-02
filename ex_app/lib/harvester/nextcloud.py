@@ -11,7 +11,7 @@ from typing import Any, BinaryIO
 
 from nc_py_api import AsyncNextcloudApp, NextcloudException
 
-from .runner import Library
+from .runner import FileGone, Library
 
 Call = Callable[[Awaitable[Any]], Any]
 
@@ -72,5 +72,32 @@ class NextcloudLibrary(Library):
             try:
                 self.call(self.nc.files.assign_tag(file_id, tag_id))
             except NextcloudException as error:
+                if error.status_code == 404:
+                    raise FileGone(file_id) from error
                 if error.status_code != 409:
                     raise
+
+    def untag(self, file_id: int, tags: list[str]) -> None:
+        # A tag that is not on the file (or not one the user sees) is no matter: Nextcloud answers
+        # 404 for a file that is gone, and for a relation that is not there; the file decides.
+        if any(name not in self._tags for name in tags):
+            self._tags = self._tag_ids()
+        for name in tags:
+            tag_id = self._tags.get(name)
+            if tag_id is None:
+                continue
+            try:
+                self.call(self.nc.files.unassign_tag(file_id, tag_id))
+            except NextcloudException as error:
+                if error.status_code != 404:
+                    raise
+                if not self._exists(file_id):
+                    raise FileGone(file_id) from error
+
+    def _exists(self, file_id: int) -> bool:
+        try:
+            return bool(self.call(self.nc.files.by_id(file_id)))
+        except NextcloudException as error:
+            if error.status_code != 404:
+                raise
+            return False

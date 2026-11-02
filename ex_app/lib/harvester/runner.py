@@ -50,7 +50,29 @@ class Library(abc.ABC):
 
     @abc.abstractmethod
     def tag(self, file_id: int, tags: list[str]) -> None:
-        """Gives the file the collaborative tags, creating those that do not exist yet."""
+        """Gives the file the collaborative tags, creating those that do not exist yet; FileGone
+        when there is no such file any more."""
+
+    @abc.abstractmethod
+    def untag(self, file_id: int, tags: list[str]) -> None:
+        """Takes the collaborative tags off the file (those it does not have are no matter);
+        FileGone when there is no such file any more."""
+
+
+class FileGone(Exception):
+    """The file a job saved is not there any more (deleted or moved away by its user)."""
+
+
+@dataclasses.dataclass
+class Placed:
+    """A file a job saved or found in its folder: its item's key, its ID (None: not in the
+    folder when it was looked for), the values its tags are made of, and the tags it was given.
+    A change of the job's tags is brought to these files (retag_placed)."""
+
+    key: str
+    file_id: int | None
+    values: dict
+    tags: list[str]
 
 
 # A line of a run's progress: its level (info, error) and its text.
@@ -67,10 +89,18 @@ def size_text(size: int) -> str:
     return f"{value:.1f} GB"
 
 
-def place(job: Job, source: Source, library: Library, item, pause: Callable[[], None], report: Report) -> bool:
+def place(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    job: Job,
+    source: Source,
+    library: Library,
+    item,
+    pause: Callable[[], None],
+    report: Report,
+    record: Callable[[Placed], None] = lambda placed: None,
+) -> bool:
     """Puts the item's file into the job's folder (after the pause) and tags it; False when it
     was there already (downloaded by hand or by an earlier job: kept, tagged and not downloaded
-    again)."""
+    again). record keeps which file it is and its tags, for a later change of the job's tags."""
     if not item.path.strip("/"):
         raise SourceError(f"the file name for {item.url} came out empty (check the job's File name)")
     path = posixpath.join(job.target, item.path)
@@ -91,7 +121,77 @@ def place(job: Job, source: Source, library: Library, item, pause: Callable[[], 
     tags = render_tags(job.tags, item.values)
     if tags:
         library.tag(file_id, tags)
+    record(Placed(item.key, file_id, dict(item.values), tags))
     return fetched
+
+
+def retag_placed(job: Job, placed: list[Placed], library: Library, record: Callable[[Placed], None]) -> int:
+    """Brings the job's tags to the files it saved: the missing ones added, those it gave
+    earlier and has no more taken off (tags their user added stay). Returns how many changed;
+    a file that is gone is recorded so and left."""
+    changed = 0
+    for entry in placed:
+        if entry.file_id is None:
+            continue
+        wanted = render_tags(job.tags, entry.values)
+        if wanted == entry.tags:
+            continue
+        try:
+            if wanted:
+                library.tag(entry.file_id, wanted)
+            obsolete = [tag for tag in entry.tags if tag not in wanted]
+            if obsolete:
+                library.untag(entry.file_id, obsolete)
+        except FileGone:
+            record(dataclasses.replace(entry, file_id=None, tags=[]))
+            continue
+        record(dataclasses.replace(entry, tags=wanted))
+        changed += 1
+    return changed
+
+
+def retag_earlier(  # pylint: disable=too-many-arguments
+    job: Job,
+    source: Source,
+    library: Library,
+    is_earlier: Callable[[str], bool],
+    record: Callable[[Placed], None],
+    *,
+    previous: list[str],
+    report: Report = lambda level, text: None,
+    stopped: Callable[[], bool] = lambda: False,
+) -> tuple[int, bool]:
+    """The files a job saved before it recorded them (is_earlier: their keys): the site is
+    listed again (nothing is downloaded), each is looked for in the folder, given the job's
+    tags, and the tags of its previous tags (previous) that it has no more are taken off.
+    Returns how many were tagged, and whether the listing went to its end."""
+    tagged = 0
+    try:
+        for item in source.items(lambda key: False):
+            if stopped():
+                return tagged, False
+            if not is_earlier(item.key):
+                continue
+            file_id = library.find(posixpath.join(job.target, item.path))
+            if file_id is None:
+                record(Placed(item.key, None, dict(item.values), []))
+                continue
+            wanted = render_tags(job.tags, item.values)
+            obsolete = [tag for tag in render_tags(previous, item.values) if tag not in wanted]
+            try:
+                if wanted:
+                    library.tag(file_id, wanted)
+                if obsolete:
+                    library.untag(file_id, obsolete)
+            except FileGone:
+                record(Placed(item.key, None, dict(item.values), []))
+                continue
+            record(Placed(item.key, file_id, dict(item.values), wanted))
+            report("info", f"Tagged: {posixpath.join(job.target, item.path)}")
+            tagged += 1
+    except Stopped:
+        return tagged, False
+    return tagged, True
 
 
 @dataclasses.dataclass
@@ -123,6 +223,7 @@ def run(  # pylint: disable=too-many-arguments,too-many-locals  # the run's part
     until: float | Callable[[], float] | None = None,
     report: Report = lambda level, text: None,
     stopped: Callable[[], bool] = lambda: False,
+    record: Callable[[Placed], None] = lambda placed: None,
 ) -> str:
     """Downloads up to max_items new items (and stops at until, a time.monotonic(), or a
     function giving it) and returns what was done, in a sentence; report hears of each step
@@ -152,7 +253,7 @@ def run(  # pylint: disable=too-many-arguments,too-many-locals  # the run's part
             # A pause between two downloads, not before the first.
             pause = (lambda: sleep(source.pause)) if tally.downloaded else (lambda: None)
             try:
-                if place(job, source, library, item, pause, report):
+                if place(job, source, library, item, pause, report, record):
                     tally.downloaded += 1
                 else:
                     tally.adopted += 1
