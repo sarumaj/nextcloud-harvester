@@ -26,6 +26,7 @@ from .. import browser
 from .. import cookies as cookie_jar
 from .. import otp, pagination, patterns
 from .. import recipe as recipes
+from ..browser.guard import Guard
 from . import download
 from .base import AuthError, ChallengeError, Item, Option, Source, SourceError, Stopped, pattern_search
 from .download import Response
@@ -191,9 +192,13 @@ class BrowserDriver(Driver):
         # The downloads' proxy and user agent: the browser's (download).
         self.proxy = browser.PROXY if home else ""
         self.user_agent = ""
+        # The browser's connections all go through its guard (with the home connection, if chosen).
+        self._guard: Guard | None = None
         try:
+            self._guard = Guard(self.proxy)
+            port = self._guard.start()
             self._playwright = sync_playwright().start()
-            self._browser = self._playwright.chromium.launch(**browser.launch_options(http1, home))
+            self._browser = self._playwright.chromium.launch(**browser.launch_options(port, http1))
             self.user_agent = browser.user_agent(self._browser.version)
             self.context = self._browser.new_context(
                 **browser.context_options(self._browser.version),
@@ -311,7 +316,11 @@ class BrowserDriver(Driver):
             if self._playwright:
                 self._playwright.stop()
         finally:
-            browser.SLOTS.release()
+            try:
+                if self._guard:
+                    self._guard.stop()
+            finally:
+                browser.SLOTS.release()
 
 
 def guard(route: Route) -> None:

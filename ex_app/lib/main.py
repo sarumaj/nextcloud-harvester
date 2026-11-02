@@ -518,8 +518,8 @@ async def sign_in(websocket: WebSocket, nc: AsyncNextcloudApp, wizard: str) -> N
     authorization = await admit_sign_in(websocket, user, wizard)
     if authorization is None:
         return
-    # Directly, never through the jobs' proxy: the listener is this container's own, and with
-    # Playwright's proxy Chromium sends even 127.0.0.1 to the proxy (no loopback bypass).
+    # Never through the jobs' proxy: the listener is this container's own. This browser's guard
+    # alone lets it through (Chromium sends even 127.0.0.1 to its guard), while loopback is set.
     recorder = Recorder(websocket.send_json)
     recorder.loopback = AUTHORIZE_ORIGIN
     try:

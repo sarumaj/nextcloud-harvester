@@ -17,10 +17,13 @@ def test_the_user_agent_is_chromes_without_headless():
 
 
 def test_the_launch_hides_automation_and_can_speak_http1():
-    plain, http1 = browser.launch_options(), browser.launch_options(http1=True)
+    plain, http1 = browser.launch_options(9), browser.launch_options(9, http1=True)
     assert "--disable-blink-features=AutomationControlled" in plain["args"]
     assert "--disable-http2" not in plain["args"] and "--disable-http2" in http1["args"]
     assert plain["channel"] == "chromium" and "APP_SECRET" not in plain["env"]
+    # Everything through the guard, loopback too; WebRTC never past it.
+    assert plain["proxy"] == {"server": "http://127.0.0.1:9", "bypass": "<-loopback>"}
+    assert "--webrtc-ip-handling-policy=disable_non_proxied_udp" in plain["args"]
 
 
 def test_window_sizes_stay_within_the_limits():
@@ -39,7 +42,7 @@ def test_pages_see_a_persons_browser():
     from playwright.sync_api import sync_playwright  # pylint: disable=import-outside-toplevel
 
     with sync_playwright() as playwright:
-        chromium = playwright.chromium.launch(**browser.launch_options())
+        chromium = playwright.chromium.launch(**browser.launch_options(9))
         try:
             page = chromium.new_context(**browser.context_options(chromium.version)).new_page()
             seen = page.evaluate(

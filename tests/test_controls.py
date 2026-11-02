@@ -166,14 +166,12 @@ def test_the_home_connection_goes_to_the_browser_and_the_downloads(monkeypatch):
     from harvester.sources.media import Media  # pylint: disable=import-outside-toplevel
 
     monkeypatch.setattr(browser, "PROXY", "http://192.168.178.33:3128")
-    assert browser.launch_options(home=True)["proxy"] == {"server": "http://192.168.178.33:3128"}
-    assert "proxy" not in browser.launch_options()
+    # The browser goes to its guard alone, which goes on through the proxy (test_guard).
+    assert browser.launch_options(4321)["proxy"] == {"server": "http://127.0.0.1:4321", "bypass": "<-loopback>"}
     media = Media({"url": "https://video.example/c"}, {}, None)
     assert "proxy" not in media.base()
     media.home = True
     assert media.base()["proxy"] == "http://192.168.178.33:3128"
-    monkeypatch.setattr(browser, "PROXY", "")
-    assert "proxy" not in browser.launch_options(home=True), "no home connection set up: none"
 
 
 def test_the_browsers_limit_changes_while_they_are_in_use():
@@ -284,15 +282,19 @@ def test_the_proxy_setting_takes_only_http_addresses_and_hides_its_password():
     assert settings.shown("http://u:secret@p.example:3128") == "http://u:***@p.example:3128"
 
 
-def test_the_browser_gets_the_proxys_credentials_apart(monkeypatch):
+def test_the_proxys_credentials_go_to_the_guard_not_the_browser(monkeypatch):
     from harvester import browser  # pylint: disable=import-outside-toplevel
+    from harvester.browser.guard import Guard  # pylint: disable=import-outside-toplevel
 
     monkeypatch.setattr(browser, "PROXY", "http://anna%40home:p%3Ass@proxy.example:3128")
-    assert browser.launch_options(home=True)["proxy"] == {
-        "server": "http://proxy.example:3128",
-        "username": "anna@home",
-        "password": "p:ss",
-    }
+    upstream = Guard(browser.PROXY).upstream
+    assert upstream and (upstream.host, upstream.port, upstream.username, upstream.password) == (
+        "proxy.example",
+        3128,
+        "anna@home",
+        "p:ss",
+    )
+    assert "anna" not in str(browser.launch_options(4321)), "Chromium never sees them"
 
 
 def test_the_jobs_form_names_the_proxy_as_the_admin_does(monkeypatch):
@@ -310,10 +312,12 @@ def test_the_jobs_form_names_the_proxy_as_the_admin_does(monkeypatch):
 
 def test_a_socks_proxy_goes_to_the_browser_and_the_downloads(monkeypatch):
     from harvester import browser  # pylint: disable=import-outside-toplevel
+    from harvester.browser.guard import Guard  # pylint: disable=import-outside-toplevel
     from harvester.sources.download import guarded_client  # pylint: disable=import-outside-toplevel
 
     monkeypatch.setattr(browser, "PROXY", "socks5h://proxy.example:1080")
-    assert browser.launch_options(home=True)["proxy"] == {"server": "socks5://proxy.example:1080"}
+    upstream = Guard(browser.PROXY).upstream
+    assert upstream and (upstream.scheme, upstream.host, upstream.port) == ("socks5", "proxy.example", 1080)
     guarded_client(proxy=browser.PROXY).close()  # socksio is installed: httpx takes it
 
 

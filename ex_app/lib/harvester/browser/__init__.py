@@ -17,7 +17,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import urlparse
 
 
 class Slots:
@@ -180,24 +180,21 @@ def http_address(url: str) -> str:
     return {"ws": "http", "wss": "https"}.get(scheme.lower(), scheme) + separator + rest
 
 
-def launch_options(http1: bool = False, home: bool = False) -> dict:
+def launch_options(guard: int, http1: bool = False) -> dict:
     """How Chromium starts (CHANNEL; HTTP/1.1 only for the sites that cut HTTP/2 connections
-    of browsers they distrust; home: through PROXY, its credentials given apart as Chromium
-    wants them)."""
+    of browsers they distrust), with every connection through its guard on 127.0.0.1 (the
+    guard's port; guard.Guard, which takes the home connection, PROXY, from there on)."""
     args = [*LAUNCH_ARGS, "--disable-blink-features=AutomationControlled", f"--lang={LOCALE}"]
     if http1:
         args.append("--disable-http2")
     options = {"args": args, "env": child_env()} | ({"channel": CHANNEL} if CHANNEL else {})
-    if home and PROXY:
-        address = urlparse(PROXY)
-        # Chromium knows socks5 only, and looks up the names at a SOCKS proxy anyway.
-        scheme = "socks5" if address.scheme == "socks5h" else address.scheme
-        server = address._replace(scheme=scheme, netloc=address.netloc.rpartition("@")[2]).geturl()
-        options["proxy"] = {"server": server} | (
-            {"username": unquote(address.username or ""), "password": unquote(address.password or "")}
-            if address.username
-            else {}
-        )
+    # The guard for loopback too: Chromium would otherwise connect to 127.0.0.1 and localhost
+    # by itself ("<-loopback>" removes that implicit exception). Playwright's own requests of
+    # the context (context.request) take the same proxy.
+    options["proxy"] = {"server": f"http://127.0.0.1:{guard}", "bypass": "<-loopback>"}
+    # WebRTC's UDP passes by any proxy: a page's peer connection would send to whatever address
+    # its STUN or TURN servers have. Only what goes through the proxy (TCP, the guard's).
+    args.append("--webrtc-ip-handling-policy=disable_non_proxied_udp")
     return options
 
 
@@ -243,6 +240,12 @@ def connection_refused(error: Exception) -> str:
     return ""
 
 
+def local_name(host: str) -> bool:
+    """Whether the name is a local one by itself (empty, localhost, *.localhost, *.local,
+    *.internal), whatever it resolves to; host in lower case, without brackets."""
+    return not host or host == "localhost" or host.endswith((".localhost", ".local", ".internal"))
+
+
 def allowed_host(host: str) -> bool:
     """Tells whether a source may connect to the host (IMAP, SFTP, ...): not a local or private
     name or address, nor a name that resolves to one (127.0.0.1.nip.io, say), for the helper
@@ -250,7 +253,7 @@ def allowed_host(host: str) -> bool:
     them off the private network as well). (Between this lookup and the connection, the name
     could still change: those rules stay the guard against that.)"""
     host = host.strip().lower().strip("[]")
-    if not host or host == "localhost" or host.endswith((".localhost", ".local", ".internal")):
+    if local_name(host):
         return False
     try:
         return ipaddress.ip_address(host).is_global

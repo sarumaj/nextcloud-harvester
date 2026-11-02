@@ -67,6 +67,7 @@ from . import (
     reachable,
     seen_address,
 )
+from .guard import Guard
 
 # record: steps; browse: go somewhere unrecorded; follow, links, next: pick links.
 MODES = ("record", "browse", "follow", "links", "next")
@@ -145,9 +146,22 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         self._trial_stop: threading.Event | None = None
         self._trial: asyncio.Task | None = None
         self._trial_context: BrowserContext | None = None
-        # The one local address this browser may open besides the public ones (scheme, host and
-        # port, e.g. rclone's sign-in listener while it runs); "" for none.
-        self.loopback = ""
+        # The browser's connections all go through its guard (started with the browser).
+        self._gate: Guard | None = None
+        self._loopback = ""
+
+    @property
+    def loopback(self) -> str:
+        """The one local address this browser may open besides the public ones (scheme, host and
+        port, e.g. rclone's sign-in listener while it runs); "" for none. Its guard learns it at
+        once, for this browser alone."""
+        return self._loopback
+
+    @loopback.setter
+    def loopback(self, origin: str) -> None:
+        self._loopback = origin
+        if self._gate:
+            self._gate.allow(origin)
 
     def opens_loopback(self, url: str) -> bool:
         """Whether the address is at self.loopback (any path and query)."""
@@ -172,8 +186,12 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         """Starts the browser with an empty page, or with a job's session at a page of it (the one
         that asked for a person); http1 for the sites that cut HTTP/2 connections, home through
         the home connection."""
+        # The guard with the home connection, if chosen, and this browser's local exception.
+        self._gate = Guard(browser.PROXY if home else "")
+        self._gate.allow(self.loopback)
+        port = await asyncio.to_thread(self._gate.start)
         self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(**launch_options(http1, home))
+        self._browser = await self._playwright.chromium.launch(**launch_options(port, http1))
         self._context = await self._new_context(session)
         await self._context.expose_binding("__harvesterReport", self._report)
         await self._context.add_init_script(SCRIPT)
@@ -185,7 +203,8 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
 
     async def _new_context(self, session: dict | None) -> BrowserContext:
         """A browser context with the session, guarded as every one of the recorder's (its
-        own, and the recipe's test's)."""
+        own, and the recipe's test's): the routes here, and the browser's guard (its proxy) for
+        all of them alike."""
         assert self._browser is not None
         context = await self._browser.new_context(
             **context_options(self._browser.version, self.viewport),
@@ -216,7 +235,8 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         return await self._context.storage_state()  # type: ignore[return-value]
 
     async def close(self) -> None:
-        """Closes the browser, within seconds even when a page or a send is stuck."""
+        """Closes the browser, within seconds even when a page or a send is stuck, and then its
+        guard (its port and connections)."""
         if self._trial_stop:
             self._trial_stop.set()
         for closing in (self._browser and self._browser.close(), self._playwright and self._playwright.stop()):
@@ -225,6 +245,8 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
                     await asyncio.wait_for(closing, CLOSE_TIMEOUT)
                 except Exception:  # pylint: disable=broad-exception-caught
                     pass  # stopping Playwright ends its browser in any case
+        if self._gate:
+            await asyncio.to_thread(self._gate.stop)
 
     async def _guard(self, route: Route) -> None:
         # The name's lookup off the event loop (the screen and the input go on meanwhile).

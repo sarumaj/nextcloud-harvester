@@ -327,7 +327,7 @@ def chromium_installed() -> bool:
         from playwright.sync_api import sync_playwright  # pylint: disable=import-outside-toplevel
 
         with sync_playwright() as playwright:
-            playwright.chromium.launch(**browser.launch_options()).close()
+            playwright.chromium.launch(**browser.launch_options(9)).close()
         return True
     except Exception:  # pylint: disable=broad-exception-caught
         return False

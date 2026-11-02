@@ -99,7 +99,7 @@ def fixture_page():
         route.fulfill(status=200, content_type="text/html", body=body)
 
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(**launch_options())
+        browser = playwright.chromium.launch(**launch_options(9))  # a port nobody listens on: all fulfilled
         page = browser.new_page()
         page.route("**/apps/app_api/proxy/harvester/api/**", api)
         page.route("**/main.js", lambda route: route.fulfill(status=200, content_type="text/javascript", body=SCRIPT))
