@@ -25,7 +25,7 @@ from typing import Any, BinaryIO, ClassVar
 
 from .. import browser, patterns
 from . import download
-from .base import MARK, AuthError, Item, Option, Refused, Source, SourceError
+from .base import MARK, AuthError, Item, Option, Refused, Source, SourceError, pattern_search
 
 # Month names IMAP's SINCE expects, whatever the locale.
 MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
@@ -307,8 +307,8 @@ class Mail(Source):
         sender = " ".join(email.utils.parseaddr(str(header.get("From", "")))).strip()
         subject = str(header.get("Subject", ""))
         return bool(
-            re.search(str(self.settings["from_pattern"]), sender)
-            and re.search(str(self.settings["subject_pattern"]), subject)
+            pattern_search(str(self.settings["from_pattern"]), sender)
+            and pattern_search(str(self.settings["subject_pattern"]), subject)
         )
 
     def items(self, seen: Callable[[str], bool]) -> Iterator[Item]:  # pylint: disable=too-many-locals
@@ -371,7 +371,7 @@ class Mail(Source):
         to keys)."""
         message_id = str(message.get("Message-ID", "")).strip() or uid
         values = self.message_values(message)
-        names = re.compile(str(self.settings["filename_pattern"]))
+        names = str(self.settings["filename_pattern"])
         index = 0
         for part in message.walk():
             filename = part.get_filename()
@@ -380,7 +380,7 @@ class Mail(Source):
             index += 1
             filename = safe(filename, 200) or f"attachment-{index}"
             key = f"mail:{message_id}#{index}:{filename}"
-            if not names.search(filename) or seen(key):
+            if not pattern_search(names, filename) or seen(key):
                 continue
             payload = part.get_payload(decode=True)
             if not isinstance(payload, bytes) or not self.wanted(payload, part.get_content_type()):

@@ -476,3 +476,30 @@ def test_a_job_asked_for_shows_queued_until_a_runner_takes_it(tmp_path, monkeypa
     assert executor.queued == [other.id]
     listed = asyncio.run(main.list_jobs(Nextcloud()))
     assert [(item["queued"], item["running"]) for item in listed] == [(False, True)]
+
+
+def test_a_persons_pattern_that_takes_too_long_fails_its_job_not_the_app():
+    import pytest  # pylint: disable=import-outside-toplevel
+
+    from harvester.sources import SourceError  # pylint: disable=import-outside-toplevel
+    from harvester.sources.base import PATTERN_TIMEOUT, pattern_search  # pylint: disable=import-outside-toplevel
+
+    assert pattern_search(r"\.pdf$", "a.pdf") and not pattern_search(r"\.pdf$", "a.txt")
+    assert pattern_search(r"(?P<year>\d{4})", "x 2026").group("year") == "2026", "Python's syntax"
+    ticks: list[float] = []
+    running = threading.Event()
+
+    def tick():
+        while not running.is_set():
+            ticks.append(time.monotonic())
+            time.sleep(0.05)
+
+    ticker = threading.Thread(target=tick, daemon=True)
+    ticker.start()
+    began = time.monotonic()
+    with pytest.raises(SourceError, match="takes too long"):
+        pattern_search(r"(a|aa)+$", "a" * 60 + "b")
+    took = time.monotonic() - began
+    running.set()
+    assert took < PATTERN_TIMEOUT + 2, "ended at the limit"
+    assert sum(1 for at in ticks if began < at < began + took) >= 5, "the other threads went on meanwhile"

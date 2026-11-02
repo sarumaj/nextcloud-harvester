@@ -223,8 +223,11 @@ the app's browser or taken from a template, not by code.
   undumpable, so its `/proc` files (its environment) are root's. The app runs as the user
   `harvester`, frpc as `harvester-frp`, whose configuration (HaRP's key) `harvester` may not
   read, both without a way back to root (`setpriv --no-new-privs`, `start.sh`). A job's id is
-  never used again. A pattern in the recorder runs with a time limit. The recorder's WebSocket
-  takes only Nextcloud's origin (`NEXTCLOUD_URL`, more in `HARVESTER_ORIGINS`).
+  never used again. A person's pattern runs with a time limit, in the recorder (2 s for a page)
+  and in the runs (1 s a text: feeds' links, mail's senders, subjects and file names, release
+  files, the wait pattern), letting the other threads go on meanwhile; one that takes longer
+  fails its job with a message, not the app. The recorder's WebSocket takes only Nextcloud's
+  origin (`NEXTCLOUD_URL`, more in `HARVESTER_ORIGINS`).
 
 ## Development
 

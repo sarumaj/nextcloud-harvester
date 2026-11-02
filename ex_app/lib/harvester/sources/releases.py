@@ -19,7 +19,7 @@ import httpx
 from .. import patterns
 from ..browser import allowed_url
 from . import download
-from .base import AuthError, Item, Option, Source, SourceError
+from .base import AuthError, Item, Option, Source, SourceError, pattern_search
 from .download import Response
 
 PER_PAGE = 30
@@ -250,7 +250,7 @@ class Releases(Source):
     def asset(self, asset: dict, values: dict) -> Item | None:
         """The release's file, when its name matches the job's pattern."""
         filename = str(asset.get("name") or "")
-        if not filename or not self.pattern.search(filename):
+        if not filename or not pattern_search(self.pattern.pattern, filename):
             return None
         link = str(asset.get("browser_download_url") or "")
         stem, ext = posixpath.splitext(filename)

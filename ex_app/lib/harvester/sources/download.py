@@ -14,7 +14,7 @@ from typing import BinaryIO
 import httpx
 
 from ..browser import allowed_url, challenge_in_html, reachable
-from .base import ChallengeError, Denied, Option, Refused, SourceError, check_stop
+from .base import ChallengeError, Denied, Option, Refused, SourceError, check_stop, pattern_search
 
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) Nextcloud-Harvester"
 # Waits a site asks for, per file; and the longest one honoured.
@@ -189,7 +189,7 @@ def pause(response: Response, wait_pattern: str) -> float | None:
     if response.status in (429, 503):
         retry = response.headers.get("retry-after", "")
         return min(float(retry) if retry.isdigit() else 60.0, MAX_WAIT)
-    match = re.search(wait_pattern, response.url) if wait_pattern else None
+    match = pattern_search(wait_pattern, response.url) if wait_pattern else None
     if match:
         return min(float(match.group(1)) + 5 if match.groups() else 60.0, MAX_WAIT)
     return None

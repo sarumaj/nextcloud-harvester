@@ -15,7 +15,7 @@ import feedparser
 
 from .. import browser, patterns
 from . import download
-from .base import ACCOUNT_HELP, Item, Option, Source, SourceError
+from .base import ACCOUNT_HELP, Item, Option, Source, SourceError, pattern_search
 
 UNSAFE = re.compile(r"[\\/:*?\"<>|\s]+")
 TAKES = ("enclosures", "links")
@@ -132,10 +132,10 @@ class Feed(Source):
             urls = [entry.get("link", "")]
         else:
             urls = [enclosure.get("href", "") for enclosure in entry.get("enclosures", [])]
-        pattern = re.compile(str(self.settings["link_pattern"]))
+        link_pattern = str(self.settings["link_pattern"])
         # Feeds often link relatively (Atom's href="/f.pdf"): against the feed's own address.
         urls = [urljoin(str(self.settings["url"]), url) for url in urls if url]
-        return [url for url in urls if browser.allowed_url(url) and pattern.search(url)]
+        return [url for url in urls if browser.allowed_url(url) and pattern_search(link_pattern, url)]
 
     def items(self, seen: Callable[[str], bool]) -> Iterator[Item]:
         feed, entries = self.entries()

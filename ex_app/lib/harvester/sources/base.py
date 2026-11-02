@@ -2,6 +2,7 @@
 
 import abc
 import contextlib
+import functools
 import subprocess
 import threading
 from collections.abc import Callable, Iterator
@@ -10,6 +11,7 @@ from typing import BinaryIO, ClassVar
 from urllib.parse import urlparse
 
 import httpx
+import regex
 
 from .. import cookies as cookie_jar
 
@@ -89,6 +91,26 @@ def stoppable_run(  # pylint: disable=too-many-arguments
     if check and process.returncode:
         raise subprocess.CalledProcessError(process.returncode, command, stdout, stderr)
     return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+
+
+# How long a person's pattern may take on one text (s): a pattern that backtracks without end
+# (`(a|aa)+$` on a long name) would else hold its runner for good. With the regex package, which
+# also lets the other threads (runners, the page's requests) go on meanwhile.
+PATTERN_TIMEOUT = 1.0
+
+
+@functools.lru_cache(maxsize=256)
+def _compiled(pattern: str) -> "regex.Pattern[str]":
+    return regex.compile(pattern)
+
+
+def pattern_search(pattern: str, text: str) -> "regex.Match[str] | None":
+    """A person's pattern (as Python's re reads it; checked with re when the job is saved)
+    searched in text, within PATTERN_TIMEOUT; SourceError if it takes longer."""
+    try:
+        return _compiled(pattern).search(text, timeout=PATTERN_TIMEOUT, concurrent=True)
+    except TimeoutError as error:
+        raise SourceError(f"the pattern {pattern} takes too long (more than {PATTERN_TIMEOUT:g} s)") from error
 
 
 class SourceError(Exception):
