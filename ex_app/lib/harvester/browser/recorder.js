@@ -7,6 +7,11 @@
 // highlight(selector, pattern) outlines the selector's links: solid where the pattern matches
 // their URL, dashed where it does not. Everything goes to the recorder through
 // window.__harvesterReport.
+//
+// It runs in every frame too (a consent banner's, a sign-in's), cross-origin ones included: the
+// recorder learns from the report itself which frame it came from, and asks the frame's parent
+// for its element's selector (frameSelector). A frame reports when the mouse or the focus comes
+// into it ("where"), for the recorder to show where the person acts.
 (() => {
 	if (window.__harvester) return
 	const state = { mode: 'record', highlighted: [] }
@@ -109,6 +114,23 @@
 	}
 	state.highlight = highlight
 
+	// The selector of a frame's element (an iframe) in this document, for a step to find the frame
+	// again: by what names it, else by its address without the query (which may change from visit
+	// to visit), else by its place.
+	function frameSelector(el) {
+		const tag = el.tagName.toLowerCase()
+		const tries = []
+		if (el.id && !/\d{3,}/.test(el.id)) tries.push(`#${css(el.id)}`)
+		for (const attribute of ['name', 'title', 'data-testid', 'aria-label']) {
+			const value = el.getAttribute(attribute)
+			if (value && !/\d{3,}/.test(value)) tries.push(`${tag}[${attribute}="${css(value)}"]`)
+		}
+		const src = (el.getAttribute('src') || '').split(/[?#]/)[0]
+		if (src && !src.startsWith('data:')) tries.push(`${tag}[src^="${css(src)}"]`)
+		return tries.find((selector) => count(selector) === 1) || unique(el)
+	}
+	state.frameSelector = frameSelector
+
 	function link(el) {
 		return el.closest('a[href], [onclick], button') || el
 	}
@@ -131,6 +153,20 @@
 		}
 		return null
 	}
+
+	// A frame (or a page) that starts after the recorder set the mode asks for it: the recorder sets
+	// it in the frames there are at the time only.
+	Promise.resolve(report({ action: 'mode' }))
+		.then((mode) => { if (typeof mode === 'string') state.mode = mode })
+		.catch(() => {})
+
+	// The mouse came into this document (from outside it: another frame, the parent), or the focus
+	// did: the person acts here now.
+	document.addEventListener('mouseover', (event) => {
+		const from = event.relatedTarget
+		if (!from || /^i?frame$/i.test(from.tagName || '')) report({ action: 'where' })
+	}, true)
+	document.addEventListener('focusin', () => report({ action: 'where' }), true)
 
 	let hovered = null
 	const TYPING = 'textarea, select, input:not([type=submit]):not([type=button]):not([type=checkbox]):not([type=radio]):not([type=image]):not([type=reset])'

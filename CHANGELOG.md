@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Steps in frames:** the recorder records what is done inside frames, cross-origin ones (a
+  consent banner, a sign-in) and frames in frames included; such a step keeps the frame's path
+  (`"frame"`: each frame's element, its address without the query, its name), and a replay
+  finds the frame by its element, else by its address or name. The recorder shows where one
+  acts (**Acting in: the page** or a frame and its level), the Steps list and the log's step
+  labels name the frame. Picks inside a frame are refused with a message and the frame's
+  address.
+- **Optional steps:** a step with `"optional": true` (the switch **optional** in the recorder's
+  Steps list, a hint **make optional?** at clicks that look like consent buttons) waits 5 s at
+  most and is skipped when it fails: a line in the log, no picture, no failure. *Test the
+  recipe* lists the skipped ones apart from its problems. Recipes without either run as before.
+
 ## 0.10.0 - 2026-11-02
 
 ### Added

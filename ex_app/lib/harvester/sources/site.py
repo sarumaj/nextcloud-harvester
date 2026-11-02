@@ -36,6 +36,11 @@ from .download import Response
 FULL_PASS = "harvester:full-pass"
 # How long a browser step may take (ms), and how long a job waits for the browser (s).
 STEP_TIMEOUT = 30_000
+# How long an optional step waits for its frame and element together (ms): a banner that shows
+# comes at once with its page, and the run should not wait half a minute for one that does not.
+OPTIONAL_TIMEOUT = 5_000
+# How often a step looks again for the frame it acts in while the page builds it (ms).
+FRAME_POLL = 250
 LOCK_TIMEOUT = 1800
 # What the browser showed when a step failed or a page asked for a person: a JPEG of the window
 # at this quality, again at the lower one when larger than SHOT_BYTES (else none is kept).
@@ -64,6 +69,8 @@ class Driver(abc.ABC):
     # who is told of it (the source: a driver whose sign-in fails is never handed over).
     shot: dict | None = None
     saw: Callable[[dict], None] | None = None
+    # The optional steps the sign-in went on without: {"number", "label", "why"} each.
+    skipped: list[dict] = []
 
     def keep_shot(self, page: Any, what: str) -> None:
         """Keeps what the page shows, and tells saw."""
@@ -223,6 +230,7 @@ class BrowserDriver(Driver):
         scroll steps at their end, which load the listing's later entries."""
         todo = list(enumerate(steps, 1))
         self._start = start
+        self.skipped = []
         if session and start:
             self.main.goto(start, wait_until="domcontentloaded")
             settle(self.main)
@@ -235,14 +243,24 @@ class BrowserDriver(Driver):
             except Stopped:
                 # The run or the recipe's test was stopped during the step: no failure of it.
                 raise
-            except Exception as error:
-                found = self.challenge(self.main)
-                if found:
-                    raise ChallengeError(*found) from error
-                why = browser.connection_refused(error) or str(error)
-                what = f"step {number} ({recipes.step_label(step)}) failed"
-                self.keep_shot(self.main, what)
-                raise SourceError(f"{what}: {why}") from error
+            except (PlaywrightError, FrameMissing) as error:
+                if not step.get("optional"):
+                    self._failed(number, step, error)
+                # Best effort: no picture, no failure; the run says what it went on without.
+                self.skipped.append({"number": number, "label": recipes.step_label(step), "why": short_error(error)})
+            except Exception as error:  # pylint: disable=broad-exception-caught
+                self._failed(number, step, error)
+
+    def _failed(self, number: int, step: dict, error: Exception) -> None:
+        """A required step failed: the page asking for a person (ChallengeError), else SourceError
+        naming the step, with a picture of what the browser showed."""
+        found = self.challenge(self.main)
+        if found:
+            raise ChallengeError(*found) from error
+        why = browser.connection_refused(error) or str(error)
+        what = f"step {number} ({recipes.step_label(step)}) failed"
+        self.keep_shot(self.main, what)
+        raise SourceError(f"{what}: {why}") from error
 
     def challenge(self, page: Any) -> tuple[str, str] | None:
         try:
@@ -324,6 +342,11 @@ class BrowserDriver(Driver):
                     self._guard.stop()
             finally:
                 browser.SLOTS.release("job")
+
+
+def skipped_line(skipped: dict) -> str:
+    """The progress log's line of an optional step the run went on without."""
+    return f"step {skipped['number']} ({skipped['label']}, optional) skipped: {skipped['why']}"
 
 
 def guard(route: Route) -> None:
@@ -423,18 +446,72 @@ def filled(step: dict, secrets: dict[str, str]) -> str:
     return str(step.get("value", ""))
 
 
+class FrameMissing(SourceError):
+    """The frame a step acts in is not on the page."""
+
+
+def short_error(error: Exception) -> str:
+    """An error's first line without Playwright's call ("Locator.click: "), for a log line."""
+    text = (str(error) or type(error).__name__).splitlines()[0]
+    return re.sub(r"^[A-Za-z]\w*\.\w+: ", "", text)
+
+
+def _child_frame(parent, entry: dict):
+    """The frame of the path's entry inside parent: by its element's selector, else by its address
+    (without the query), else by its name; None while there is none."""
+    if entry.get("selector"):
+        try:
+            owner = parent.query_selector(entry["selector"])
+        except PlaywrightError:
+            owner = None  # a selector the page cannot read: the address may still find it
+        found = owner.content_frame() if owner else None
+        if found is not None:
+            return found
+    children = parent.child_frames
+    for key, value in (("url", entry.get("url")), ("name", entry.get("name"))):
+        if not value:
+            continue
+        for child in children:
+            if (recipes.frame_address(child.url) if key == "url" else child.name) == value:
+                return child
+    return None
+
+
+def in_frame(page, frames: list[dict], timeout: float):
+    """The frame the step's path leads to (recipe: "frame"), waiting up to timeout (ms) for the
+    page to build it; FrameMissing when it does not."""
+    deadline = time.monotonic() + timeout / 1000
+    target = page.main_frame
+    for depth, entry in enumerate(frames, 1):
+        while (found := _child_frame(target, entry)) is None:
+            if time.monotonic() >= deadline:
+                where = entry.get("url") or entry.get("name") or entry.get("selector")
+                raise FrameMissing(f"the frame {where} (level {depth}) is not on the page")
+            page.wait_for_timeout(FRAME_POLL)
+        target = found
+    return target
+
+
 def replay(page, step: dict, secrets: dict[str, str]) -> None:
-    """Does one recorded step."""
+    """Does one recorded step, in its frame if it has one; an optional step waits for its frame
+    and element OPTIONAL_TIMEOUT at most (a required one the page's default, STEP_TIMEOUT)."""
     action = step["action"]
+    started = time.monotonic()
+    budget = OPTIONAL_TIMEOUT if step.get("optional") else STEP_TIMEOUT
+    # A step without a frame acts on the page as it always did.
+    target = in_frame(page, step["frame"], budget) if step.get("frame") else page
+    # What is left of an optional step's time for its element (never 0: Playwright's "no limit").
+    left = max(1.0, budget - (time.monotonic() - started) * 1000)
+    wait = {"timeout": left} if step.get("optional") else {}
     if action == "goto":
         page.goto(step["url"], wait_until="domcontentloaded")
     elif action == "fill":
-        page.fill(step["selector"], filled(step, secrets))
+        target.fill(step["selector"], filled(step, secrets), **wait)
         return
     elif action == "click":
-        page.click(step["selector"])
+        target.click(step["selector"], **wait)
     elif action == "press":
-        page.press(step["selector"], step.get("key", "Enter"))
+        target.press(step["selector"], step.get("key", "Enter"), **wait)
     elif action == "scroll":
         scroll_to_load(page, int(step.get("rounds") or recipes.SCROLL_ROUNDS))
         return
@@ -587,6 +664,8 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
                     home=self.home,
                     saw=self._saw,
                 )
+                for skipped in self.driver.skipped:
+                    self.report("info", skipped_line(skipped))
             else:
                 # Without recorded steps, the account's user name and password are HTTP Basic's.
                 self.sign_client(start)
@@ -716,7 +795,7 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
         nothing, and tells what it found: each listing page read with the links its selector and
         pattern matched, the first file links with their file names, and the problems met. It
         ends after that many files or pages, or when stopped (Stopped)."""
-        result: dict = {"pages": [], "problems": [], "files": 0, "ended": "complete", "shot": None}
+        result: dict = {"pages": [], "problems": [], "files": 0, "ended": "complete", "shot": None, "skipped": []}
 
         def observe(event: dict) -> None:
             if len(result["pages"]) >= pages:
@@ -753,6 +832,8 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
                 items.close()
             self.observe = lambda event: None
         result["shot"] = self.shot
+        # The optional steps it went on without: listed apart, no problems of the recipe.
+        result["skipped"] = list(self.driver.skipped if self.driver else [])
         return result
 
     def close(self) -> None:

@@ -38,9 +38,12 @@ class Blocking:  # pylint: disable=too-few-public-methods
 
     def _wrap(self, value: Any) -> Any:
         # Playwright's own objects carry their implementation; plain values (a URL, the links'
-        # list, a screenshot's bytes) pass as they are.
+        # list, a screenshot's bytes) pass as they are. A list may hold either (a frame's child
+        # frames, a page's elements).
         if hasattr(value, "_impl_obj"):
             return Blocking(value, self._loop, self._stop, self._deadline)
+        if isinstance(value, list):
+            return [self._wrap(item) for item in value]
         return value
 
     def _check(self) -> None:

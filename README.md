@@ -121,6 +121,26 @@ the app's browser or taken from a template, not by code.
   session the sign-in is skipped but the scroll steps at the steps' end still run. Ordinary
   scrolling is never recorded: a position depends on the window's size and the page's state,
   and replays wrongly in a job's window; a **Load more** button is a click, recorded as one.
+- **Steps in frames:** recorder.js runs in every frame of the page, cross-origin ones (a consent
+  banner's, a sign-in's) included. A step done inside a frame keeps the frame's path from the
+  page down, `"frame": [{"selector": "iframe[title=\"Consent\"]", "url":
+  "https://consent.example/cmp", "name": "…"}, …]`: each frame's element in its parent, its
+  address without query and fragment, and its name. A replay finds each frame by its selector,
+  else by its address (a query that changed since the recording does not matter), else by its
+  name, waiting for the page to build it. The recorder says where the mouse or the focus is
+  (**Acting in: the page**, or **Acting in a frame: consent.example (1st level)**), and the
+  Steps list marks a frame's steps (`⧉ in frame consent.example`), as do the log's step labels
+  (`step 2 (click “Akzeptieren” in frame consent.example) failed`). Picks (links to follow, file
+  links, the next page) are the page's own: one inside a frame is refused with the frame's
+  address, to open and pick on directly. A step without `frame` acts on the page, as before.
+- **Optional steps:** a step with `"optional": true` is best effort, for what shows only
+  sometimes (a consent banner on the first visit, a notice). It waits 5 seconds at most for its
+  frame and element; when it fails (not there, not visible, detached) the run goes on, logs
+  `step 2 (click “Akzeptieren”, optional) skipped: <why>`, keeps no picture and counts no
+  failure. A stop is never taken for such a failure. Each step in the recorder's Steps list has
+  its switch **optional**; a click whose text reads like a consent button (*Accept*, *OK*,
+  *Alle akzeptieren*, *Zgadzam się*, …) gets the hint **make optional?**, never more.
+  **Test the recipe** lists the steps it went on without apart from the problems.
 - **Values:** the download URL (`{url}/download`), the file's name
   (`{year}/iX {year}-{issue:02d}`) and the tags (`{year}`) are templates of the link's values:
   the pattern's groups and `url`, `text`, `page`, `host`, `filename`, `stem`, `ext`.

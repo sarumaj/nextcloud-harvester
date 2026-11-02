@@ -8,6 +8,11 @@ pause). /list?p=<n>: three pages of a plain listing of PDFs with a next link. /p
 four pages with numbered pages (‹ 1 [2] 3 4 ›, the current one marked). /buttons: three pages
 drawn by a script, numbered buttons and no addresses. /feed: 35 links, ten more each time the
 page is scrolled to its end.
+/framed: a page with frames (served for every host: a host is only the path here): a same-origin
+frame (/frame/form, a button and a file link), a cross-origin one (consent.example/cmp?v=<n>,
+the query changing with /framed?v=<n>: a consent banner) with a nested frame of a third origin
+(cmp-cdn.example/details). /framed?bare=1 has the same-origin frame alone (no banner, as on a
+later visit). A click on a frame's button asks for /done/<what> (in requests).
 
 With require_login, the archive answers the login form until the sign-in's cookie (sid=ok,
 set by /session) comes with the request. Paths in challenge show a reCAPTCHA instead.
@@ -104,6 +109,28 @@ window.addEventListener('scroll', () => {
 </script></body></html>"""
 
 
+def framed(query: dict) -> str:
+    """The page with frames: the banner's frame (its query from the page's) unless bare."""
+    version = query.get("v", ["1"])[0]
+    banner = (
+        ""
+        if query.get("bare")
+        else f'<iframe title="Consent" src="https://consent.example/cmp?v={version}" width="420" height="220"></iframe>'
+    )
+    form = '<iframe id="login-frame" src="/frame/form" width="420" height="120"></iframe>'
+    return f"<html><body style='margin:0'><h1>Framed</h1>{form}{banner}</body></html>"
+
+
+FRAME_FORM = """<html><body><button id="inner" onclick="fetch('/done/inner')">Inner</button>
+<input id="who" name="who"><a class="file" href="/files/framed.pdf">A file</a></body></html>"""
+CMP = """<html><body><button class="accept" onclick="fetch('/done/accept')">Akzeptieren</button>
+<iframe name="details" src="https://cmp-cdn.example/details?session=4711" width="300" height="100"></iframe>
+</body></html>"""
+DETAILS = (
+    """<html><body><a id="more" href="#" onclick="fetch('/done/details'); return false">Details</a></body></html>"""
+)
+
+
 class Site:  # pylint: disable=too-few-public-methods
     """The site's state: who signed in and which downloads were asked to wait."""
 
@@ -137,6 +164,13 @@ class Site:  # pylint: disable=too-few-public-methods
             return 200, html, BUTTONS.encode()
         if path == "/feed":
             return 200, html, FEED.encode()
+        if path == "/framed":
+            return 200, html, framed(parse_qs(parsed.query)).encode()
+        frames = {"/frame/form": FRAME_FORM, "/cmp": CMP, "/details": DETAILS}
+        if path in frames:
+            return 200, html, frames[path].encode()
+        if path.startswith("/done/"):
+            return 200, {"content-type": "text/plain"}, b"done"
         if path == "/list":
             return 200, html, listing(int(parse_qs(parsed.query).get("p", ["1"])[0])).encode()
         if path.startswith("/wait"):

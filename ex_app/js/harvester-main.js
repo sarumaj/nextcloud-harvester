@@ -126,7 +126,27 @@
 		return timestamp ? new Date(timestamp * 1000).toLocaleString() : 'never'
 	}
 
+	// The host of the innermost frame a step acts in ("" for a frame without an address of its own).
+	function frameHost(step) {
+		const frames = Array.isArray(step.frame) ? step.frame : []
+		try {
+			return frames.length && frames[frames.length - 1].url ? new URL(frames[frames.length - 1].url).hostname : ''
+		} catch (e) {
+			return ''
+		}
+	}
+
 	function describe(step) {
+		const action = describeAction(step)
+		return step.frame && step.frame.length ? `${action} ⧉ in frame ${frameHost(step) || '(no address)'}` : action
+	}
+
+	// Clicks whose text reads like a consent banner's button: a banner shows on the first visit,
+	// often not on the job's later ones, so the panel suggests making them optional (never on its own).
+	const CONSENT = /^(?:ok(?:ay)?|got it|agree|i agree|accept(?: all)?(?: cookies)?|allow(?: all)?(?: cookies)?|akzeptieren|alle akzeptieren|alles akzeptieren|zustimmen|alle zulassen|einverstanden|zgadzam się|akceptuj(?:ę)?(?: wszystkie)?|accepter(?: tout)?|tout accepter)(?=$|[\s!.,])/iu
+	const looksLikeConsent = (step) => step.action === 'click' && CONSENT.test(String(step.text || '').trim())
+
+	function describeAction(step) {
 		if (step.action === 'goto') return `Open ${step.url}`
 		if (step.action === 'scroll') return `Scroll to load more${step.rounds ? ` (at most ${step.rounds} times)` : ''}`
 		if (step.action === 'click') return `Click ${step.text ? `“${step.text}”` : step.selector}`
@@ -817,6 +837,13 @@
 			el('p', { text: `${result.files} file links on ${result.pages.length} pages. ${ended}` }))
 		if (result.http) box.append(el('p', { class: 'harvester-muted', text: 'The job reads these pages without the browser (no steps): a page built by JavaScript may show it fewer links than here. Turn on “Use the browser” then.' }))
 		if (result.problems.length) box.append(el('ul', { class: 'harvester-error' }, ...result.problems.map((problem) => el('li', { text: problem }))))
+		// Optional steps it went on without: no problems of the recipe, but worth knowing.
+		const skipped = result.skipped || []
+		if (skipped.length) {
+			box.append(el('div', { class: 'harvester-skipped' },
+				el('p', { class: 'harvester-muted', text: 'Optional steps skipped:' }),
+				el('ul', {}, ...skipped.map((step) => el('li', { class: 'harvester-muted', text: `step ${step.number} (${step.label}): ${step.why}` })))))
+		}
 		box.append(el('ol', { class: 'harvester-test-pages' }, ...result.pages.map((page) => el('li', {},
 			el('span', { text: `${page.level === 0 ? 'Listing' : `Level ${page.level}`}, page ${page.page}: ${page.matching} of ${page.found} ${page.kind === 'follow' ? 'links to follow' : 'file links'} ` }),
 			el('code', { text: page.url }),
@@ -1133,6 +1160,13 @@
 			next: 'Click the link to the next page of this listing (if there is one); for numbered pages (1 2 3 …), click the number of the next page.',
 		}
 		const modeHelp = el('small', { text: help.record })
+		// Where the person acts: the page, or a frame in it (recorder.js reports it as the mouse
+		// or the focus comes in).
+		const ordinal = (n) => `${n}${n % 10 === 1 && n % 100 !== 11 ? 'st' : n % 10 === 2 && n % 100 !== 12 ? 'nd' : n % 10 === 3 && n % 100 !== 13 ? 'rd' : 'th'}`
+		const where = el('small', { class: 'harvester-where', 'aria-live': 'polite', text: 'Acting in: the page' })
+		const showWhere = (frame) => {
+			where.textContent = frame ? `Acting in a frame: ${frame.host || '(no address)'} (${ordinal(frame.level)} level)` : 'Acting in: the page'
+		}
 		const scroll = el('button', {
 			type: 'button',
 			text: 'Add: scroll to load more',
@@ -1172,11 +1206,32 @@
 			},
 		})
 
+		// A step of the list, with its switch "optional" (best effort: the job goes on without it)
+		// and, for a click that looks like a consent banner's, the hint to make it so. The switch
+		// changes the page's recipe (the form's steps from before) and tells the recorder (its own).
+		function renderStep(step, index) {
+			const toggle = (optional) => {
+				if (optional) step.optional = true
+				else delete step.optional
+				send({ type: 'optional', step: index, optional })
+				renderPanel()
+			}
+			const box = el('input', { type: 'checkbox', class: 'harvester-optional' })
+			box.checked = Boolean(step.optional)
+			box.addEventListener('change', () => toggle(box.checked))
+			return el('li', { class: step.frame && step.frame.length ? 'harvester-framed' : '' },
+				el('span', { text: `${describe(step)} ` }),
+				el('label', { title: 'Best effort: when it fails (not there, not visible), the job waits a few seconds at most and goes on without it' }, box, ' optional'),
+				!step.optional && looksLikeConsent(step)
+					? el('button', { type: 'button', class: 'harvester-link harvester-hint', text: 'make optional?', title: 'A consent banner often shows only on the first visit', onclick: () => toggle(true) })
+					: '')
+		}
+
 		function renderPanel() {
 			test.textContent = testing ? 'Stop the test' : 'Test the recipe'
 			panel.replaceChildren(
 				el('div', { class: 'harvester-level-head' }, el('h3', { text: 'Steps' })),
-				el('ol', {}, ...(recipe.steps || []).map((step) => el('li', { text: describe(step) }))),
+				el('ol', {}, ...(recipe.steps || []).map((step, index) => renderStep(step, index))),
 				el('div', { class: 'harvester-level-head' }, el('h3', { text: 'Listing' }),
 					el('button', { type: 'button', text: 'Undo pick', title: 'Take back the last change of the picks', onclick: () => send({ type: 'undo-pick' }) })),
 				el('p', { text: recipe.start || '(the page where you pick)' }),
@@ -1214,6 +1269,7 @@
 			else if (data.type === 'network') network.show(data)
 			else if (data.type === 'test-started') { testing = true; tested = null; renderPanel() }
 			else if (data.type === 'test') { testing = false; tested = data.result; renderPanel() }
+			else if (data.type === 'where') showWhere(data.frame)
 			else if (data.type === 'recipe') {
 				// The picks are the recorder's (it started with the form's); the steps an earlier
 				// recording made stay until new ones are recorded.
@@ -1248,7 +1304,7 @@
 					drawer,
 					el('button', { class: 'primary', text: 'Done', onclick: () => close(true) }),
 					el('button', { text: 'Cancel', onclick: () => close(false) })),
-				modes, el('div', { class: 'harvester-toolbar' }, modeHelp, scroll), network, message),
+				modes, el('div', { class: 'harvester-toolbar' }, modeHelp, scroll), where, network, message),
 			el('div', { class: 'harvester-stage' }, box, panel))
 		root.replaceChildren(container)
 		renderPanel()
@@ -1571,6 +1627,9 @@
 		#harvester h2 { margin: 0 0 4px; font-size: 1.5em; }
 		#harvester h3 { margin: 16px 0 8px; font-size: 1.15em; }
 		#harvester .harvester-muted { color: var(--color-text-maxcontrast); }
+		#harvester .harvester-steps .harvester-optional { margin: 0 2px 0 8px; min-height: 0; }
+		#harvester .harvester-steps .harvester-hint { font-size: 90%; }
+		#harvester .harvester-where { display: block; color: var(--color-text-maxcontrast); }
 		#harvester .harvester-network { margin: 4px 0; }
 		#harvester .harvester-network.harvester-proxied { color: var(--color-success-text, var(--color-success)); }
 		#harvester .harvester-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 16px; }

@@ -3,7 +3,8 @@ recorder's navigation, the same controls for every pick (Pick again, the element
 of a pick, numbered pages, scroll to load more and the recipe's test; a failed step's picture
 from the progress log, with the job's browser opened at its page; the queue's status with why a
 job waits; and on-demand jobs: Fetch a URL…, the waiting addresses, the form's On demand, and the
-Send to Harvester bookmarklet with the page it opens (?fetch=)."""
+Send to Harvester bookmarklet with the page it opens (?fetch=); the recorder's steps in frames,
+their switch "optional" with its hint for consent buttons, and "Acting in"."""
 
 # pylint: disable=missing-function-docstring
 
@@ -383,3 +384,61 @@ def test_a_new_job_from_a_sent_address(page):
     created = [call for call in CALLS if call[:2] == ("POST", "/jobs")][-1][2]
     assert created and created["schedule"] == "" and created["options"]["url"] == SENT
     assert ("POST", "/jobs/9/fetch", {"url": SENT}) in CALLS, "the new job fetches the address sent"
+
+
+@needs_chromium
+def test_the_recorders_frames_and_optional_steps(page):
+    page.get_by_role("button", name="Edit").click()
+    page.get_by_role("button", name="Record in the browser").click()
+    page.wait_for_function("window.__sockets.length && window.__sockets[0].sent.length")
+    frame = [{"selector": 'iframe[title="Consent"]', "url": "https://consent.example/cmp"}]
+    steps = [
+        {"action": "goto", "url": "https://site.example/login"},
+        {"action": "click", "selector": "button.accept", "text": "Alle akzeptieren", "frame": frame},
+        {"action": "click", "selector": "a.go", "text": "Archive"},
+    ]
+    receive(page, {"type": "recipe", "recipe": {**RECIPE, "steps": steps}, "proposals": {}})
+    items = page.locator(".harvester-steps ol > li")
+    assert "Click “Alle akzeptieren” ⧉ in frame consent.example" in items.nth(1).inner_text()
+    assert items.nth(1).get_by_role("button", name="make optional?").count() == 1, "a consent button: the hint"
+    assert items.nth(2).get_by_role("button", name="make optional?").count() == 0, "no hint for other clicks"
+    assert "⧉" not in items.nth(2).inner_text()
+
+    items.nth(1).get_by_role("button", name="make optional?").click()
+    assert sent(page)[-1] == {"type": "optional", "step": 1, "optional": True}
+    assert items.nth(1).get_by_role("checkbox").is_checked() and items.nth(1).get_by_role("button").count() == 0
+    items.nth(2).get_by_role("checkbox").check()
+    items.nth(2).get_by_role("checkbox").uncheck()
+    assert sent(page)[-2:] == [
+        {"type": "optional", "step": 2, "optional": True},
+        {"type": "optional", "step": 2, "optional": False},
+    ]
+
+    where = page.locator(".harvester-where")
+    assert where.inner_text() == "Acting in: the page"
+    receive(
+        page, {"type": "where", "frame": {"host": "cmp-cdn.example", "url": "https://cmp-cdn.example/d", "level": 2}}
+    )
+    assert where.inner_text() == "Acting in a frame: cmp-cdn.example (2nd level)"
+    receive(page, {"type": "where", "frame": None})
+    assert where.inner_text() == "Acting in: the page"
+
+    result = {
+        "pages": [],
+        "problems": [],
+        "files": 0,
+        "ended": "complete",
+        "skipped": [{"number": 2, "label": "click “Alle akzeptieren” in frame consent.example", "why": "Timeout"}],
+    }
+    receive(page, {"type": "test", "result": result})
+    assert "Optional steps skipped:" in page.locator(".harvester-test").inner_text()
+    assert (
+        "step 2 (click “Alle akzeptieren” in frame consent.example): Timeout"
+        in page.locator(".harvester-skipped").inner_text()
+    )
+    assert page.locator(".harvester-test .harvester-error").count() == 0, "not a problem"
+
+    page.get_by_role("button", name="Done").click()
+    kept = json.loads(page.locator("textarea.harvester-recipe").first.input_value())
+    assert kept["steps"][1]["optional"] is True and kept["steps"][1]["frame"] == frame
+    assert "optional" not in kept["steps"][2]

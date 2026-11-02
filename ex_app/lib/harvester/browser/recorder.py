@@ -9,7 +9,8 @@ leaves out (dashed), and shows examples with their values; the person may edit t
 The messages are JSON over the page's WebSocket:
 
 - to the page: {type: frame, data}, {type: url, url}, {type: error, message},
-  {type: recipe, recipe, proposals}, {type: test, result} (the recipe's test, trial.py);
+  {type: recipe, recipe, proposals}, {type: test, result} (the recipe's test, trial.py),
+  {type: where, frame (null: the page; else {host, url, level})} (where the person acts);
 - from the page: {type: load, recipe} (the picks of the recipe the form holds), {type: goto,
   url}, {type: back}, {type: forward}, {type: reload}, {type: mouse, event (move, down, up), x,
   y, button}, {type: wheel, dx, dy}, {type: key, key}, {type: text, text}, {type: mode, mode,
@@ -17,13 +18,20 @@ The messages are JSON over the page's WebSocket:
   pattern}, {type: selector, target (follow, links, next), level, selector}, {type: remove,
   target, level}, {type: next-kind, kind (link, number)}, {type: undo} (the last step), {type:
   undo-pick} (the last change of the picks), {type: scroll} (a step: scroll to load more),
-  {type: test, recipe, settings}, {type: test-stop}, {type: clear}.
+  {type: optional, step (its index), optional} (a step best effort, or required again), {type:
+  test, recipe, settings}, {type: test-stop}, {type: clear}.
 
 Navigation (Back, Forward, Reload, an address) is never a step outside the mode record. In it,
 an address typed, Back and Forward are a step "goto" to the page arrived at (a job's browser has
 no history to go back in); Reload is none (the same page). Scrolling is no step: positions
 depend on the window's size; a listing that loads more as it is scrolled gets the step "scroll"
 (scroll to its end until no more comes), added with its button.
+
+recorder.js runs in every frame of the page. A step done inside a frame keeps the frame's path
+from the page down (recipe: "frame"), made here from the frame the report came from: each
+frame's element as its parent's recorder.js names it, and its address. Picks inside a frame are
+refused: the walk reads the page's own links (a listing inside a frame is rare, and its address
+can be opened and picked on directly).
 """
 
 import asyncio
@@ -51,7 +59,7 @@ from playwright.async_api import (
 )
 
 from .. import browser, pagination, patterns
-from ..recipe import SCROLL_ROUNDS, steps_from_events, uses_browser
+from ..recipe import SCROLL_ROUNDS, frame_address, steps_from_events, uses_browser
 from ..sources import site
 from ..sources.base import SourceError
 from . import trial
@@ -92,6 +100,10 @@ INPUT = frozenset({"goto", "back", "forward", "reload", "mouse", "wheel", "key",
 TRIAL_SETTINGS = ("path", "download_url", "max_pages", "browser")
 HIGHLIGHT = "([selector, pattern]) => window.__harvester ? window.__harvester.highlight(selector, pattern) : null"
 MATCHES = "els => els.map(e => [e.href || '', (e.innerText || '').trim().slice(0, 80)])"
+FRAME_SELECTOR = (
+    "el => window.__harvester && window.__harvester.frameSelector ? window.__harvester.frameSelector(el) : ''"
+)
+SET_MODE = "mode => window.__harvester && (window.__harvester.mode = mode)"
 
 
 # The cursors the page's screen may take (CSS keywords), as the page under the mouse shows them.
@@ -115,6 +127,37 @@ def search_all(pattern: str, texts: list[str]) -> list:
     return found
 
 
+async def frame_path(frame) -> list[dict]:
+    """The frame's path from the page down, as a step keeps it (recipe: "frame"): for each frame
+    its element's selector in its parent, its address without the query and its name (unless it
+    looks generated). A frame detached meanwhile has its address alone."""
+    path: list[dict] = []
+    while frame.parent_frame is not None:
+        selector = ""
+        try:
+            owner = await frame.frame_element()
+            selector = await owner.evaluate(FRAME_SELECTOR) or ""
+        except Exception:  # pylint: disable=broad-exception-caught
+            pass  # gone or navigating: its address finds it
+        entry = {"selector": selector, "url": frame_address(frame.url)}
+        if frame.name and not re.search(r"\d{3,}", frame.name):
+            entry["name"] = frame.name
+        path.insert(0, entry)
+        frame = frame.parent_frame
+    return path
+
+
+def frame_place(frame) -> dict | None:
+    """Where a frame is, for the page's "Acting in": None for the page itself, else the frame's
+    host, address and level (1: a frame of the page, 2: a frame in that one, …)."""
+    level, parent = 0, frame.parent_frame
+    while parent is not None:
+        level, parent = level + 1, parent.parent_frame
+    if not level:
+        return None
+    return {"host": urlparse(frame.url).hostname or "", "url": frame_address(frame.url), "level": level}
+
+
 class Recorder:  # pylint: disable=too-many-instance-attributes
     """One recording: a browser, the page shown and the recipe so far."""
 
@@ -128,6 +171,9 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         # Per picked level ("follow0", "links"): groups, examples, proposed file name and tags.
         self.proposals: dict[str, dict] = {}
         self.mode = "record"
+        # The steps (their indexes) the person made optional, and where they act now.
+        self.optional: set[int] = set()
+        self._where: dict | None = None
         # The window's size: the page's, as the person makes the view larger or smaller.
         self.viewport = dict(VIEWPORT)
         self._playwright: Playwright | None = None
@@ -176,7 +222,11 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
     @property
     def recipe(self) -> dict:
         """The recipe so far."""
-        recipe: dict = {"steps": steps_from_events(self.events), "start": self.start_url, "follow": self.follow}
+        steps = steps_from_events(self.events)
+        for index in self.optional:
+            if index < len(steps):
+                steps[index]["optional"] = True
+        recipe: dict = {"steps": steps, "start": self.start_url, "follow": self.follow}
         recipe["links"] = self.links
         if self.next:
             recipe["next"] = self.next
@@ -346,9 +396,11 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
             await self.send({"type": "url", "url": frame.url})
 
     async def _apply_mode(self) -> None:
-        if self._page:
+        # In every frame: a click into one picks or records as in the page (a frame loaded
+        # later asks recorder.js's "mode" itself).
+        for frame in self._page.frames if self._page else []:
             try:
-                await self._page.evaluate("mode => window.__harvester && (window.__harvester.mode = mode)", self.mode)
+                await frame.evaluate(SET_MODE, self.mode)
             except Exception:  # pylint: disable=broad-exception-caught
                 pass  # navigated meanwhile
 
@@ -367,17 +419,42 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
                 continue
         return 0
 
-    async def _report(self, _source, event: dict) -> None:
-        if event.get("action") == "cursor":
+    async def _report(self, source: dict, event: dict) -> str | None:
+        """What recorder.js reports from a frame (source["frame"]: the page's or one inside it):
+        the cursor, where the person acts, a step, a pick; the mode to a frame that asks."""
+        action, frame = event.get("action"), source.get("frame")
+        inside = frame is not None and frame.parent_frame is not None
+        if action == "mode":
+            return self.mode
+        if action == "cursor":
             # Shown on the page's screen, never a step; only cursors CSS knows by name.
             cursor = str(event.get("cursor", ""))
             await self.send({"type": "cursor", "cursor": cursor if cursor in CURSORS else "default"})
-            return
-        if event.get("action") != "pick":
-            if self.mode == "record":
-                self.events.append(event)
-                await self._update()
-            return
+        elif action == "where":
+            place = frame_place(frame) if frame is not None else None
+            if place != self._where:
+                self._where = place
+                await self.send({"type": "where", "frame": place})
+        elif action == "pick" and inside:
+            host = urlparse(frame.url).hostname or "a frame"
+            await self.send(
+                {
+                    "type": "error",
+                    "message": f"Picks inside a frame ({host}) are not supported: the job "
+                    f"reads the page's own links. Open the frame's address to pick there: {frame.url}",
+                }
+            )
+        elif action == "pick":
+            await self._pick(event)
+        elif self.mode == "record":
+            if inside:
+                event["frame"] = await frame_path(frame)
+            self.events.append(event)
+            await self._update()
+        return None
+
+    async def _pick(self, event: dict) -> None:
+        """A pick of links to follow, file links or the next page, on the page itself."""
         assert self._page is not None
         url, target = self._page.url, event.get("target")
         level = self.depth(url)
@@ -707,6 +784,8 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
             await self._edit_pattern(message)
         elif kind == "undo" and self.events:
             self.events.pop()
+            # A step undone is no longer optional (one recorded in its place is required).
+            self.optional = {index for index in self.optional if index < len(steps_from_events(self.events))}
             await self._update()
         elif kind in ("back", "forward", "reload"):
             await self._navigate(kind)
@@ -730,6 +809,8 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
             await self._update()
         elif kind == "scroll":
             await self._scroll()
+        elif kind == "optional":
+            await self._optional(message)
         elif kind == "test":
             await self._test(message)
         elif kind == "test-stop" and self._trial_stop:
@@ -744,6 +825,22 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
             self.start_url, self.follow, self.links, self.next, self.proposals = "", [], {}, {}, {}
             await page.evaluate(HIGHLIGHT, ["", ""])
             await self._update()
+
+    async def _optional(self, message: dict) -> None:
+        """A recorded step made optional (best effort) or required again; the steps the form held
+        before (none recorded here) the page changes itself."""
+        index = message.get("step")
+        if (
+            not isinstance(index, int)
+            or isinstance(index, bool)
+            or not 0 <= index < len(steps_from_events(self.events))
+        ):
+            return
+        if message.get("optional"):
+            self.optional.add(index)
+        else:
+            self.optional.discard(index)
+        await self._update()
 
     async def _edit_pattern(self, message: dict) -> None:
         """Takes the person's pattern for a level and shows what it matches."""

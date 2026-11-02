@@ -18,9 +18,20 @@ higher than the current page, a link or a button ("buttons": true: only the brow
 
 A step {"action": "scroll", "rounds": 20} scrolls the page to its end until no more comes (a
 listing that loads more as it is scrolled), at most rounds times (SCROLL_ROUNDS without).
+
+A step inside a frame (a consent banner's, a sign-in's) has "frame": its path from the page
+down, one entry per frame: {"selector": <the frame's element in its parent>, "url": <its
+address without query and fragment>, "name": <its name, if it has one>}. The selector finds it
+first, the address or the name when the selector finds nothing (a page that changed its
+frames' order, say); a query that changes from visit to visit matters to neither. A step
+without it acts on the page itself, as recipes always did.
+
+A step with "optional": true is best effort (a banner that shows only on the first visit): the
+job waits for its element a short time only and goes on without it (harvester.sources.site).
 """
 
 import re
+from urllib.parse import urlsplit
 
 from .browser import allowed_url
 
@@ -29,11 +40,42 @@ ACTIONS = {"goto", "click", "fill", "press", "scroll"}
 SCROLL_ROUNDS = 20
 SCROLL_ROUNDS_MAX = 100
 NEXT_KINDS = ("link", "number")
+# The actions that act on an element, and so may do it inside a frame.
+ON_ELEMENTS = ("click", "fill", "press")
+
+
+def frame_address(url: str) -> str:
+    """A frame's address as a step keeps it: without query and fragment, which often change from
+    visit to visit (a session, a version); "" for a frame without one of its own (about:blank,
+    srcdoc)."""
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return ""
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        return ""
+    return f"{parts.scheme}://{parts.netloc}{parts.path}"
+
+
+def frame_host(step: dict) -> str:
+    """The host of the innermost frame the step acts in ("" on the page, or for a frame without
+    an address)."""
+    frames = step.get("frame") or []
+    if not isinstance(frames, list) or not frames or not isinstance(frames[-1], dict):
+        return ""
+    try:
+        return urlsplit(str(frames[-1].get("url") or "")).hostname or ""
+    except ValueError:
+        return ""
 
 
 def step_label(step: dict) -> str:
     """A step in a few words, for a log line: what it opens, clicks (its text, else its element),
-    fills or presses."""
+    fills or presses, and the frame it does it in."""
+    return _action_label(step) + (f" in frame {frame_host(step) or '(no address)'}" if step.get("frame") else "")
+
+
+def _action_label(step: dict) -> str:
     action = step.get("action")
     if action == "goto":
         return f"open {step.get('url', '')}"
@@ -49,13 +91,18 @@ def step_label(step: dict) -> str:
     return str(action)
 
 
+def _framed(step: dict, event: dict) -> dict:
+    """The step with the frame the event happened in, if it was in one."""
+    return step | {"frame": event["frame"]} if event.get("frame") else step
+
+
 def steps_from_events(events: list[dict]) -> list[dict]:  # pylint: disable=too-many-branches
     """Turns what the recorder saw into the recipe's steps.
 
     Typing into a field several times keeps the last value. A password is never kept: its step
     fills in the job's password, and the field filled before it in the same form the job's
     username, so neither is in the recipe. A one-time code is not kept either: its step fills in
-    the current code from the account's secret.
+    the current code from the account's secret. An event inside a frame keeps its frame's path.
     """
     steps: list[dict] = []
     for event in events:
@@ -65,9 +112,13 @@ def steps_from_events(events: list[dict]) -> list[dict]:  # pylint: disable=too-
         elif action == "scroll":
             steps.append({"action": "scroll"})
         elif action == "click":
-            steps.append({"action": "click", "selector": event["selector"], "text": event.get("text", "")})
+            steps.append(
+                _framed({"action": "click", "selector": event["selector"], "text": event.get("text", "")}, event)
+            )
         elif action == "press":
-            steps.append({"action": "press", "selector": event["selector"], "key": event.get("key", "Enter")})
+            steps.append(
+                _framed({"action": "press", "selector": event["selector"], "key": event.get("key", "Enter")}, event)
+            )
         elif action == "fill":
             step = {"action": "fill", "selector": event["selector"], "value": event.get("value", "")}
             if event.get("otp"):
@@ -76,12 +127,17 @@ def steps_from_events(events: list[dict]) -> list[dict]:  # pylint: disable=too-
             elif event.get("field") == "password":
                 step = {"action": "fill", "selector": event["selector"], "credential": "password"}
                 for earlier in reversed(steps):
-                    if earlier["action"] == "fill" and "value" in earlier and earlier.get("form") == event.get("form"):
+                    same_form = (earlier.get("form"), earlier.get("frame")) == (event.get("form"), event.get("frame"))
+                    if earlier["action"] == "fill" and "value" in earlier and same_form:
                         earlier.pop("value")
                         earlier["credential"] = "username"
                         break
-            step["form"] = event.get("form", "")
-            if steps and steps[-1]["action"] == "fill" and steps[-1]["selector"] == step["selector"]:
+            step = _framed(step, event) | {"form": event.get("form", "")}
+            last = steps[-1] if steps else {}
+            if last.get("action") == "fill" and (last["selector"], last.get("frame")) == (
+                step["selector"],
+                step.get("frame"),
+            ):
                 steps[-1] = step
             else:
                 steps.append(step)
@@ -111,11 +167,24 @@ def _check_next(after: object) -> list[str]:
     return []
 
 
+def _frame_ok(frames: object) -> bool:
+    return isinstance(frames, list) and all(
+        isinstance(entry, dict)
+        and all(isinstance(entry.get(key, ""), str) for key in ("selector", "url", "name"))
+        and any(entry.get(key) for key in ("selector", "url", "name"))
+        for entry in frames
+    )
+
+
 def _check_steps(steps: list) -> list[str]:
     problems = []
     for number, step in enumerate(steps, 1):
         if not isinstance(step, dict) or step.get("action") not in ACTIONS:
             problems.append(f"step {number}: unknown action {step.get('action') if isinstance(step, dict) else step}")
+        elif not isinstance(step.get("optional", False), bool):
+            problems.append(f"step {number}: optional is true or false")
+        elif step.get("frame") and (step["action"] not in ON_ELEMENTS or not _frame_ok(step["frame"])):
+            problems.append(f"step {number}: the frame is a list of frames, each with its selector, address or name")
         elif step["action"] == "goto" and not allowed_url(str(step.get("url", ""))):
             problems.append(f"step {number}: the browser may not open {step.get('url')}")
         elif step["action"] == "scroll" and not _rounds_ok(step.get("rounds", SCROLL_ROUNDS)):
