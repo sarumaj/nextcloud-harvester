@@ -1,9 +1,7 @@
 """The app's page (harvester-main.js) in Chromium against a stubbed API and WebSocket: the
 recorder's navigation, the same controls for every pick (Pick again, the element, Remove), Undo
-of a pick, numbered pages, scroll to load more and the recipe's test; a failed step's picture
-from the progress log, with the job's browser opened at its page; jobs shared with the person
-(their chip and buttons, the form without the owner's folder and account), the share panel and
-the queue's status."""
+of a pick, numbered pages, scroll to load more and the recipe's test; and a failed step's
+picture from the progress log, with the job's browser opened at its page."""
 
 # pylint: disable=missing-function-docstring
 
@@ -62,30 +60,7 @@ JOB = {
     "running": False,
     "queued": False,
     "paused": False,
-    "waiting": "",
-    "owner": "anna",
-    "owner_name": "",
-    "mine": True,
-    "permissions": ["view", "run", "edit", "delete", "reshare"],
-    "shares": [],
 }
-# Ben's job, shared with Anna to view and run; queued behind others' jobs.
-SHARED = JOB | {
-    "id": 2,
-    "name": "Bens feed",
-    "source": "feed",
-    "target": "/Ben/Feed",
-    "options": {"url": "https://feed.example/rss"},
-    "last_status": "challenge",
-    "queued": True,
-    "waiting": "2. in the queue: waits for a runner, all 2 busy (1 job ahead)",
-    "owner": "ben",
-    "owner_name": "Ben Example",
-    "mine": False,
-    "permissions": ["view", "run"],
-}
-SHARE = {"kind": "user", "sharee": "carol", "label": "Carol Example", "permissions": ["view"], "by": "anna", "at": 1}
-STATUS = {"runners": {"busy": 2, "total": 2}, "browsers": {"jobs": 2, "recordings": 1, "total": 3}, "queued": 3}
 LOG = {
     "lines": [
         {"id": 1, "job": 1, "name": "Mag", "at": 1, "level": "error", "message": "step 2 (click #go) failed", "shot": 1}
@@ -102,38 +77,21 @@ SHOT = {
 }
 
 
-# The API's requests the page made: (method, path with its query, body).
-CALLS: list[tuple[str, str, dict | None]] = []
-
-
 @pytest.fixture(name="page")
-def fixture_page(request):
+def fixture_page():
     from playwright.sync_api import sync_playwright  # pylint: disable=import-outside-toplevel
 
-    # A test may give its jobs (parametrized indirectly), else the one of its own.
-    jobs = getattr(request, "param", [JOB])
     answers = {
         "/sources": main.list_sources(),
         "/presets": main.list_presets(),
-        "/jobs": jobs,
-        # The log's polls agree with the list (else the page draws the list again each time).
-        "/log": LOG | {"queued": [job["id"] for job in jobs if job["queued"] and not job["running"]]},
+        "/jobs": [JOB],
+        "/log": LOG,
         "/jobs/1/shot": SHOT,
-        "/status": STATUS,
-        "/jobs/1/shares": [SHARE],
-        "/sharees": [{"kind": "group", "sharee": "family", "label": "Family"}],
-        "PUT /jobs/1/shares": [SHARE, {**SHARE, "kind": "group", "sharee": "family", "label": "Family"}],
-        "DELETE /jobs/1/shares/user/carol": [],
     }
-    CALLS.clear()
 
     def api(route) -> None:
-        method = route.request.method
-        full = route.request.url.split("/api", 1)[1]
-        path = full.split("?")[0]
-        CALLS.append((method, full, json.loads(route.request.post_data) if route.request.post_data else None))
-        answer = answers.get(f"{method} {path}", answers.get(path, {}))
-        route.fulfill(status=200, content_type="application/json", body=json.dumps(answer))
+        path = route.request.url.split("/api", 1)[1].split("?")[0]
+        route.fulfill(status=200, content_type="application/json", body=json.dumps(answers.get(path, {})))
 
     def document(route) -> None:
         body = f'<html><head><script>{STUBS}</script><script src="/main.js"></script></head>'
@@ -144,10 +102,7 @@ def fixture_page(request):
         browser = playwright.chromium.launch(**launch_options(9))  # a port nobody listens on: all fulfilled
         page = browser.new_page()
         page.route("**/apps/app_api/proxy/harvester/api/**", api)
-        page.route(
-            "**/main.js",
-            lambda route: route.fulfill(status=200, content_type="text/javascript; charset=utf-8", body=SCRIPT),
-        )
+        page.route("**/main.js", lambda route: route.fulfill(status=200, content_type="text/javascript", body=SCRIPT))
         page.route(PAGE, document)
         page.goto(PAGE)
         page.wait_for_selector("table.harvester-jobs")
@@ -272,63 +227,3 @@ def test_a_failed_steps_picture_and_the_browser_at_its_page(page):
     page.get_by_role("button", name="Go", exact=True).click()
     page.get_by_role("button", name="Back", exact=True).click()
     assert sent(page) == [{"type": "goto", "url": "https://site.example/other"}, {"type": "back"}]
-
-
-@needs_chromium
-@pytest.mark.parametrize("page", [[JOB, SHARED]], indirect=True)
-def test_shared_jobs_show_whose_they_are_and_only_what_may_be_done(page):
-    assert page.locator(".harvester-load").inner_text() == "Runners 2/2 · Browsers 3/3 (2 jobs, 1 recording) · 3 queued"
-    row = page.locator("tbody tr").nth(1)
-    assert "shared by Ben Example" in row.inner_text()
-    assert "2. in the queue: waits for a runner, all 2 busy (1 job ahead)" in row.inner_text()
-    buttons = row.locator("button").all_inner_texts()
-    # Run (queued: off), no Edit but View, no Delete, and no browser with Ben's session.
-    assert buttons == ["Run now", "View"]
-    assert page.locator("tbody tr").nth(0).locator("button").all_inner_texts() == ["Run now", "Edit", "Delete"]
-    row.get_by_role("button", name="View").click()
-    page.wait_for_selector("#harvester-job-form")
-    form = page.locator("#harvester-job-form")
-    assert form.locator("input:not([disabled])").count() == 0, "view only"
-    assert page.get_by_role("button", name="Save").is_hidden()
-    assert "In Ben Example’s files" in form.inner_text()
-    assert "Ben Example’s account" in page.locator(".harvester-credentials").inner_text()
-    assert page.locator(".harvester-share").count() == 0, "no reshare: no share panel"
-    assert not [call for call in CALLS if "/credentials" in call[1]], "the owner's account is not asked for"
-
-
-@needs_chromium
-def test_the_owner_shares_a_job(page):
-    page.get_by_role("button", name="Edit").click()
-    panel = page.locator(".harvester-share")
-    panel.locator("li[data-sharee='user:carol']").wait_for()
-    boxes = panel.locator("li[data-sharee='user:carol'] input[type=checkbox]")
-    assert [box.get_attribute("data-permission") for box in boxes.all()] == ["view", "run", "edit", "delete", "reshare"]
-    assert boxes.nth(0).is_checked() and boxes.nth(0).is_disabled(), "View always"
-    panel.get_by_role("searchbox", name="Share with").fill("fam")
-    panel.get_by_role("button", name="Family (group)").click()
-    panel.locator("li[data-sharee='group:family']").wait_for()
-    assert CALLS[-1] == ("PUT", "/jobs/1/shares", {"kind": "group", "sharee": "family", "permissions": ["view"]})
-    assert ("GET", "/sharees?search=fam&job=1", None) in CALLS
-    panel.locator("li[data-sharee='user:carol'] input[data-permission=edit]").check()
-    assert CALLS[-1] == ("PUT", "/jobs/1/shares", {"kind": "user", "sharee": "carol", "permissions": ["view", "edit"]})
-    panel.get_by_role("button", name="Remove the share with Carol Example").click()
-    panel.get_by_text("Not shared yet.").wait_for()
-    assert CALLS[-1][:2] == ("DELETE", "/jobs/1/shares/user/carol")
-
-
-@needs_chromium
-@pytest.mark.parametrize(
-    "page", [[SHARED | {"id": 1, "permissions": ["view", "edit", "reshare"], "queued": False}]], indirect=True
-)
-def test_an_editor_who_reshares_keeps_the_owners_folder_and_gives_no_more(page):
-    page.get_by_role("button", name="Edit").click()
-    page.wait_for_selector("#harvester-job-form")
-    assert page.locator("#harvester-job-form input").first.is_enabled(), "the name is theirs to edit"
-    folder = page.locator('label.harvester-field:has(> span:text-is("Folder")) input')
-    assert folder.is_disabled() and folder.input_value() == "/Ben/Feed"
-    page.locator(".harvester-share li[data-sharee='user:carol']").wait_for()
-    allowed = {
-        box.get_attribute("data-permission"): box.is_enabled()
-        for box in page.locator(".harvester-share li[data-sharee='user:carol'] input").all()
-    }
-    assert allowed == {"view": False, "run": False, "edit": True, "delete": False, "reshare": True}

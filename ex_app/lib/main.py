@@ -5,11 +5,10 @@ import base64
 import json
 import logging
 import os
-import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from urllib.parse import quote, urlparse
-from typing import Annotated, Any, Literal
+from urllib.parse import urlparse
+from typing import Annotated, Any
 
 from croniter import croniter
 from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
@@ -17,20 +16,10 @@ from nc_py_api import AsyncNextcloudApp
 from nc_py_api.ex_app import AppAPIAuthMiddleware, anc_app, persistent_storage, run_app, set_handlers
 from pydantic import BaseModel, Field, field_validator
 
-from harvester import browser, schedule, settings, sharing
+from harvester import browser, schedule, settings
 from harvester.rclone_wizard import AUTHORIZE_ORIGIN, Authorization, WizardError, Wizards, remote_types
 from harvester.browser.recorder import Recorder
-from harvester.executor import (
-    ADDRESS,
-    RUNNERS,
-    Executor,
-    browsers_in_use,
-    connect_nextcloud,
-    credential_key,
-    load_session,
-    save_session,
-    session_key,
-)
+from harvester.executor import RUNNERS, Executor, credential_key, load_session, save_session, session_key
 from harvester.presets import PRESETS, make_job
 from harvester.runner import COMMON_OPTIONS
 from harvester.sources.download import DOWNLOAD_OPTIONS
@@ -132,87 +121,12 @@ class JobIn(BaseModel):
         return list(dict.fromkeys(tag.strip() for tag in value if tag.strip()))
 
 
-# A user's groups (Nextcloud's), and people's display names, kept a while: asked for on every
-# poll of the page otherwise. A user taken out of a group loses its shares within GROUPS_KEPT.
-GROUPS_KEPT = 60
-NAMES_KEPT = 600
-_GROUPS: dict[str, tuple[float, set[str]]] = {}
-_NAMES: dict[str, tuple[float, str]] = {}
-
-
-async def as_user(user: str) -> AsyncNextcloudApp:
-    """A client of the app's acting as the user (AppAPI's impersonation, as the runs do): for
-    what is the job owner's while another person works on the job (its account, their name)."""
-    nc = connect_nextcloud()
-    await nc.set_user(user)
-    return nc
-
-
-async def groups_of(nc: AsyncNextcloudApp, user: str) -> set[str]:
-    """The user's groups in Nextcloud (asked as the user: a person may read their own), kept
-    GROUPS_KEPT seconds; none when Nextcloud cannot tell (no group's share counts then)."""
-    kept = _GROUPS.get(user)
-    if kept and time.monotonic() - kept[0] < GROUPS_KEPT:
-        return kept[1]
-    try:
-        asking = nc if user == await nc.user else await as_user(user)
-        found = await asking.ocs("GET", f"/ocs/v1.php/cloud/users/{quote(user, safe='')}/groups")
-        groups = {str(group) for group in (found or {}).get("groups", [])}
-    except Exception:  # pylint: disable=broad-exception-caught
-        LOGGER.warning("the groups of %s could not be read", user, exc_info=True)
-        return set()
-    _GROUPS[user] = (time.monotonic(), groups)
-    return groups
-
-
-async def display_name(user: str) -> str:
-    """The user's display name in Nextcloud (their own profile, asked as them), kept NAMES_KEPT
-    seconds; their id when Nextcloud cannot tell."""
-    kept = _NAMES.get(user)
-    if kept and time.monotonic() - kept[0] < NAMES_KEPT:
-        return kept[1]
-    try:
-        name = (await (await as_user(user)).users.get_user()).display_name or user
-    except Exception:  # pylint: disable=broad-exception-caught
-        LOGGER.warning("the display name of %s could not be read", user, exc_info=True)
-        return user
-    _NAMES[user] = (time.monotonic(), name)
-    return name
-
-
-async def job_access(job_id: int, nc: AsyncNextcloudApp, need: int = sharing.VIEW) -> tuple[Job, int]:
-    """The job and what the user may do with it (sharing's bits; all for its owner). 404 when
-    they may not see it (as for a job that does not exist: its existence is not told), 403
-    when they see it but lack the permission needed."""
-    user = await nc.user
+async def own_job(job_id: int, nc: AsyncNextcloudApp) -> Job:
+    """The user's job, or 404 (also for another user's)."""
     job = store().job(job_id)
-    allowed = 0
-    if job is not None:
-        allowed = await sharing.permissions(store(), job, user, lambda someone: groups_of(nc, someone))
-    if job is None or not allowed:
+    if job is None or job.user != await nc.user:
         raise HTTPException(404, "no such job")
-    if need & ~allowed:
-        what = ", ".join(sharing.names(need & ~allowed))
-        raise HTTPException(403, f"The job is shared with you without that ({what}): ask its owner.")
-    return job, allowed
-
-
-async def visible_jobs(nc: AsyncNextcloudApp) -> list[tuple[Job, int]]:
-    """The user's jobs and those shared with them, with what they may do with each."""
-    user = await nc.user
-    mine = [(job, sharing.ALL) for job in store().jobs(user)]
-    shared = []
-    for job in store().shared_with(user, await groups_of(nc, user)):
-        allowed = await sharing.permissions(store(), job, user, lambda someone: groups_of(nc, someone))
-        if allowed:
-            shared.append((job, allowed))
-    return sorted(mine + shared, key=lambda item: item[0].id or 0)
-
-
-def only_owner(job: Job, user: str, what: str) -> None:
-    """403 unless the user owns the job: what (its account, its browser) is the owner's alone."""
-    if job.user != user:
-        raise HTTPException(403, f"Only the job's owner may {what}.")
+    return job
 
 
 def option_problem(option: Option, value: str | int) -> str:
@@ -333,60 +247,30 @@ def explain_schedule(
 
 @APP.get("/api/jobs")
 async def list_jobs(nc: NC) -> list[dict]:
-    """The user's jobs and those shared with them, with how their last run went, which run or
-    wait for their turn (and why they wait), whose they are and what the user may do with them;
-    a job's shares for its owner (and those one who shares it on made)."""
+    """The user's jobs, with how their last run went, and which run or wait for their turn."""
     executor = STATE["executor"]
-    user = await nc.user
-    jobs = await visible_jobs(nc)
     # Queued first: a job taken in between is then running too (and shown so), not neither.
     queued = executor.queued
     running = executor.running
-    waits = executor.waits([job for job, _ in jobs])
-    listed = []
-    for job, allowed in jobs:
-        manages = job.user == user or allowed & sharing.RESHARE
-        listed.append(
-            vars(job)
-            | {
-                "running": job.id in running,
-                "queued": job.id in queued,
-                "paused": executor.paused(job.id or 0),
-                "waiting": waits.get(job.id or 0, ""),
-                "owner": job.user,
-                "mine": job.user == user,
-                "owner_name": await display_name(job.user) if job.user != user else "",
-                "permissions": sharing.names(allowed),
-            }
-            | ({"shares": shares_out(sharing.visible_shares(store(), job, user))} if manages else {})
-        )
-    return listed
-
-
-@APP.get("/api/status")
-def queue_status() -> dict:
-    """What everyone's jobs and recordings hold now (runners, browsers, the queue), without
-    whose: so a person sees why their job waits."""
-    return STATE["executor"].status()
+    return [
+        vars(job) | {"running": job.id in running, "queued": job.id in queued, "paused": executor.paused(job.id or 0)}
+        for job in store().jobs(await nc.user)
+    ]
 
 
 @APP.get("/api/log")
 async def progress_log(nc: NC, job: int | None = None, after: int = 0) -> dict:
-    """The progress log after the line after, of one job the user may see, or of all; which of
-    those jobs run now, which wait for their turn and why, and the queue's status."""
-    jobs = [listed for listed, _ in await visible_jobs(nc)]
+    """The user's progress log after the line after: of one job of theirs, or of all; and which
+    of their jobs run now, and which wait for their turn."""
     if job is not None:
-        await job_access(job, nc)
-        jobs = [listed for listed in jobs if listed.id == job]
-    ids = {listed.id for listed in jobs}
-    executor = STATE["executor"]
-    queued = executor.queued
+        await own_job(job, nc)
+    user = await nc.user
+    mine = {listed.id for listed in store().jobs(user)}
+    queued = STATE["executor"].queued
     return {
-        "lines": store().log_lines([listed.id or 0 for listed in jobs], max(after, 0)),
-        "running": [job_id for job_id in executor.running if job_id in ids],
-        "queued": [job_id for job_id in queued if job_id in ids],
-        "waiting": {str(job_id): reason for job_id, reason in executor.waits(jobs).items()},
-        "status": executor.status(),
+        "lines": store().log_lines(user, job, max(after, 0)),
+        "running": [job_id for job_id in STATE["executor"].running if job_id in mine],
+        "queued": [job_id for job_id in queued if job_id in mine],
     }
 
 
@@ -398,71 +282,14 @@ async def create_job(body: JobIn, nc: NC) -> dict:
 
 @APP.put("/api/jobs/{job_id}")
 async def update_job(job_id: int, body: JobIn, nc: NC) -> dict:
-    """Changes a job's settings; one it is shared with to edit changes all but its folder (the
-    files land in its owner's), and may not send a job with its owner's account elsewhere."""
-    job, _ = await job_access(job_id, nc, sharing.EDIT)
-    changes = checked(body).model_dump()
-    if job.user != await nc.user:
-        changes["target"] = job.target
-        moved = account_moves(job, changes["source"], changes["options"])
-        if moved and await account_set(await as_user(job.user), job):
-            raise HTTPException(403, f"The job signs in with its owner's account: only its owner may change {moved}.")
-    saved = store().save(Job(id=job.id, user=job.user, created=job.created, **changes))
+    """Changes a job's settings."""
+    job = await own_job(job_id, nc)
+    saved = store().save(Job(id=job.id, user=job.user, created=job.created, **checked(body).model_dump()))
     forget_changed(job, saved)
     # Other tags: the files it saved get them (and lose those it gave and has no more) at once.
     if saved.tags != job.tags:
         STATE["executor"].retag(saved.id or 0, job.tags)
     return vars(saved)
-
-
-# The options that say where a job's account goes (a mail server, its sign-in, a forge): with
-# the owner's account set, only the owner changes them.
-ACCOUNT_OPTIONS = ("host", "port", "auth", "token_url", "forge")
-
-
-def hosts(options: dict) -> set[str]:
-    """The hosts of the addresses in a job's options (its site, its recipe's pages)."""
-    return {
-        str(urlparse(found.group(0)).hostname).lower()
-        for value in options.values()
-        for found in ADDRESS.finditer(str(value))
-        if urlparse(found.group(0)).hostname
-    }
-
-
-def sign_in_steps(options: dict) -> list:
-    """A website job's recorded steps (its sign-in), or [] (another source, a broken recipe)."""
-    try:
-        return list(json.loads(str(options.get("recipe") or "{}") or "{}").get("steps", []))
-    except (ValueError, AttributeError):
-        return []
-
-
-def account_moves(job: Job, source: str, options: dict) -> str:
-    """What of a change (to source and options) would send the job's account elsewhere, in
-    words ("" if nothing): another source, server, sign-in or forge, a site it did not go to, or
-    other recorded steps (which fill in the account's fields)."""
-    if source != job.source:
-        return "its source"
-    titles = SOURCES[source].options
-    for name in ACCOUNT_OPTIONS:
-        if str(options.get(name, "")) != str(job.options.get(name, "")):
-            return titles[name].title if name in titles else name
-    new = sorted(hosts(options) - hosts(job.options))
-    if new:
-        return f"the sites it goes to (new: {', '.join(new)})"
-    if sign_in_steps(options) != sign_in_steps(job.options):
-        return "the recipe's steps"
-    return ""
-
-
-async def account_set(owner: AsyncNextcloudApp, job: Job) -> bool:
-    """Whether the owner set an account for the job, or it keeps a session (owner: a client
-    acting as them)."""
-    for key in [credential_key(job, name) for name in SOURCES[job.source].credentials] + [session_key(job)]:
-        if await owner.preferences_ex.get_value(key):
-            return True
-    return False
 
 
 # The options whose change makes a file refused by type or size worth trying again.
@@ -487,11 +314,9 @@ def forget_changed(job: Job, saved: Job) -> None:
 
 @APP.delete("/api/jobs/{job_id}")
 async def delete_job(job_id: int, nc: NC) -> dict:
-    """Deletes a job, its own account (its owner's preferences) and its shares; the files it
-    downloaded stay."""
-    job, _ = await job_access(job_id, nc, sharing.DELETE)
-    owner = nc if job.user == await nc.user else await as_user(job.user)
-    await owner.preferences_ex.delete(
+    """Deletes a job and its own account; the files it downloaded stay."""
+    job = await own_job(job_id, nc)
+    await nc.preferences_ex.delete(
         [credential_key(job, name) for name in SOURCES[job.source].credentials] + [session_key(job)]
     )
     store().delete(job.id or 0)
@@ -502,9 +327,9 @@ async def delete_job(job_id: int, nc: NC) -> dict:
 
 @APP.get("/api/jobs/{job_id}/shot")
 async def get_shot(job_id: int, nc: NC) -> dict:
-    """What the job's browser showed at its last failed step or challenge: the picture (a JPEG,
-    base64), the page's address and title, what went wrong and when."""
-    shot = store().shot((await job_access(job_id, nc))[0].id or 0)
+    """What the user's job's browser showed at its last failed step or challenge: the picture (a
+    JPEG, base64), the page's address and title, what went wrong and when."""
+    shot = store().shot((await own_job(job_id, nc)).id or 0)
     if not shot:
         raise HTTPException(404, "The job's browser has shown nothing to keep yet.")
     return {key: shot[key] for key in ("at", "url", "title", "what")} | {
@@ -515,40 +340,38 @@ async def get_shot(job_id: int, nc: NC) -> dict:
 @APP.post("/api/jobs/{job_id}/run")
 async def run_job(job_id: int, nc: NC) -> dict:
     """Runs a job now (after the one running)."""
-    STATE["executor"].request((await job_access(job_id, nc, sharing.RUN))[0].id)
+    STATE["executor"].request((await own_job(job_id, nc)).id)
     return {}
 
 
 @APP.post("/api/jobs/{job_id}/pause")
 async def pause_job(job_id: int, nc: NC) -> dict:
-    """Pauses the running job before its next file."""
-    if not STATE["executor"].pause((await job_access(job_id, nc, sharing.RUN))[0].id):
+    """Pauses the user's running job before its next file."""
+    if not STATE["executor"].pause((await own_job(job_id, nc)).id):
         raise HTTPException(409, "The job is not running.")
     return {}
 
 
 @APP.post("/api/jobs/{job_id}/resume")
 async def resume_job(job_id: int, nc: NC) -> dict:
-    """Lets the paused job go on."""
-    if not STATE["executor"].resume((await job_access(job_id, nc, sharing.RUN))[0].id):
+    """Lets the user's paused job go on."""
+    if not STATE["executor"].resume((await own_job(job_id, nc)).id):
         raise HTTPException(409, "The job is not running.")
     return {}
 
 
 @APP.post("/api/jobs/{job_id}/stop")
 async def stop_job(job_id: int, nc: NC) -> dict:
-    """Ends the running job before its next file; what it saved stays."""
-    if not STATE["executor"].stop((await job_access(job_id, nc, sharing.RUN))[0].id):
+    """Ends the user's running job before its next file; what it saved stays."""
+    if not STATE["executor"].stop((await own_job(job_id, nc)).id):
         raise HTTPException(409, "The job is not running.")
     return {}
 
 
 @APP.get("/api/jobs/{job_id}/credentials")
 async def get_credentials(job_id: int, nc: NC) -> dict[str, bool]:
-    """Which of the job's credentials its owner has set (never their values); the owner's
-    alone."""
-    job, _ = await job_access(job_id, nc)
-    only_owner(job, await nc.user, "see its account")
+    """Which of the job's credentials the user has set (never their values)."""
+    job = await own_job(job_id, nc)
     return {
         name: bool(await nc.preferences_ex.get_value(credential_key(job, name)))
         for name in SOURCES[job.source].credentials
@@ -561,9 +384,8 @@ async def set_credentials(
 ) -> dict:
     """Stores the credentials given (an empty one is left as it was), encrypted by Nextcloud. A
     changed account forgets the job's kept session: its cookies, or a refresh token the provider
-    replaced, are the old account's and would go on being used instead. The owner's alone."""
-    job, _ = await job_access(job_id, nc)
-    only_owner(job, await nc.user, "change its account")
+    replaced, are the old account's and would go on being used instead."""
+    job = await own_job(job_id, nc)
     changed = False
     for name in SOURCES[job.source].credentials:
         if body.get(name) and body[name] != await nc.preferences_ex.get_value(credential_key(job, name)):
@@ -572,132 +394,6 @@ async def set_credentials(
     if changed:
         await nc.preferences_ex.delete(session_key(job))
     return {}
-
-
-class ShareIn(BaseModel):
-    """A share as the page sends it: with whom (a user or group, as Nextcloud's sharee search
-    named them) and what they may do."""
-
-    kind: Literal["user", "group"]
-    sharee: str = Field(min_length=1, max_length=255)
-    permissions: list[Literal["view", "run", "edit", "delete", "reshare"]] = Field([], max_length=5)
-
-
-def shares_out(shares: list[dict]) -> list[dict]:
-    """The shares as the page shows them: their permissions by name."""
-    return [share | {"permissions": sharing.names(share["permissions"])} for share in shares]
-
-
-# The sharees one search returns at most (Nextcloud's own share dialog asks for 25).
-SHAREES = 25
-
-
-async def search_sharees(nc: AsyncNextcloudApp, search: str) -> list[dict]:
-    """The users and groups Nextcloud lets the user share with that match the search: its own
-    sharee search for files, asked as the user, so the instance's sharing rules apply (only
-    within one's groups, no groups, ...). Each {kind, sharee, label}; exact matches first."""
-    found = await nc.ocs(
-        "GET",
-        "/ocs/v2.php/apps/files_sharing/api/v1/sharees",
-        params={"search": search, "itemType": "file", "perPage": SHAREES, "lookup": "false", "shareType[]": [0, 1]},
-    )
-    found = found or {}
-    results: dict[tuple[str, str], dict] = {}
-    for group in (found.get("exact") or {}, found):
-        for key, kind in (("users", "user"), ("groups", "group")):
-            for entry in group.get(key) or []:
-                value = entry.get("value") or {}
-                sharee = str(value.get("shareWith", ""))
-                if sharee and (kind, sharee) not in results:
-                    results[(kind, sharee)] = {
-                        "kind": kind,
-                        "sharee": sharee,
-                        "label": str(entry.get("label") or sharee),
-                    }
-    return list(results.values())
-
-
-@APP.get("/api/sharees")
-async def list_sharees(
-    nc: NC, search: Annotated[str, Query(min_length=1, max_length=100)], job: int | None = None
-) -> list[dict]:
-    """The people and groups the user may share a job with (Nextcloud's sharee search), not the
-    user themselves nor the job's owner."""
-    user = await nc.user
-    owner = (await job_access(job, nc))[0].user if job is not None else user
-    try:
-        found = await search_sharees(nc, search)
-    except Exception as error:  # pylint: disable=broad-exception-caught
-        LOGGER.warning("the sharee search failed: %s", error)
-        raise HTTPException(502, "Nextcloud's search for people and groups failed.") from error
-    return [item for item in found if not (item["kind"] == "user" and item["sharee"] in (user, owner))]
-
-
-async def manage_shares(job_id: int, nc: AsyncNextcloudApp) -> tuple[Job, int, str]:
-    """The job whose shares the user manages (its owner, or one it is shared with to share on),
-    what they may do with it and who they are; else 403 (404 without access)."""
-    job, allowed = await job_access(job_id, nc)
-    user = await nc.user
-    if job.user != user and not allowed & sharing.RESHARE:
-        raise HTTPException(403, "The job is shared with you without that (reshare): ask its owner.")
-    return job, allowed, user
-
-
-@APP.get("/api/jobs/{job_id}/shares")
-async def get_shares(job_id: int, nc: NC) -> list[dict]:
-    """The job's shares: all of them for its owner, those they made for one who shares it on."""
-    job, _, user = await manage_shares(job_id, nc)
-    return shares_out(sharing.visible_shares(store(), job, user))
-
-
-@APP.put("/api/jobs/{job_id}/shares")
-async def put_share(job_id: int, body: ShareIn, nc: NC) -> list[dict]:
-    """Shares the job with a user or group, or changes what a share allows: one who shares it on
-    gives at most what they may do, and changes only the shares they made. The sharee must be
-    one Nextcloud lets the user share with. Returns the shares the user manages."""
-    job, allowed, user = await manage_shares(job_id, nc)
-    permissions = sharing.bits(body.permissions)
-    if body.kind == "user" and body.sharee in (user, job.user):
-        raise HTTPException(422, "The job is yours or its owner's already.")
-    if job.user != user and permissions & ~allowed:
-        raise HTTPException(403, "You may share the job on with at most what you may do with it.")
-    existing = {(share["kind"], share["sharee"]): share for share in store().shares(job.id or 0)}
-    share = existing.get((body.kind, body.sharee))
-    if share and user not in (job.user, share["by"]):
-        raise HTTPException(403, "Another person shared the job with them: only they or its owner change that.")
-    if share:
-        label = share["label"]
-    else:
-        try:
-            found = await search_sharees(nc, body.sharee)
-        except Exception as error:  # pylint: disable=broad-exception-caught
-            LOGGER.warning("the sharee search failed: %s", error)
-            raise HTTPException(502, "Nextcloud's search for people and groups failed.") from error
-        match = [item for item in found if (item["kind"], item["sharee"]) == (body.kind, body.sharee)]
-        if not match:
-            raise HTTPException(422, f"Nextcloud does not let you share with this {body.kind}: {body.sharee}.")
-        label = match[0]["label"]
-    store().share(
-        job.id or 0,
-        {"kind": body.kind, "sharee": body.sharee, "label": label, "permissions": permissions, "by": user},
-    )
-    return shares_out(sharing.visible_shares(store(), job, user))
-
-
-@APP.delete("/api/jobs/{job_id}/shares/{kind}/{sharee}")
-async def delete_share(job_id: int, kind: Literal["user", "group"], sharee: str, nc: NC) -> list[dict]:
-    """Ends a share: the owner any, one who shares it on those they made. Returns the shares
-    the user manages."""
-    job, _, user = await manage_shares(job_id, nc)
-    share = next(
-        (item for item in store().shares(job.id or 0) if (item["kind"], item["sharee"]) == (kind, sharee)), None
-    )
-    if share is None:
-        raise HTTPException(404, "The job is not shared with them.")
-    if user not in (job.user, share["by"]):
-        raise HTTPException(403, "Another person shared the job with them: only they or its owner end that.")
-    store().unshare(job.id or 0, kind, sharee)
-    return shares_out(sharing.visible_shares(store(), job, user))
 
 
 class WizardStart(BaseModel):
@@ -756,7 +452,7 @@ async def cancel_wizard(session: str, nc: NC) -> dict:
 async def record(websocket: WebSocket, nc: NC) -> None:
     """A recording: the browser's screen to the page, the person's input to the browser.
 
-    With ?job=<id> (a job of the user's own) the browser starts with the job's kept session at the page
+    With ?job=<id> (the user's job) the browser starts with the job's kept session at the page
     that asked for a person (with &at=shot: at the page of its last failed step); {type:
     save-session} keeps the browser's session for the job, clears the challenge and runs the job
     again.
@@ -862,7 +558,7 @@ async def admit_sign_in(websocket: WebSocket, user: str, wizard: str) -> Authori
     if authorization and not browser.SLOTS.acquire(blocking=False):  # pylint: disable=consider-using-with
         authorization.kill()
         authorization = None
-        refusal = busy_browsers()
+        refusal = "All browsers are in use (other recordings, or a job): try again in a few minutes."
     if authorization is None:
         await websocket.send_json({"type": "error", "message": refusal})
         await websocket.close(code=1008)
@@ -913,26 +609,16 @@ async def admit(websocket: WebSocket, nc: AsyncNextcloudApp) -> tuple[bool, Job 
         refusal = "This page may not open the recorder."
     elif websocket.query_params.get("job"):
         try:
-            job, _ = await job_access(int(websocket.query_params["job"]), nc)
+            job = await own_job(int(websocket.query_params["job"]), nc)
         except (ValueError, HTTPException):
             refusal = "No such job."
-        # The job's browser opens with its owner's session (signed in as them at the site), and
-        # Done keeps the session it is left with for the owner's runs: theirs alone, even for
-        # one who may run and edit the job.
-        if job is not None and job.user != await nc.user:
-            job, refusal = None, "Only the job's owner may open its browser: it holds their session at the site."
     if not refusal and not browser.SLOTS.acquire(blocking=False):  # pylint: disable=consider-using-with
-        refusal = busy_browsers()
+        refusal = "All browsers are in use (other recordings, or a job): try again in a few minutes."
     if refusal:
         await websocket.send_json({"type": "error", "message": refusal})
         await websocket.close(code=1008)
         return False, None
     return True, job
-
-
-def busy_browsers() -> str:
-    """The recorder's refusal when every browser is open: what holds them, without whose."""
-    return f"No browser is free: {browsers_in_use()}. Try again in a few minutes."
 
 
 def switched_on(job: Job, name: str) -> bool:

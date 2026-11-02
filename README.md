@@ -20,22 +20,6 @@ the app's browser or taken from a template, not by code.
   the jobs, a **progress log** of what the runs do (searching, each file downloaded, saved or
   found already there, errors, the outcome), live while one runs, of all jobs or of one; a new
   run clears its job's last message.
-- **Sharing** (`harvester/sharing.py`): a job is its owner's, and nobody else sees it (another
-  person gets 404, as for a job that does not exist) until the owner shares it, as Nextcloud shares
-  files: with people and groups found by Nextcloud's own sharee search, asked as the person sharing,
-  so the instance's sharing rules apply (only within one's groups, say). Each share has its
-  permissions: **View** always (the job, its options, schedule, status, progress log and what its
-  browser saw), **Run** (Run now, Pause, Resume, Stop), **Edit** (its name, options, recipe, tags,
-  schedule, enabled), **Delete** and **Reshare** (share it on, with at most one's own permissions; a
-  share on loses what its sharer loses). A permission missing is a 403 that names it. The owner sees
-  every share in the job's form (*Share*), one who reshares those they made. A group's share counts
-  for its members, as Nextcloud says they are (asked again after a minute, so one taken out of the
-  group loses the job then). A job shared with you is listed with *shared by* and its owner's name,
-  and only the buttons you may use. Always the owner's: the account (never shown to others, not even
-  whether it is set; an editor may not change the source, the server, the sign-in's steps or the
-  sites of a job that has one, which would send the account elsewhere), the folder (the files go to
-  the owner's), the notifications, and the job's browser with its kept session (*Continue in the
-  browser*, *Open in the browser*). Runs act as the owner. Deleting a job deletes its shares.
 - **Sources** (`ex_app/lib/harvester/sources/`), one card each on the *New job* page:
   - `site`: files linked from a website's pages, by a recipe (below).
   - `mail`: attachments of the messages in an IMAP mailbox (TLS), filtered by sender, subject,
@@ -150,12 +134,12 @@ the app's browser or taken from a template, not by code.
   Harvester never answers a challenge itself. When a step fails or a page asks for a person,
   the job keeps what its browser showed (a JPEG of the window, at most 400 KB, with the page's
   address and title; in the app's database, the newest per job, deleted with the job): its
-  line in the progress log gets **Show what the browser saw** (`GET /api/jobs/<id>/shot`, for
-  those who may view the job), and from there **Open in the browser** (the owner alone) opens the
-  job's browser with its session at that page. A failed step's line names its element when it has
-  no text (`step 2 (click a.overlay-b:nth-of-type(6)) failed`). A new value for any of the job's
-  account forgets its kept session (the cookies, a refresh token the provider replaced): those are
-  the old account's, and would be used instead.
+  line in the progress log gets **Show what the browser saw** (`GET /api/jobs/<id>/shot`, the
+  job's owner only), and from there **Open in the browser** opens the job's browser with its
+  session at that page. A failed step's line names its element when it has no text
+  (`step 2 (click a.overlay-b:nth-of-type(6)) failed`). A new value for any of the job's account
+  forgets its kept session (the cookies, a refresh token the provider replaced): those are the old
+  account's, and would be used instead.
 - **A person's browser:** sites' bot protection (Cloudflare, ...) refuses a browser that says it is
   automated, or cuts its connection (`ERR_HTTP2_PROTOCOL_ERROR`). Chromium runs as the full browser
   in its new headless mode (not the headless shell), without the automation flag, with Chrome's
@@ -210,19 +194,12 @@ the app's browser or taken from a template, not by code.
   a job never runs twice at once, and jobs of the same site (the host of the job's address) wait
   for each other, so no site gets more than one job's requests. The schedule and **Run now** only
   queue a job; a queued job asked for again runs once. The page shows it **Queued** until a
-  runner takes it, and checks every two seconds while a job of yours waits or runs (ten
-  otherwise). Everyone's load is shown, nobody's jobs: above the list a line such as *Runners 2/2
-  · Browsers 3/3 (2 jobs, 1 recording) · 3 queued*, and beside a waiting job its place and why
-  it waits: *2. in the queue: waits for a runner, all 2 busy (1 job ahead)*, *waits for its site
-  (heise.de), used by another job* (its own site, never another job's), or, running, *Waits for
-  a browser: all 3 in use (2 by jobs, 1 by recordings)* (`GET /api/status`, and in the log's
-  polls).
+  runner takes it, and checks every two seconds while a job of yours waits or runs.
 - **Browsers:** up to `HARVESTER_BROWSERS` Chromiums at once (3 by default; each takes some
   300-600 MB): each running website job takes one, recordings the others, so people record side
   by side and while jobs run. When all are taken, the recorder's screen says so instead of staying
-  empty, and how many jobs and recordings hold them (not whose). A browser is freed whenever its
-  view ends: Done, Cancel, another view of the page, closing the page, the time limits, or
-  (rclone's sign-in) the wizard's end.
+  empty. A browser is freed whenever its view ends: Done, Cancel, another view of the page,
+  closing the page, the time limits, or (rclone's sign-in) the wizard's end.
 - **Admin settings:** *Administration settings > Additional settings > Harvester* sets the
   numbers of jobs and browsers at once (1 to 8 each) and the proxy; the environment's values
   (`HARVESTER_RUNNERS`, `HARVESTER_BROWSERS`, `HARVESTER_PROXY`, `HARVESTER_PROXY_NAME`) are the
@@ -242,8 +219,8 @@ the app's browser or taken from a template, not by code.
   through the proxy starts its log with it. Both ask Cloudflare's `cdn-cgi/trace` through the
   same connection the pages and downloads use, so it is the proxy's address only when the proxy
   is really used.
-- **Notifications:** a job that needs a person, or fails, notifies its owner (not those it is
-  shared with); the same failure again on the next runs does not.
+- **Notifications:** a job that needs a person, or fails, notifies its user; the same failure
+  again on the next runs does not.
 - **Templates** (`ex_app/lib/harvester/presets/*.json`), jobs with a few parameters, one card
   each on the *New job* page. A parameter may suggest values (`suggestions`: values, or
   `{value, label}` shown by the label, each passing its `check`), offered as buttons on the card:

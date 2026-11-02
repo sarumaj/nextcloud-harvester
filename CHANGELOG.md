@@ -2,25 +2,6 @@
 
 ## Unreleased
 
-### Added
-
-- **Sharing:** a job's owner shares it with people and groups, found by Nextcloud's own sharee
-  search (its sharing rules apply), each share with View and any of Run, Edit, Delete and
-  Reshare (on with at most one's own permissions); *Share* in the job's form lists, changes and
-  removes them. A job shared with you is listed with *shared by* its owner and only the buttons
-  you may use; a group's share follows its members within a minute.
-- **The queue for everyone:** a line above the jobs says how many runners and browsers are busy
-  (browsers by jobs and by recordings) and how many jobs wait, and a waiting job says its place
-  and why (a runner, its site, a browser), without naming anyone else's jobs or sites
-  (`GET /api/status`). The recorder's "all browsers in use" says what holds them.
-
-### Security
-
-- A shared job stays its owner's: its account (not shown, not even whether it is set; an editor
-  cannot send a job with an account to another server, site or sign-in), its folder, its
-  notifications and its browser with the kept session; it runs as the owner. Without access a
-  job answers 404 as one that does not exist; a missing permission is a 403 that names it.
-
 ### Fixed
 
 - *Test the recipe* stopped by its person during a step said "failed": a stop cut short a step,
