@@ -30,6 +30,26 @@
 - **Recipes as files:** *Export recipe* in a job's form downloads its recipe and settings
   (without the account, session or folder); *Import a recipe* on the *New job* page checks such a
   file and opens the form filled in; *Save as template* keeps it as a template of one's own.
+- **Browser network guard** in the admin's settings (and `HARVESTER_GUARD`): on by default; off,
+  the browsers connect by themselves as before the guard (the home connection given to
+  Chromium), the routes still checking what Playwright sees, while a web worker's WebSockets and
+  DNS rebinding are left to the External Apps' firewall. For the browsers started afterwards;
+  switch it off only when that network is already firewalled from private networks and the
+  cloud's metadata service.
+
+### Changed
+
+- **The browser's guard is fast under load:** it runs in a process of its own (without the
+  app's secrets, ending with the app), so it no longer waits for the interpreter while runners
+  and recordings keep the app busy; it relays in larger chunks with one idle timer per
+  connection, keeps a name's checked addresses for a minute (one lookup for the connections a
+  page opens at once; it still connects only to addresses it checked), and tries an address
+  family that did not connect (IPv6 without a route) second for a while. Under load, a download
+  through the guard went from about 2 MB/s to some 1.4 GB/s, and a page from 50 sites from 10 s
+  to a quarter of a second.
+- **Each browser's guard serves that browser alone:** it asks for credentials of the browser's
+  own (Proxy-Authorization, which Playwright answers), so a browser that reaches another
+  browser's guard, one that took the port of a guard that crashed, say, is refused there.
 
 ## 0.10.0 - 2026-11-02
 

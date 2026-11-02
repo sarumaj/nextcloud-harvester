@@ -17,7 +17,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 
 class Slots:
@@ -116,6 +116,11 @@ LOCALE = os.environ.get("HARVESTER_LOCALE", "en-US")
 PROXY = os.environ.get("HARVESTER_PROXY", "").strip()
 PROXY_NAME = os.environ.get("HARVESTER_PROXY_NAME", "").strip() or "the proxy"
 TIMEZONE = os.environ.get("HARVESTER_TIMEZONE", "Europe/Berlin")
+# Whether the browsers started from now on go through a guard of their own (guard.py): on unless
+# HARVESTER_GUARD or the admin's setting (settings.py) says off. Off, the routes check what
+# Playwright sees, and the External Apps' firewall alone keeps the rest (a web worker's
+# WebSockets, a name that changes after its check) off the private network.
+GUARD = os.environ.get("HARVESTER_GUARD", "").strip().lower() not in ("0", "false", "off", "no")
 # What the browser and the helper programs (rclone, gallery-dl) may see of the app's
 # environment: the app's AppAPI secret and HaRP's key stay out (a page that broke out of
 # Chromium, which has no sandbox in a container, would find nothing to take).
@@ -200,18 +205,37 @@ def http_address(url: str) -> str:
     return {"ws": "http", "wss": "https"}.get(scheme.lower(), scheme) + separator + rest
 
 
-def launch_options(guard: int, http1: bool = False) -> dict:
+def launch_options(
+    guard: int, http1: bool = False, home: bool = False, credentials: tuple[str, str] | None = None
+) -> dict:
     """How Chromium starts (CHANNEL; HTTP/1.1 only for the sites that cut HTTP/2 connections
     of browsers they distrust), with every connection through its guard on 127.0.0.1 (the
-    guard's port; guard.Guard, which takes the home connection, PROXY, from there on)."""
+    guard's port and its credentials for this browser; guard.Guard, which takes the home
+    connection, PROXY, from there on). Without
+    a guard (0: GUARD off), Chromium connects by itself, home through PROXY, its credentials
+    given apart as Chromium wants them."""
     args = [*LAUNCH_ARGS, "--disable-blink-features=AutomationControlled", f"--lang={LOCALE}"]
     if http1:
         args.append("--disable-http2")
     options = {"args": args, "env": child_env()} | ({"channel": CHANNEL} if CHANNEL else {})
-    # The guard for loopback too: Chromium would otherwise connect to 127.0.0.1 and localhost
-    # by itself ("<-loopback>" removes that implicit exception). Playwright's own requests of
-    # the context (context.request) take the same proxy.
-    options["proxy"] = {"server": f"http://127.0.0.1:{guard}", "bypass": "<-loopback>"}
+    if guard:
+        # The guard for loopback too: Chromium would otherwise connect to 127.0.0.1 and localhost
+        # by itself ("<-loopback>" removes that implicit exception). Playwright's own requests of
+        # the context (context.request) take the same proxy.
+        options["proxy"] = {"server": f"http://127.0.0.1:{guard}", "bypass": "<-loopback>"}
+        if credentials:
+            # Playwright answers the guard's 407 with them, for the pages and context.request.
+            options["proxy"] |= {"username": credentials[0], "password": credentials[1]}
+    elif home and PROXY:
+        address = urlparse(PROXY)
+        # Chromium knows socks5 only, and looks up the names at a SOCKS proxy anyway.
+        scheme = "socks5" if address.scheme == "socks5h" else address.scheme
+        server = address._replace(scheme=scheme, netloc=address.netloc.rpartition("@")[2]).geturl()
+        options["proxy"] = {"server": server} | (
+            {"username": unquote(address.username or ""), "password": unquote(address.password or "")}
+            if address.username
+            else {}
+        )
     # WebRTC's UDP passes by any proxy: a page's peer connection would send to whatever address
     # its STUN or TURN servers have. Only what goes through the proxy (TCP, the guard's).
     args.append("--webrtc-ip-handling-policy=disable_non_proxied_udp")

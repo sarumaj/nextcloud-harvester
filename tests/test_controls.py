@@ -220,6 +220,8 @@ def test_the_admins_settings_change_the_runners_and_browsers(tmp_path, monkeypat
     monkeypatch.setattr(browser, "PROXY", "")
     monkeypatch.setattr(browser, "PROXY_NAME", "the proxy")
     monkeypatch.setattr(settings, "DEFAULT_PROXY", "http://10.0.0.1:3128")
+    monkeypatch.setattr(browser, "GUARD", True)
+    monkeypatch.setattr(settings, "DEFAULT_GUARD", True)
     executor = Executor(Store(str(tmp_path / "db")), connect=Nc, runners=2)
     executor.read_settings()
     assert (executor.runners, browser.SLOTS.limit) == (2, browser.BROWSERS), "unset: the environment's"
@@ -239,6 +241,16 @@ def test_the_admins_settings_change_the_runners_and_browsers(tmp_path, monkeypat
     Config.values = {settings.RUNNERS: "99", settings.BROWSERS: "x"}
     executor.read_settings()
     assert (executor.runners, browser.SLOTS.limit) == (settings.MAX_RUNNERS, browser.BROWSERS)
+    # The browsers' guard: for the browsers started afterwards.
+    assert browser.GUARD is True, "unset: the environment's (on)"
+    for word, guarded in (("Off", False), ("On", True)):
+        Config.values = {settings.GUARD: word}
+        executor.read_settings()
+        assert browser.GUARD is guarded
+    monkeypatch.setattr(settings, "DEFAULT_GUARD", False)
+    Config.values = {}
+    executor.read_settings()
+    assert browser.GUARD is False, "HARVESTER_GUARD=off and no setting"
 
 
 def test_a_runner_beyond_the_setting_waits(tmp_path, monkeypatch):
