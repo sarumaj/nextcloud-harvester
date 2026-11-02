@@ -175,8 +175,8 @@ the app's browser or taken from a template, not by code.
   others (it is tried again next run), five failures without a success do; a file whose name
   cannot be made (`{year}` of a release without a date) fails alone, naming the missing value.
   Two files of one name (two invoices of one day, links all called "Download") get two names:
-  a name taken by a file the job saved for another item gets ` (2)`, ` (3)`, ... before the
-  extension; a file the job has no record of (put there by hand) is adopted. Once a run went
+  a name taken by a file the job saved for another item gets "(2)", "(3)", ... after a space
+  before the extension (`Rechnung (2).pdf`); a file the job has no record of (put there by hand) is adopted. Once a run went
   through the whole site, a listing of known files ends the next runs (*Stop at known files*):
   of a level's links to follow, the first known one ends it when the level's last is known too;
   when the last has new files the level lists its newest last, and is followed from the end back
