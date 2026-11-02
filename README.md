@@ -5,14 +5,20 @@ and tags them: from websites, mailboxes, feeds, video and gallery sites, file st
 drives, and release pages. It is generic: a website is described by a **recipe**, recorded in
 the app's browser or taken from a template, not by code.
 
-- **Jobs:** a source and its settings, a folder, a cron schedule (UTC), tags and an account.
-  *Harvester* in Nextcloud's top menu lists your jobs, runs one now and edits them. The form
-  explains the schedule in words as it is typed, with its next runs, and shows sizes in KB, MB
-  or GB. Fields with usual values (the schedule, file names, formats, patterns, sizes, files per
-  run) offer them all as buttons below the field, which takes other values too; options with a
-  fixed set of values are lists. Below the jobs, a **progress log** of what the runs do
-  (searching, each file downloaded, saved or found already there, errors, the outcome), live
-  while one runs, of all jobs or of one; a new run clears its job's last message.
+- **Jobs:** a source and its settings, a folder, a cron schedule (in your time zone: a new
+  job takes the browser's, an edited one keeps its own), tags and an account.
+  *Harvester* in Nextcloud's top menu lists your jobs, runs one now and edits them; a job asked
+  to run waits as **Queued** for its site or a free runner, a disabled one is marked *off*, and
+  a button the app refuses (Stop as the run ends) says why beside the job. The form explains the
+  schedule in words as it is typed, with its next runs, and shows sizes in KB, MB or GB of 1000,
+  as the progress log does. The account's fields are part of the form, a new job's too: *Save*
+  stores the job and what was typed into them (an empty field keeps what is stored), and
+  *Save account* stores the account alone. Fields with usual values (the schedule, file names,
+  formats, patterns, sizes, files per run) offer them all as buttons below the field, which
+  takes other values too; options with a fixed set of values are lists. Below the jobs, a
+  **progress log** of what the runs do (searching, each file downloaded, saved or found
+  already there, errors, the outcome), live while one runs, of all jobs or of one; a new run
+  clears its job's last message.
 - **Sources** (`ex_app/lib/harvester/sources/`), one card each on the *New job* page:
   - `site`: files linked from a website's pages, by a recipe (below).
   - `mail`: attachments of the messages in an IMAP mailbox (TLS), filtered by sender, subject,
@@ -50,7 +56,7 @@ the app's browser or taken from a template, not by code.
     Some providers refuse such a browser (Google: "This browser or app may not be secure"); then
     run the `rclone authorize "<type>" ...` command it shows on your computer and paste what it
     prints. The finished remote, checked as a run checks it, goes into the field to be reviewed
-    and saved with *Save account*.
+    and saved with the job (or *Save account*).
   - `releases`: the files attached to a repository's releases on GitHub, GitLab (gitlab.com or
     a server of its own, projects in groups of groups), Codeberg or another Forgejo or Gitea
     server, newest first (prereleases if asked, drafts never), filtered by a pattern on the
@@ -116,7 +122,8 @@ the app's browser or taken from a template, not by code.
 - **Runners:** `HARVESTER_RUNNERS` jobs run at once (2 by default), each in a thread of its own;
   a job never runs twice at once, and jobs of the same site (the host of the job's address) wait
   for each other, so no site gets more than one job's requests. The schedule and **Run now** only
-  queue a job; a queued job asked for again runs once.
+  queue a job; a queued job asked for again runs once. The page shows it **Queued** until a
+  runner takes it, and checks every two seconds while a job of yours waits or runs.
 - **Browsers:** up to `HARVESTER_BROWSERS` Chromiums at once (3 by default; each takes some
   300-600 MB): each running website job takes one, recordings the others, so people record side
   by side and while jobs run. When all are taken, the recorder's screen says so instead of staying
