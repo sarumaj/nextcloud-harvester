@@ -8,10 +8,12 @@ app's secret among them), and the network rules of the External Apps keep it off
 network in any case.
 """
 
+import ctypes
 import functools
 import ipaddress
 import os
 import socket
+import sys
 import threading
 import time
 from pathlib import Path
@@ -120,9 +122,62 @@ def seen_address(trace: str) -> dict[str, str]:
     return {"ip": fields["ip"], "country": fields.get("loc", "")} if fields.get("ip") else {}
 
 
+# prctl's option (linux/prctl.h).
+PR_SET_DUMPABLE = 4
+
+
 def child_env() -> dict[str, str]:
     """The environment of a child process: the few variables it needs, no secret."""
     return {key: os.environ[key] for key in CHILD_ENV_KEYS if key in os.environ}
+
+
+def undumpable() -> bool:
+    """Makes this process undumpable (Linux's prctl PR_SET_DUMPABLE 0): its /proc files (environ,
+    which holds the AppAPI secret and HaRP's key; its memory) become root's, out of reach of the
+    helper programs and browsers, which run as the same user. Whether it is; elsewhere than on
+    Linux, nothing and False. (A program the app starts is dumpable again: they get child_env.)"""
+    if not sys.platform.startswith("linux"):
+        return False
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        return libc.prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) == 0
+    except (OSError, AttributeError):
+        return False
+
+
+def driver_env(environment: dict[str, str]) -> dict[str, str]:
+    """The environment of Playwright's driver (the node process that starts the browsers): the
+    child's, and Playwright's own variables."""
+    return {key: value for key, value in environment.items() if key in CHILD_ENV_KEYS or key.startswith("PW_")}
+
+
+def _quiet_driver() -> None:
+    """Playwright starts its driver with the app's whole environment (the AppAPI secret, HaRP's
+    key), as the same user as the browsers: a page that broke out of Chromium could read it from
+    /proc. The driver gets driver_env instead. Playwright's own function, replaced where its
+    transport looks it up (tests check that it still does)."""
+    # pylint: disable-next=import-outside-toplevel
+    from playwright._impl import _transport  # type: ignore[import-not-found]
+
+    original = _transport.get_driver_env
+    if getattr(original, "quiet", False):
+        return
+
+    def quiet() -> dict:
+        return driver_env(original())
+
+    quiet.quiet = True  # type: ignore[attr-defined]
+    _transport.get_driver_env = quiet
+
+
+_quiet_driver()
+
+
+def http_address(url: str) -> str:
+    """A WebSocket's address as the http(s) one its connection starts with (ws: http, wss:
+    https), for allowed_url; another address as it is."""
+    scheme, separator, rest = url.partition("://")
+    return {"ws": "http", "wss": "https"}.get(scheme.lower(), scheme) + separator + rest
 
 
 def launch_options(http1: bool = False, home: bool = False) -> dict:
@@ -154,12 +209,14 @@ def user_agent(version: str) -> str:
 
 
 def context_options(version: str, viewport: dict | None = None) -> dict:
-    """A browser context's settings: the window's size, the user agent, language and time zone."""
+    """A browser context's settings: the window's size, the user agent, language and time zone;
+    no service workers (their requests would pass by the context's routes, the guard)."""
     return {
         "viewport": viewport or VIEWPORT,
         "user_agent": user_agent(version),
         "locale": LOCALE,
         "timezone_id": TIMEZONE,
+        "service_workers": "block",
     }
 
 
@@ -188,39 +245,53 @@ def connection_refused(error: Exception) -> str:
 
 def allowed_host(host: str) -> bool:
     """Tells whether a source may connect to the host (IMAP, SFTP, ...): not a local or private
-    name or address (the External Apps' network rules keep them off the private network too)."""
+    name or address, nor a name that resolves to one (127.0.0.1.nip.io, say), for the helper
+    programs and servers that connect by themselves too (the External Apps' network rules keep
+    them off the private network as well). (Between this lookup and the connection, the name
+    could still change: those rules stay the guard against that.)"""
     host = host.strip().lower().strip("[]")
     if not host or host == "localhost" or host.endswith((".localhost", ".local", ".internal")):
         return False
     try:
         return ipaddress.ip_address(host).is_global
     except ValueError:
-        return True
+        pass
+    try:
+        return _resolves_public(host, int(time.time() // 300))
+    except TimeoutError:
+        return False  # no answer in time: not known to be public
+
+
+# How long a name's lookup may take (s): the checks run as a job is saved, and the name of a
+# server that does not answer in time is refused.
+LOOKUP_TIMEOUT = 5.0
 
 
 @functools.lru_cache(maxsize=512)
 def _resolves_public(host: str, _period: int) -> bool:
-    """Whether every address the name resolves to is public (cached per five-minute period)."""
-    try:
-        infos = socket.getaddrinfo(host, None)
-    except OSError:
-        return True  # a name that does not resolve fails by itself
-    return all(ipaddress.ip_address(str(info[4][0]).split("%", maxsplit=1)[0]).is_global for info in infos)
+    """Whether every address the name resolves to is public (cached per five-minute period; a
+    lookup that takes longer than LOOKUP_TIMEOUT raises TimeoutError, and is not cached)."""
+    found: list = []
+
+    def look_up() -> None:
+        try:
+            found.append(socket.getaddrinfo(host, None))
+        except OSError:
+            found.append([])  # a name that does not resolve fails by itself
+
+    # In a thread of its own: getaddrinfo has no timeout of its own.
+    lookup = threading.Thread(target=look_up, name="lookup", daemon=True)
+    lookup.start()
+    lookup.join(LOOKUP_TIMEOUT)
+    if not found:
+        raise TimeoutError(f"{host} did not resolve within {LOOKUP_TIMEOUT:.0f} s")
+    return all(ipaddress.ip_address(str(info[4][0]).split("%", maxsplit=1)[0]).is_global for info in found[0])
 
 
 def reachable(url: str) -> bool:
-    """allowed_url, and the host's name resolves to public addresses only: a public name that
-    points at a private address (or a redirect to one) is refused too, not only by the External
-    Apps' network rules. (Between this lookup and the connection, the name could still change:
-    those rules stay the guard against that.)"""
-    if not allowed_url(url):
-        return False
-    host = (urlparse(url).hostname or "").strip("[]")
-    try:
-        ipaddress.ip_address(host)
-        return True  # an address, already checked by allowed_url
-    except ValueError:
-        return _resolves_public(host.lower(), int(time.time() // 300))
+    """allowed_url: the browser's and the downloads' check of every request (a redirect's too);
+    allowed_host resolves the names."""
+    return allowed_url(url)
 
 
 def allowed_url(url: str) -> bool:

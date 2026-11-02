@@ -20,6 +20,9 @@ USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) Nextcloud-Harvester"
 # Waits a site asks for, per file; and the longest one honoured.
 MAX_WAITS = 5
 MAX_WAIT = 900
+# The most of a web page or feed read into memory (a listing, a feed, the page a site gave
+# instead of a file): more is no page a person made, and the app's memory is shared.
+MAX_PAGE = 16 * 1024 * 1024
 # Network failures (a dropped connection, a timeout) tried again per file, after growing pauses.
 RETRIES = 3
 RETRY_PAUSE = 10
@@ -131,14 +134,16 @@ def with_extension(path: str, settings: dict) -> str:
 
 def guarded_client(**options) -> httpx.Client:
     """An HTTP client for the sources: every request, a redirect's too, only to an address the
-    app may reach (browser.reachable), else SourceError."""
+    app may reach (browser.reachable), else SourceError; the event_hooks given run after the
+    check."""
 
     def check(request: httpx.Request) -> None:
         if not reachable(str(request.url)):
             raise SourceError(f"{request.url} may not be reached")
 
+    hooks = options.pop("event_hooks", {})
     settings = {"follow_redirects": True, "timeout": 120, "headers": {"User-Agent": USER_AGENT}} | options
-    return httpx.Client(event_hooks={"request": [check]}, **settings)
+    return httpx.Client(event_hooks=hooks | {"request": [check, *hooks.get("request", [])]}, **settings)
 
 
 def http(client: httpx.Client) -> Opener:
@@ -155,6 +160,20 @@ def http(client: httpx.Client) -> Opener:
             )
 
     return open_url
+
+
+def read_page(response: httpx.Response) -> bytes:
+    """A streamed answer's body, a page or a feed: SourceError beyond MAX_PAGE (announced or
+    read so far), before the rest is read."""
+    announced = response.headers.get("content-length", "")
+    if announced.isdigit() and int(announced) > MAX_PAGE:
+        raise SourceError(f"{response.url} is larger than {MAX_PAGE // 1048576} MB, too large for a page")
+    body = bytearray()
+    for chunk in response.iter_bytes():
+        body += chunk
+        if len(body) > MAX_PAGE:
+            raise SourceError(f"{response.url} is larger than {MAX_PAGE // 1048576} MB, too large for a page")
+    return bytes(body)
 
 
 def pause(response: Response, wait_pattern: str) -> float | None:
@@ -210,7 +229,13 @@ def _attempt(
             raise SourceError(f"{url} answered {response.status}")
         content_type = response.headers.get("content-type", "")
         if content_type.startswith("text/html") and "html" not in types:
-            kind = challenge_in_html(b"".join(response.chunks).decode("utf-8", "replace"))
+            # Its start is enough to tell a challenge: a page without end is not read to it.
+            page = bytearray()
+            for chunk in response.chunks:
+                page += chunk
+                if len(page) > MAX_PAGE:
+                    break
+            kind = challenge_in_html(page.decode("utf-8", "replace"))
             if kind:
                 raise ChallengeError(response.url, kind)
             raise SourceError(f"got a web page instead of a file for {url} (signed out?)")

@@ -109,10 +109,11 @@ class Feed(Source):
         assert self.client is not None
         url = str(self.settings["url"]).strip()
         self.sign_client(url)
-        response = self.client.get(url)
-        if response.status_code >= 400:
-            raise SourceError(f"the feed {url} answered {response.status_code}")
-        parsed = feedparser.parse(response.content)
+        with self.client.stream("GET", url) as response:
+            if response.status_code >= 400:
+                raise SourceError(f"the feed {url} answered {response.status_code}")
+            content = download.read_page(response)
+        parsed = feedparser.parse(content)
         # A page that is no feed (HTML, an error) has no feed version.
         if not parsed.get("version"):
             raise SourceError(f"{url} is not a feed")

@@ -21,7 +21,7 @@ from harvester.browser.recorder import Recorder
 from harvester.executor import RUNNERS, Executor, credential_key, load_session, save_session, session_key
 from harvester.presets import PRESETS, make_job
 from harvester.runner import COMMON_OPTIONS
-from harvester.sources import FULL_PASS, SOURCES, SourceError
+from harvester.sources import FULL_PASS, SOURCES, Option, SourceError
 from harvester.store import Job, Store
 
 LOGGER = logging.getLogger("harvester")
@@ -36,6 +36,9 @@ RECORDER_IDLE = 900
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Opens the database, starts the executor and registers the app's page."""
+    # First: the app's environment (its secrets) out of the reach of its browsers and helpers.
+    if not browser.undumpable():
+        LOGGER.warning("the app's process stays dumpable: its helpers could read its environment")
     STATE["store"] = Store(os.path.join(persistent_storage(), "harvester.db"))
     STATE["executor"] = Executor(STATE["store"])
     STATE["executor"].start()
@@ -116,23 +119,54 @@ async def own_job(job_id: int, nc: AsyncNextcloudApp) -> Job:
     return job
 
 
-# Options that count something and must be at least 1 (0 would fetch nothing, ever); -1 means
-# no limit where UNLIMITED allows it.
-AT_LEAST_ONE = ("max_items", "max_pages", "max_entries", "max_size")
-UNLIMITED = ("max_items",)
+def option_problem(option: Option, value: str | int) -> str:
+    """What is wrong with an option's value for its kind ("" if nothing): a flag is 0 or 1, a
+    number a whole number within its bounds, a choice one of its choices (several, comma-separated,
+    where it allows them)."""
+    text = str(value).strip()
+    if option.kind == "flag":
+        return "" if text in ("0", "1") else "must be on or off (1 or 0)"
+    if option.choices:
+        chosen = [part.strip() for part in text.split(",")] if option.multiple else [text]
+        # None chosen of several: the default.
+        if (option.multiple and not text) or all(part in option.choices for part in chosen):
+            return ""
+        return f"must be {'one or several' if option.multiple else 'one'} of {', '.join(option.choices)}"
+    return number_problem(option, text) if isinstance(option.default, int) else ""
+
+
+def number_problem(option: Option, text: str) -> str:
+    """What is wrong with a number option's value ("" if nothing): a whole number within its
+    bounds, its words saying which."""
+    lowest, highest = option.minimum, option.maximum
+    # A minimum of -1 is "no limit" (Files per run): 0 would fetch nothing, ever.
+    unlimited = lowest == -1
+    if unlimited:
+        lowest, bounds = 1, " of at least 1 (or -1: no limit)"
+    elif lowest is not None and highest is not None:
+        bounds = f" from {lowest} to {highest}"
+    else:
+        bounds = f" of at least {lowest}" if lowest is not None else ""
+    try:
+        number = int(text)
+    except ValueError:
+        return f"must be a number{bounds}"
+    if unlimited and number == -1:
+        return ""
+    if (lowest is not None and number < lowest) or (highest is not None and number > highest):
+        return f"must be a number{bounds}"
+    return ""
 
 
 def checked(body: JobIn) -> JobIn:
-    """The job, if its source accepts its options (a recipe that can run, for instance)."""
-    for name in AT_LEAST_ONE:
-        if name in body.options:
-            try:
-                value = int(body.options[name])
-                if value < 1 and not (value == -1 and name in UNLIMITED):
-                    raise ValueError
-            except (TypeError, ValueError) as error:
-                hint = " (or -1: no limit)" if name in UNLIMITED else ""
-                raise HTTPException(422, f"{name} must be a number of at least 1{hint}") from error
+    """The job, if each option has a value of its kind (else the refusal names the option as the
+    form does) and its source accepts them (a recipe that can run, for instance)."""
+    options = SOURCES[body.source].options | COMMON_OPTIONS
+    for name, option in options.items():
+        problem = option_problem(option, body.options[name]) if name in body.options else ""
+        if problem:
+            title = f"Through {browser.PROXY_NAME}" if name == "home" else option.title
+            raise HTTPException(422, f"{title} {problem}")
     try:
         SOURCES[body.source](body.options, {}, None).close()
     except SourceError as error:
@@ -249,6 +283,8 @@ async def delete_job(job_id: int, nc: NC) -> dict:
         [credential_key(job, name) for name in SOURCES[job.source].credentials] + [session_key(job)]
     )
     store().delete(job.id or 0)
+    # Its run, if one goes on, ends at once: it would only write for a job that is gone.
+    STATE["executor"].stop(job.id or 0)
     return {}
 
 
@@ -375,10 +411,11 @@ async def record(websocket: WebSocket, nc: NC) -> None:
     if not allowed:
         return
     recorder = Recorder(websocket.send_json)
-    # The job's (or the form's) HTTP/1.1 only: known before the browser starts.
-    http1 = websocket.query_params.get("http1") == "1" or bool(job and int(job.options.get("http1", 0) or 0))
-    home = websocket.query_params.get("home") == "1" or bool(job and int(job.options.get("home", 0) or 0))
     try:
+        # The job's (or the form's) HTTP/1.1 only: known before the browser starts. Within the
+        # try: whatever goes wrong from here on, the browser's slot is released.
+        http1 = websocket.query_params.get("http1") == "1" or (job is not None and switched_on(job, "http1"))
+        home = websocket.query_params.get("home") == "1" or (job is not None and switched_on(job, "home"))
         try:
             if job:
                 await recorder.start(
@@ -525,6 +562,15 @@ async def admit(websocket: WebSocket, nc: AsyncNextcloudApp) -> tuple[bool, Job 
         await websocket.close(code=1008)
         return False, None
     return True, job
+
+
+def switched_on(job: Job, name: str) -> bool:
+    """Whether the job's flag is on (a value that is no number, saved before the options were
+    checked, is off)."""
+    try:
+        return bool(int(job.options.get(name, 0) or 0))
+    except (TypeError, ValueError):
+        return False
 
 
 def start_of(job: Job) -> str:

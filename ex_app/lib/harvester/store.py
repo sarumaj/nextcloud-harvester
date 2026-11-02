@@ -6,9 +6,11 @@ import threading
 import time
 from dataclasses import dataclass, field
 
+# A job's id is never used again (AUTOINCREMENT): a run of a deleted job that is still going
+# would otherwise write its log, files and outcome into a new job of someone else's.
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
-    id INTEGER PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     user TEXT NOT NULL,
     name TEXT NOT NULL,
     source TEXT NOT NULL,
@@ -90,7 +92,40 @@ class Store:
         columns = {row["name"] for row in self._db.execute("PRAGMA table_info(jobs)")}
         if "challenge_url" not in columns:
             self._db.execute("ALTER TABLE jobs ADD COLUMN challenge_url TEXT")
+        self._never_reuse_ids()
         self._lock = threading.Lock()
+
+    def _never_reuse_ids(self) -> None:
+        """Makes a database of an earlier version keep its jobs' ids for good (AUTOINCREMENT):
+        the table is made anew with the same ids, in one transaction, the other tables' rows
+        staying with their jobs; the ids go on after the highest one there is."""
+        row = self._db.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'jobs'").fetchone()
+        if "AUTOINCREMENT" in row["sql"].upper():
+            return
+        table = SCHEMA[SCHEMA.index("CREATE TABLE IF NOT EXISTS jobs") : SCHEMA.index(");") + 2]
+        columns = ", ".join(column["name"] for column in self._db.execute("PRAGMA table_info(jobs)"))
+        self._db.commit()
+        # Off for the table's exchange (outside a transaction, as SQLite wants): the other
+        # tables' references to it would otherwise stop it from being dropped.
+        self._db.execute("PRAGMA foreign_keys = OFF")
+        try:
+            self._db.execute("BEGIN")
+            self._db.execute(table.replace("IF NOT EXISTS jobs", "jobs_new"))
+            self._db.execute(f"INSERT INTO jobs_new ({columns}) SELECT {columns} FROM jobs")
+            self._db.execute("DROP TABLE jobs")
+            self._db.execute("ALTER TABLE jobs_new RENAME TO jobs")
+            # The sequence starts after the highest id (one the INSERT did not set already).
+            self._db.execute(
+                "INSERT INTO sqlite_sequence (name, seq) SELECT 'jobs', COALESCE(MAX(id), 0) FROM jobs"
+                " WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = 'jobs')"
+            )
+            self._db.execute("COMMIT")
+        except BaseException:
+            if self._db.in_transaction:
+                self._db.execute("ROLLBACK")
+            raise
+        finally:
+            self._db.execute("PRAGMA foreign_keys = ON")
 
     @staticmethod
     def _job(row: sqlite3.Row) -> Job:
