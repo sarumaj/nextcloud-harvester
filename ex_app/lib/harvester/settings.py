@@ -38,7 +38,7 @@ def form(runners: int, browsers: int, address: str = "", name: str = "the proxy"
                 title="Jobs at once",
                 type=SettingsFieldType.SELECT,
                 default=str(runners),
-                options={str(n): str(n) for n in range(1, MAX_RUNNERS + 1)},
+                options=choices(MAX_RUNNERS),
                 description="How many jobs run side by side (never one twice, one per site at a time).",
             ),
             SettingsField(
@@ -46,7 +46,7 @@ def form(runners: int, browsers: int, address: str = "", name: str = "the proxy"
                 title="Browsers at once",
                 type=SettingsFieldType.SELECT,
                 default=str(browsers),
-                options={str(n): str(n) for n in range(1, MAX_BROWSERS + 1)},
+                options=choices(MAX_BROWSERS),
                 description=(
                     "How many browsers may be open: the website jobs and the recordings share them. "
                     "Each takes some 300-600 MB of the server's memory."
@@ -74,6 +74,12 @@ def form(runners: int, browsers: int, address: str = "", name: str = "the proxy"
             ),
         ],
     )
+
+
+def choices(highest: int) -> list[str]:
+    """A select's options: Nextcloud's select takes plain strings (nc_py_api makes a dict into
+    {name, value} objects, which only radio buttons and checkboxes show)."""
+    return [str(n) for n in range(1, highest + 1)]
 
 
 def number(value: str | None, default: int, highest: int) -> int:

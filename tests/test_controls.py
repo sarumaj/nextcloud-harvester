@@ -264,6 +264,7 @@ def test_the_admins_form_offers_the_environments_values():
 
     fields = {field["id"]: field for field in settings.form(2, 3).to_dict()["fields"]}
     assert fields[settings.RUNNERS]["default"] == "2" and fields[settings.BROWSERS]["default"] == "3"
+    assert fields[settings.RUNNERS]["options"] == [str(n) for n in range(1, settings.MAX_RUNNERS + 1)], "plain strings"
     assert settings.form(2, 3).section_type == "admin"
     assert settings.number(None, 2, 8) == 2 and settings.number("0", 2, 8) == 1
 
