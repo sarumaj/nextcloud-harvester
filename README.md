@@ -39,8 +39,9 @@ the app's browser or taken from a template, not by code.
     remotes are refused until they are looked at (`scripts/rclone_backends.py`, then the lists in
     `sources/remote.py`; a test fails until each is in one).
     Refreshed tokens are kept as the job's session, for that account only: one set up anew wins.
-    **Set up with rclone**, beside the account's field, asks rclone's own configuration questions one at a time (`rclone config` without a
-    terminal, in a throwaway configuration): the kinds of remote allowed, no advanced settings,
+    **Set up with rclone**, beside the account's field, asks rclone's own configuration
+    questions one at a time (`rclone config` without a terminal, in a throwaway configuration):
+    the kinds of remote allowed, no advanced settings,
     files or commands. Where a provider signs in with a browser, there are two ways: **Sign in
     here** runs `rclone authorize` in the app and shows the provider's sign-in in the app's
     browser (as the recorder does), which may open rclone's listener `http://127.0.0.1:53682/`
