@@ -57,6 +57,9 @@ EXAMPLES = 8
 TYPED = 200
 # Seconds closing the browser may take.
 CLOSE_TIMEOUT = 10
+# Tries to start a page's screencast while it is being attached, and the pause between them.
+SCREENCAST_TRIES = 10
+SCREENCAST_PAUSE = 0.2
 # How long a person's pattern may take (s): on the links of a page, all together; on a page's
 # address. A pattern that backtracks without end ((a|aa)+$) would otherwise hold the app: it runs
 # with the regex module's time limit, in a thread that leaves the event loop free (concurrent).
@@ -107,6 +110,8 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         self._context: BrowserContext | None = None
         self._page: Page | None = None
         self._cdp: CDPSession | None = None
+        # Whether the page's screen comes as frames (its screencast started).
+        self._casting = False
         # The one local address this browser may open besides the public ones (scheme, host and
         # port, e.g. rclone's sign-in listener while it runs); "" for none.
         self.loopback = ""
@@ -207,7 +212,7 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
             except Exception:  # pylint: disable=broad-exception-caught
                 pass  # the page is gone
         self._page = page
-        page.on("domcontentloaded", lambda _: asyncio.ensure_future(self._apply_mode()))
+        page.on("domcontentloaded", lambda _: asyncio.ensure_future(self._loaded()))
         page.on("framenavigated", lambda frame: asyncio.ensure_future(self._navigated(frame)))
         if page.viewport_size != self.viewport:
             await page.set_viewport_size(self.viewport)  # type: ignore[arg-type]
@@ -216,12 +221,34 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         await self._screencast()
 
     async def _screencast(self) -> None:
-        """The page's screen as frames, at the window's size."""
+        """The page's screen as frames, at the window's size. A page still being attached (just
+        opened, or between two documents) refuses it ("Not attached to an active page"): tried
+        again a few times, else at the page's next load (_loaded), never left without a screen."""
         assert self._cdp is not None
-        await self._cdp.send(
-            "Page.startScreencast",
-            {"format": "jpeg", "quality": 60, "maxWidth": self.viewport["width"], "maxHeight": self.viewport["height"]},
-        )
+        self._casting = False
+        for attempt in range(SCREENCAST_TRIES):
+            try:
+                await self._cdp.send(
+                    "Page.startScreencast",
+                    {
+                        "format": "jpeg",
+                        "quality": 60,
+                        "maxWidth": self.viewport["width"],
+                        "maxHeight": self.viewport["height"],
+                    },
+                )
+            except Exception:  # pylint: disable=broad-exception-caught
+                if attempt + 1 < SCREENCAST_TRIES:
+                    await asyncio.sleep(SCREENCAST_PAUSE)
+                continue
+            self._casting = True
+            return
+
+    async def _loaded(self) -> None:
+        """A document of the page loaded: its mode, and its screen if it did not start before."""
+        if not self._casting and self._cdp:
+            await self._screencast()
+        await self._apply_mode()
 
     async def resize(self, width: object, height: object) -> None:
         """The window at the size the person's view has (within the limits): the page lays out

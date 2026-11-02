@@ -156,7 +156,12 @@ def test_the_recorder_shows_its_first_page_once():
         try:
             await recorder._context.route(f"{SITE}/**", async_site(Site()))
             await recorder.handle({"type": "goto", "url": f"{SITE}/login"})
-            await asyncio.sleep(1.5)
+            # Until the page's first frame, however busy the machine: not a fixed pause.
+            for _ in range(100):
+                if any(m["type"] == "frame" for m in driver.sent):
+                    break
+                await asyncio.sleep(0.1)
+            await asyncio.sleep(0.5)
         finally:
             await recorder.close()
         urls = [m["url"] for m in driver.sent if m["type"] == "url" and m["url"].endswith("/login")]
@@ -407,5 +412,34 @@ def test_the_recorder_shows_the_pages_cursor_and_never_records_it():
         cursors = [m["cursor"] for m in driver.sent if m["type"] == "cursor"]
         assert "text" in cursors and "pointer" in cursors and cursors[-1] == "crosshair"
         assert not any(event.get("action") == "cursor" for event in recorder.events)
+
+    asyncio.run(scenario())
+
+
+def test_a_screencast_the_page_refuses_while_attached_is_started_again():
+    class Session:  # pylint: disable=too-few-public-methods
+        """A CDP session whose page is attached only from the third try."""
+
+        def __init__(self):
+            self.tries = 0
+
+        async def send(self, method, params=None):  # pylint: disable=unused-argument
+            self.tries += 1
+            if self.tries < 3:
+                raise RuntimeError("Protocol error (Page.startScreencast): Not attached to an active page")
+
+    async def scenario():
+        recorder = Recorder(lambda message: asyncio.sleep(0))
+        recorder._cdp = Session()  # type: ignore[assignment]
+        await recorder._screencast()
+        assert recorder._casting and recorder._cdp.tries == 3  # type: ignore[attr-defined]
+        never = Session()
+        never.tries = -100
+        recorder._cdp = never  # type: ignore[assignment]
+        await recorder._screencast()
+        assert not recorder._casting, "refused every time: started at the next load"
+        never.tries = 10
+        await recorder._loaded()
+        assert recorder._casting
 
     asyncio.run(scenario())
