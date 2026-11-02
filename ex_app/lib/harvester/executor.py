@@ -25,6 +25,7 @@ from .watch import Watch, test_due
 from .nextcloud import NextcloudLibrary
 from .sources import MARK, SOURCES, AuthError, ChallengeError, Source, SourceError, Stopped
 from .sources.base import watch_stop
+from .sources import download
 from .sources.download import guarded_client
 from .store import Job, Store
 
@@ -511,7 +512,8 @@ class Executor:
             credentials = self._credentials(nc, job)
             started = time.monotonic()
             home = bool(int(job.options.get("home", 0) or 0)) and bool(browser.PROXY)
-            with guarded_client(**({"proxy": browser.PROXY} if home else {})) as client:
+            impersonate = download.impersonates(job.options)
+            with guarded_client(impersonate, **({"proxy": browser.PROXY} if home else {})) as client:
                 if home:
                     self.store.log(job_id, "info", through_proxy(client))
                 source = source_class(job.options, credentials, client)
@@ -632,7 +634,8 @@ class Executor:
             self.call(nc.set_user(job.user))
             credentials = self._credentials(nc, job)
             home = bool(int(job.options.get("home", 0) or 0)) and bool(browser.PROXY)
-            with guarded_client(**({"proxy": browser.PROXY} if home else {})) as client:
+            impersonate = download.impersonates(job.options)
+            with guarded_client(impersonate, **({"proxy": browser.PROXY} if home else {})) as client:
                 source = SOURCES[job.source](job.options, credentials, client)
                 source.home = home
                 source.timezone = job.timezone

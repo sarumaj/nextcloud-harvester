@@ -40,7 +40,7 @@ from .. import recipe as recipes
 from ..browser.guard import Guard
 from ..schedule import zone
 from . import download, near
-from .base import AuthError, ChallengeError, Item, Option, Source, SourceError, Stopped, pattern_search
+from .base import AuthError, ChallengeError, IMPERSONATE, Item, Option, Source, SourceError, Stopped, pattern_search
 from .download import Response
 from .driver import Driver, HttpDriver, accept_language, moved
 from .walk import StartEmpty, Walk
@@ -104,6 +104,8 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes
     _cookies: list[dict] = []
     # The job's time zone: the days of the dates a fill step fills in (recipe.dated).
     timezone = "UTC"
+    # Whether its downloads (by the guarded client) impersonate a browser (base.IMPERSONATE).
+    impersonate = False
 
     def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
@@ -359,7 +361,7 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes
         hooks = {"request": [session_cookies(self.context.storage_state()["cookies"])]}
         options = {"proxy": self.proxy} if self.proxy else {}
         headers = {"User-Agent": self.user_agent, "Accept-Language": accept_language(browser.LOCALE)}
-        with download.guarded_client(event_hooks=hooks, headers=headers, **options) as client:
+        with download.guarded_client(self.impersonate, event_hooks=hooks, headers=headers, **options) as client:
             with download.http(client, {"Referer": self.referer} if self.referer else None)(url) as response:
                 yield response
 
@@ -672,6 +674,7 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
             suggestions=("{filename}", "{text}{ext}", "{host}/{filename}", "{page}/{filename}"),
         ),
         **download.DOWNLOAD_OPTIONS,
+        "impersonate": IMPERSONATE,
         "max_pages": Option(
             "Pages", 10, "At most this many pages of a listing.", minimum=1, suggestions=("1", "5", "10", "50")
         ),
@@ -769,7 +772,7 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
         found = self.account_cookies(start)
         if recipes.uses_browser(self.recipe) or int(self.settings["browser"]):
             links = self.recipe.get("links") or {}
-            return BrowserDriver(
+            driver = BrowserDriver(
                 self.recipe.get("steps") or [],
                 self.secrets,
                 self.kept,
@@ -782,6 +785,9 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
                 timezone=self.timezone,
                 downloads=bool(links.get("click")),
             )
+            # Its own downloads (the guarded client's) as the job asks; the browser is a browser.
+            driver.impersonate = download.impersonates(self.settings)
+            return driver
         # Without recorded steps, the account's user name and password are HTTP Basic's.
         self.sign_client(start)
         return HttpDriver(self.client, self.kept, self.sleep)

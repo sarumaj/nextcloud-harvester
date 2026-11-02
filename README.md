@@ -71,7 +71,8 @@ the app's browser or taken from a template, not by code.
     `max_filesize`). *Impersonate a browser* has yt-dlp present itself as a browser (its own
     impersonation with `curl_cffi`, for sites behind Cloudflare that answer it with 403);
     extractors that need it use it anyway. For galleries, the same option is gallery-dl's browser
-    emulation (Chrome's headers and TLS ciphers).
+    emulation (Chrome's headers and TLS ciphers), and Harvester's own downloads of its files
+    impersonate a browser as below.
   - `gallery`: images of galleries, albums and profiles on the sites gallery-dl supports;
     gallery-dl lists them, Harvester downloads them with its checks and the page as `Referer`.
   - `remote`: the files in a folder of a WebDAV, SFTP, FTP or S3 server, a Nextcloud public
@@ -354,6 +355,16 @@ the app's browser or taken from a template, not by code.
   user agent and one language and time zone for recordings and runs (`HARVESTER_LOCALE`,
   `HARVESTER_TIMEZONE`, default `en-US`, `Europe/Berlin`). A website job's **HTTP/1.1 only**
   serves the sites that cut HTTP/2 connections, in the recorder too.
+- **Impersonate a browser** (`sources/impersonate.py`; websites, feeds, releases, galleries): the
+  job's own requests (a website's listing over HTTP and its files, also those of a recipe with the
+  browser, a feed and its enclosures, release files, a gallery's images) present themselves as
+  Chrome does: its TLS handshake, HTTP/2 and headers, by `curl_cffi` under httpx, for sites
+  behind Cloudflare and similar checks that answer plain HTTP clients with 403. httpx keeps the
+  rest: each redirect is a request of its own and checked as any (only public addresses), the
+  cookies are its jar's, the job's headers go along (the app's user agent gives way to Chrome's),
+  the answer comes in chunks under the job's largest file, and the proxy is the job's (http(s)
+  or socks, as curl takes them). Off by default: only where a site refuses the downloads
+  otherwise.
 - **Downloads:** a pause between files, and one of a second between listing pages; waits when
   the site asks (429 or 503 with `Retry-After`, for listing pages too, or a wait pattern on the
   URL it redirects to, like heise's `wait_sec=`) and three retries of a broken transfer; the

@@ -4,11 +4,14 @@
 
 ### Added
 
-- **Impersonate a browser** (videos and galleries): yt-dlp's own impersonation (`curl_cffi`,
-  now in the image: extractors that need it, Dailymotion's say, use it by themselves) for all of
-  a job's requests and the generic extractor (`generic:impersonate`), for sites behind
-  Cloudflare's bot check that answer yt-dlp with 403; gallery-dl's browser emulation (Chrome's
-  headers and TLS ciphers). A yt-dlp error asking for impersonation names the option.
+- **Impersonate a browser** (videos, galleries, websites, feeds, releases): yt-dlp's own
+  impersonation (`curl_cffi`, now in the image: extractors that need it, Dailymotion's say, use it
+  by themselves) for all of a job's requests and the generic extractor (`generic:impersonate`), for
+  sites behind Cloudflare's bot check that answer yt-dlp with 403; gallery-dl's browser emulation
+  (Chrome's headers and TLS ciphers). A yt-dlp error asking for impersonation names the option.
+  Harvester's own requests too, for websites (listings over HTTP and files), feeds, releases and
+  gallery images: httpx over `curl_cffi` impersonating Chrome, each redirect still checked, the
+  cookies, headers, size limits and proxy the job's.
 - **Steps in frames:** the recorder records what is done inside frames, cross-origin ones (a
   consent banner, a sign-in) and frames in frames included; such a step keeps the frame's path
   (`"frame"`: each frame's element, its address without the query, its name), and a replay

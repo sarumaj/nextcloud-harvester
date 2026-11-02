@@ -18,6 +18,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from ..browser import allowed_url, challenge_in_html, reachable
+from .impersonate import CurlTransport
 from .base import ChallengeError, Denied, Option, Refused, SourceError, WebPage, check_stop, pattern_search
 
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) Nextcloud-Harvester"
@@ -159,10 +160,16 @@ def with_extension(path: str, settings: dict) -> str:
     return path + extension_ if extension_ and not path.lower().endswith(extension_) else path
 
 
-def guarded_client(**options) -> httpx.Client:
+def impersonates(options: dict) -> bool:
+    """Whether a job's options ask its downloads to impersonate a browser (base.IMPERSONATE)."""
+    return bool(int(options.get("impersonate", 0) or 0))
+
+
+def guarded_client(impersonate: bool = False, **options) -> httpx.Client:
     """An HTTP client for the sources: every request, a redirect's too, only to an address the
     app may reach (browser.reachable), else SourceError; the event_hooks given run after the
-    check."""
+    check. impersonate: its requests present themselves as Chrome's (impersonate.CurlTransport,
+    through the proxy given), httpx still following the redirects and keeping the cookies."""
 
     def check(request: httpx.Request) -> None:
         if not reachable(str(request.url)):
@@ -170,6 +177,8 @@ def guarded_client(**options) -> httpx.Client:
 
     hooks = options.pop("event_hooks", {})
     settings = {"follow_redirects": True, "timeout": 120, "headers": {"User-Agent": USER_AGENT}} | options
+    if impersonate:
+        settings["transport"] = CurlTransport(str(settings.pop("proxy", "") or ""), USER_AGENT)
     return httpx.Client(event_hooks=hooks | {"request": [check, *hooks.get("request", [])]}, **settings)
 
 
