@@ -192,13 +192,16 @@ class BrowserDriver(Driver):
         # The downloads' proxy and user agent: the browser's (download).
         self.proxy = browser.PROXY if home else ""
         self.user_agent = ""
-        # The browser's connections all go through its guard (with the home connection, if chosen).
+        # The browser's connections all go through its guard (with the home connection, if
+        # chosen), unless the admin switched the guard off: then the routes alone check them.
         self._guard: Guard | None = None
         try:
-            self._guard = Guard(self.proxy)
-            port = self._guard.start()
+            port = 0
+            if browser.GUARD:
+                self._guard = Guard(self.proxy)
+                port = self._guard.start()
             self._playwright = sync_playwright().start()
-            self._browser = self._playwright.chromium.launch(**browser.launch_options(port, http1))
+            self._browser = self._playwright.chromium.launch(**browser.launch_options(port, http1, home))
             self.user_agent = browser.user_agent(self._browser.version)
             self.context = self._browser.new_context(
                 **browser.context_options(self._browser.version),

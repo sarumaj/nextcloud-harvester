@@ -762,7 +762,9 @@ async def enabled_handler(enabled: bool, nc: AsyncNextcloudApp) -> str:
         await nc.ui.resources.set_script("top_menu", "harvester", "js/harvester-main")
         await nc.ui.top_menu.register("harvester", "Harvester", "img/app.svg")
         await nc.ui.settings.register_form(
-            settings.form(RUNNERS, browser.BROWSERS, settings.DEFAULT_PROXY, settings.DEFAULT_PROXY_NAME)
+            settings.form(
+                RUNNERS, browser.BROWSERS, settings.DEFAULT_PROXY, settings.DEFAULT_PROXY_NAME, settings.DEFAULT_GUARD
+            )
         )
     else:
         await nc.ui.top_menu.unregister("harvester")

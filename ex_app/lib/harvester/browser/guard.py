@@ -1,12 +1,14 @@
-"""The guard: a proxy in the app that each browser's connections go through, every one of them.
+"""The guard: a proxy of the app's that each browser's connections go through, every one of them.
 
 Playwright's routes see a page's requests and its own WebSockets, not those of its workers, and
 the name they check Chromium looks up once more as it connects: a page could reach the
 container's own loopback that way, or, without the External Apps' network rules, the private
 network. Chromium starts with its guard as its proxy for everything, loopback included
-(launch_options): a worker's WebSocket, a fetch() and a navigation alike reach the guard, which
-looks the name up itself, refuses it unless every address it resolves to is public (as
-allowed_host), and connects to an address it checked, never looking the name up again.
+(launch_options; unless the admin switched the guard off, browser.GUARD): a worker's WebSocket,
+a fetch() and a navigation alike reach the guard, which looks the name up itself, refuses it
+unless every address it resolves to is public (as allowed_host), and connects to an address it
+checked, never looking the name up again as it connects (the checked addresses serve the name
+for NAME_TTL).
 
 https and WebSockets come as CONNECT (a tunnel), plain http as a request with the whole address,
 which goes on in origin form. With the home connection (browser.PROXY: http, https, socks5 or

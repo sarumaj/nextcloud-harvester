@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added
+
+- **Browser network guard** in the admin's settings (and `HARVESTER_GUARD`): on by default; off,
+  the browsers connect by themselves as before the guard (the home connection given to
+  Chromium), the routes still checking what Playwright sees, while a web worker's WebSockets and
+  DNS rebinding are left to the External Apps' firewall. For the browsers started afterwards;
+  switch it off only when that network is already firewalled from private networks and the
+  cloud's metadata service.
+
 ### Changed
 
 - **The browser's guard is fast under load:** it runs in a process of its own (without the

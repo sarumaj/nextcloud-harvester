@@ -186,12 +186,15 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
         """Starts the browser with an empty page, or with a job's session at a page of it (the one
         that asked for a person); http1 for the sites that cut HTTP/2 connections, home through
         the home connection."""
-        # The guard with the home connection, if chosen, and this browser's local exception.
-        self._gate = Guard(browser.PROXY if home else "")
-        self._gate.allow(self.loopback)
-        port = await asyncio.to_thread(self._gate.start)
+        # The guard (unless the admin switched it off) with the home connection, if chosen, and
+        # this browser's local exception; without one, the routes alone let that address through.
+        port = 0
+        if browser.GUARD:
+            self._gate = Guard(browser.PROXY if home else "")
+            self._gate.allow(self.loopback)
+            port = await asyncio.to_thread(self._gate.start)
         self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(**launch_options(port, http1))
+        self._browser = await self._playwright.chromium.launch(**launch_options(port, http1, home))
         self._context = await self._new_context(session)
         await self._context.expose_binding("__harvesterReport", self._report)
         await self._context.add_init_script(SCRIPT)

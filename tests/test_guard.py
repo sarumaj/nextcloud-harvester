@@ -780,9 +780,9 @@ def test_the_jobs_browser_stops_its_guard_on_every_path(monkeypatch):
     ports: list[int] = []
     real = browser.launch_options
 
-    def failing(guard_port: int, http1: bool = False):
+    def failing(guard_port: int, http1: bool = False, home: bool = False):
         ports.append(guard_port)
-        raise RuntimeError(f"no browser ({real(guard_port, http1)['proxy']['server']})")
+        raise RuntimeError(f"no browser ({real(guard_port, http1, home)['proxy']['server']})")
 
     monkeypatch.setattr(browser, "launch_options", failing)
     with pytest.raises(RuntimeError):

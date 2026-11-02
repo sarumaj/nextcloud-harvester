@@ -236,10 +236,13 @@ the app's browser or taken from a template, not by code.
   view ends: Done, Cancel, another view of the page, closing the page, the time limits, or
   (rclone's sign-in) the wizard's end.
 - **Admin settings:** *Administration settings > Additional settings > Harvester* sets the
-  numbers of jobs and browsers at once (1 to 8 each) and the proxy; the environment's values
-  (`HARVESTER_RUNNERS`, `HARVESTER_BROWSERS`, `HARVESTER_PROXY`, `HARVESTER_PROXY_NAME`) are the
-  defaults. The app reads them each minute, so a change needs no restart: a lowered number lets
-  the running jobs and open browsers finish first.
+  numbers of jobs and browsers at once (1 to 8 each), the proxy, and the **Browser network
+  guard** (on by default; see *Safety*); the environment's values (`HARVESTER_RUNNERS`,
+  `HARVESTER_BROWSERS`, `HARVESTER_PROXY`, `HARVESTER_PROXY_NAME`, `HARVESTER_GUARD`: off with
+  `0`, `false` or `off`) are the defaults. The app reads them each minute, so a change needs no
+  restart: a lowered number lets the running jobs and open browsers finish first, and the guard's
+  setting applies to the browsers started afterwards. Switch the guard off only when the External
+  Apps' network is already firewalled from private networks and the cloud's metadata service.
 - **Proxy:** with a proxy a job may go **Through the proxy**: its downloads, its browser, yt-dlp
   and gallery-dl use it, and sites that refuse servers' addresses see the proxy's. HTTP(S), with
   credentials in the address if it needs them (`http://user:password@host:3128`), or SOCKS5
@@ -283,35 +286,37 @@ the app's browser or taken from a template, not by code.
     host and scheme;
   - **OAuth2** for mail (Gmail, Outlook or any provider's token endpoint): a client ID and secret
     and a refresh token sign in with XOAUTH2; a refresh token the provider replaces is kept.
-- **Safety:** the browser's pages and the downloads reach only http(s) addresses outside local
-  and private networks, checked on the addresses a name resolves to and on every request and
-  redirect (a `file://` page would show the app's secret): a page's WebSockets too (one refused
-  is never connected), its service workers are off, and a file a recorded site links to is
-  downloaded by the app's guarded HTTP client with the browser's cookies, not by the browser.
-  Behind those checks, every connection of a browser goes through its own guard, a proxy on
-  127.0.0.1 in a process of its own (`browser/guard.py`; for loopback too; without the app's
-  secrets, undumpable, ending with the app; one that fails closes its port, and the browser's
-  connections fail), which sees what Playwright's routes do not, such as a web worker's
-  WebSockets: it looks the name up (its checked addresses kept for a minute), refuses it unless
-  every address is public, and connects to an address it checked, so a name that changes
-  meanwhile (DNS rebinding) gains nothing; the home connection is asked for that address, not
-  the name.
-  WebRTC sends only through the proxy (no UDP of its own), and WebTransport does not connect
-  through one. rclone's sign-in browser alone may open rclone's listener (`127.0.0.1:53682`),
-  while rclone runs. yt-dlp, gallery-dl, rclone and mail servers connect by themselves (their
-  addresses checked the same way before, not their redirects), as do the guarded HTTP client's
-  downloads after their check: there the External Apps' network rules stay the guard. Pages
-  and feeds are read up to 16 MB, a file in chunks up to the job's largest size. Chromium, its
-  Playwright driver, rclone, gallery-dl and ffmpeg run without the app's secrets in their
-  environment (a proxy's password goes to gallery-dl in a 0600 file), and the app's process is
+- **Safety:** the browser's pages and the downloads reach only http(s) addresses outside local and
+  private networks, checked on the addresses a name resolves to and on every request and redirect (a
+  `file://` page would show the app's secret): a page's WebSockets too (one refused is never
+  connected), its service workers are off, and a file a recorded site links to is downloaded by the
+  app's guarded HTTP client with the browser's cookies, not by the browser. Behind those checks,
+  every connection of a browser goes through its own guard, a proxy on 127.0.0.1 in a process of its
+  own (`browser/guard.py`; for loopback too; without the app's secrets, undumpable, ending with the
+  app; one that fails closes its port, and the browser's connections fail), which sees what
+  Playwright's routes do not, such as a web worker's WebSockets: it looks the name up (its checked
+  addresses kept for a minute), refuses it unless every address is public, and connects to an
+  address it checked, so a name that changes meanwhile (DNS rebinding) gains nothing; the home
+  connection is asked for that address, not the name. With the admin's *Browser network guard* off,
+  the browsers connect by themselves (the home connection given to Chromium): the routes still check
+  what Playwright sees, but a web worker's WebSockets and a name that changes after its check (DNS
+  rebinding) are then kept off the private network by the External Apps' firewall alone. WebRTC
+  sends only through the proxy (no UDP of its own), and WebTransport does not connect through one.
+  rclone's sign-in browser alone may open rclone's listener (`127.0.0.1:53682`), while rclone runs
+  (without a guard, by the routes' check alone). yt-dlp, gallery-dl, rclone and mail servers connect
+  by themselves (their addresses checked the same way before, not their redirects), as do the
+  guarded HTTP client's downloads after their check: there the External Apps' network rules stay the
+  guard. Pages and feeds are read up to 16 MB, a file in chunks up to the job's largest size.
+  Chromium, its Playwright driver, rclone, gallery-dl and ffmpeg run without the app's secrets in
+  their environment (a proxy's password goes to gallery-dl in a 0600 file), and the app's process is
   undumpable, so its `/proc` files (its environment) are root's. The app runs as the user
-  `harvester`, frpc as `harvester-frp`, whose configuration (HaRP's key) `harvester` may not
-  read, both without a way back to root (`setpriv --no-new-privs`, `start.sh`). A job's id is
-  never used again. A person's pattern runs with a time limit, in the recorder (2 s for a page)
-  and in the runs (1 s a text: feeds' links, mail's senders, subjects and file names, release
-  files, the wait pattern), letting the other threads go on meanwhile; one that takes longer
-  fails its job with a message, not the app. The recorder's WebSocket takes only Nextcloud's
-  origin (`NEXTCLOUD_URL`, more in `HARVESTER_ORIGINS`).
+  `harvester`, frpc as `harvester-frp`, whose configuration (HaRP's key) `harvester` may not read,
+  both without a way back to root (`setpriv --no-new-privs`, `start.sh`). A job's id is never used
+  again. A person's pattern runs with a time limit, in the recorder (2 s for a page) and in the runs
+  (1 s a text: feeds' links, mail's senders, subjects and file names, release files, the wait
+  pattern), letting the other threads go on meanwhile; one that takes longer fails its job with a
+  message, not the app. The recorder's WebSocket takes only Nextcloud's origin (`NEXTCLOUD_URL`,
+  more in `HARVESTER_ORIGINS`).
 
 ## Development
 
