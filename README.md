@@ -28,7 +28,13 @@ the app's browser or taken from a template, not by code.
     share, Google Drive, Dropbox, OneDrive and other rclone remotes. The job's account is an
     rclone configuration with one remote (OAuth tokens from `rclone authorize` on a computer).
     Only remotes of other machines: no local files, wrappers, commands or private hosts.
-    Refreshed tokens are kept as the job's session.
+    Refreshed tokens are kept as the job's session. **Set up with rclone**, beside the account's
+    field, asks rclone's own configuration questions one at a time (`rclone config` without a
+    terminal, in a throwaway configuration): the kinds of remote allowed, no advanced settings,
+    files or commands. Where a provider signs in with a browser, it shows the
+    `rclone authorize "<type>" ...` command to run on your computer and takes the token it
+    prints. The finished remote, checked as a run checks it, goes into the field to be reviewed
+    and saved with *Save account*.
   - `releases`: the files attached to a repository's releases on GitHub, GitLab (gitlab.com or
     a server of its own, projects in groups of groups), Codeberg or another Forgejo or Gitea
     server, newest first (prereleases if asked, drafts never), filtered by a pattern on the
