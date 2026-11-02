@@ -179,6 +179,12 @@ class Executor:
         with self._lock:
             return sorted(self.controls)
 
+    @property
+    def queued(self) -> list[int]:
+        """The jobs waiting for a runner or their site (asked for, not running yet)."""
+        with self._lock:
+            return sorted(self._queued)
+
     def start(self) -> None:
         """Starts the schedule's thread and as many runners as the setting allows; those beyond
         self.runners wait until it is raised."""
