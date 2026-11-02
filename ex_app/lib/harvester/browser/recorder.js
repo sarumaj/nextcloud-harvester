@@ -2,7 +2,8 @@
 // what the person does into steps (click, fill, press Enter); in browse it lets them go
 // anywhere unrecorded. In a picking mode the element clicked becomes a selector: for links to
 // follow and file links one that matches the similar links too (with all of them, for the
-// recorder to propose a pattern), for the next page's link one that matches only it.
+// recorder to propose a pattern), for the next page's link one that matches only it (and, when
+// it is a number among numbers, 1 2 3 …, the numbers' container: numbered pages).
 // highlight(selector, pattern) outlines the selector's links: solid where the pattern matches
 // their URL, dashed where it does not. Everything goes to the recorder through
 // window.__harvesterReport.
@@ -112,6 +113,25 @@
 		return el.closest('a[href], [onclick], button') || el
 	}
 
+	// The elements of the container whose own text is a number (1 2 3, not "Page 2 of 9").
+	function numbersIn(box) {
+		return [...box.querySelectorAll('*')].filter((node) => {
+			const text = (node.textContent || '').trim()
+			// The number's own element: none inside it holds a number (a box of 1 and 2 reads "12").
+			return /^\d{1,6}$/.test(text) && ![...node.querySelectorAll('*')].some((inner) => /^\d/.test((inner.textContent || '').trim()))
+		})
+	}
+
+	// A number picked as the next page's link: the nearest ancestor holding other numbers too,
+	// the pagination (its selector for the recorder to find the current page and the next in).
+	function pagination(el) {
+		if (!/^\d{1,6}$/.test((el.textContent || '').trim())) return null
+		for (let box = el.parentElement; box && box !== document.body; box = box.parentElement) {
+			if (numbersIn(box).length >= 2) return { selector: unique(box) }
+		}
+		return null
+	}
+
 	let hovered = null
 	const TYPING = 'textarea, select, input:not([type=submit]):not([type=button]):not([type=checkbox]):not([type=radio]):not([type=image]):not([type=reset])'
 	const picking = () => ['follow', 'links', 'next'].includes(state.mode)
@@ -154,7 +174,8 @@
 		const matches = [...document.querySelectorAll(selector)].slice(0, 300)
 			.map((match) => [match.href || '', (match.innerText || '').trim().slice(0, 80)])
 		if (state.mode === 'next') highlight(selector, '')
-		report({ action: 'pick', target: state.mode, selector, found: count(selector), matches })
+		const numbered = state.mode === 'next' ? pagination(el) : null
+		report({ action: 'pick', target: state.mode, selector, found: count(selector), matches, numbered })
 	}, true)
 
 	document.addEventListener('change', (event) => {

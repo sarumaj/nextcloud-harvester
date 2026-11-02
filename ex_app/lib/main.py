@@ -1,6 +1,7 @@
 """Harvester: fetches files from websites into Nextcloud on a schedule, and tags them."""
 
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -324,6 +325,18 @@ async def delete_job(job_id: int, nc: NC) -> dict:
     return {}
 
 
+@APP.get("/api/jobs/{job_id}/shot")
+async def get_shot(job_id: int, nc: NC) -> dict:
+    """What the user's job's browser showed at its last failed step or challenge: the picture (a
+    JPEG, base64), the page's address and title, what went wrong and when."""
+    shot = store().shot((await own_job(job_id, nc)).id or 0)
+    if not shot:
+        raise HTTPException(404, "The job's browser has shown nothing to keep yet.")
+    return {key: shot[key] for key in ("at", "url", "title", "what")} | {
+        "image": base64.b64encode(shot["image"]).decode()
+    }
+
+
 @APP.post("/api/jobs/{job_id}/run")
 async def run_job(job_id: int, nc: NC) -> dict:
     """Runs a job now (after the one running)."""
@@ -440,8 +453,9 @@ async def record(websocket: WebSocket, nc: NC) -> None:
     """A recording: the browser's screen to the page, the person's input to the browser.
 
     With ?job=<id> (the user's job) the browser starts with the job's kept session at the page
-    that asked for a person; {type: save-session} keeps the browser's session for the job,
-    clears the challenge and runs the job again.
+    that asked for a person (with &at=shot: at the page of its last failed step); {type:
+    save-session} keeps the browser's session for the job, clears the challenge and runs the job
+    again.
 
     With ?rclone=<wizard> (the user's rclone wizard, at its sign-in question) the browser shows
     the provider's sign-in for `rclone authorize` instead (sign_in)."""
@@ -460,9 +474,10 @@ async def record(websocket: WebSocket, nc: NC) -> None:
         home = websocket.query_params.get("home") == "1" or (job is not None and switched_on(job, "home"))
         try:
             if job:
-                await recorder.start(
-                    await load_session(nc, job), job.challenge_url or start_of(job), http1=http1, home=home
-                )
+                at = job.challenge_url or start_of(job)
+                if websocket.query_params.get("at") == "shot":
+                    at = (store().shot(job.id or 0) or {}).get("url") or at
+                await recorder.start(await load_session(nc, job), at, http1=http1, home=home)
                 await recorder.handle({"type": "mode", "mode": "browse"})
             else:
                 await recorder.start(http1=http1, home=home)

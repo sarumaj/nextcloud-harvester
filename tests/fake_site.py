@@ -4,13 +4,16 @@
 /select/mag/archiv: the years (newest first) and a recent issue.
 /select/mag/archiv/<year>: its issues, newest first. .../<year>/<issue>/download: the PDF;
 the first request for an issue redirects to a URL with wait_sec=3 (the site asking for a
-pause). /list?p=<n>: three pages of a plain listing of PDFs with a next link.
+pause). /list?p=<n>: three pages of a plain listing of PDFs with a next link. /pages?page=<n>:
+four pages with numbered pages (‹ 1 [2] 3 4 ›, the current one marked). /buttons: three pages
+drawn by a script, numbered buttons and no addresses. /feed: 35 links, ten more each time the
+page is scrolled to its end.
 
 With require_login, the archive answers the login form until the sign-in's cookie (sid=ok,
 set by /session) comes with the request. Paths in challenge show a reCAPTCHA instead.
 """
 
-# pylint: disable=too-many-return-statements
+# pylint: disable=too-many-return-statements,too-many-branches
 
 import re
 from urllib.parse import parse_qs, urlparse
@@ -55,6 +58,52 @@ def listing(page: int) -> str:
     return f"<html><body><ul>{files}</ul><a href='/about'>About</a>{more}</body></html>"
 
 
+def numbered(page: int, pages: int = 4) -> str:
+    """A page of a listing whose pages are numbered links, the current one marked (aria-current
+    and a class), with ‹ and › besides."""
+    files = "".join(f'<li><a class="file" href="/files/p{page}-{n}.pdf">File {page}.{n}</a></li>' for n in (1, 2))
+    numbers = "".join(
+        f'<a class="page{" active" if n == page else ""}" href="/pages?page={n}"'
+        f'{" aria-current=page" if n == page else ""}>{n}</a>'
+        for n in range(1, pages + 1)
+    )
+    pager = f'<nav class="pager"><a href="/pages?page={max(page - 1, 1)}">‹</a>{numbers}<a href="/pages">›</a></nav>'
+    return f"<html><body><ul>{files}</ul>{pager}</body></html>"
+
+
+BUTTONS = """<html><body><ul id="files"></ul>
+<div class="pager"><button>‹</button><button>1</button><button>2</button><button>3</button></div>
+<script>
+function show(n) {
+  document.getElementById('files').innerHTML = [1, 2].map(
+    (i) => `<li><a class="file" href="/files/b${n}-${i}.pdf">B ${n}.${i}</a></li>`).join('')
+  document.querySelectorAll('.pager button').forEach((b) => { b.className = b.textContent === String(n) ? 'current' : '' })
+}
+document.querySelectorAll('.pager button').forEach((b) => b.addEventListener('click', () => {
+  if (Number(b.textContent)) show(Number(b.textContent))
+}))
+show(1)
+</script></body></html>"""
+
+FEED = """<html><body><ul id="feed" style="margin:0"></ul>
+<script>
+let shown = 0
+function more() {
+  for (let i = 0; i < 10 && shown < 35; i++) {
+    shown++
+    const li = document.createElement('li')
+    li.style.height = '120px'
+    li.innerHTML = `<a class="post" href="/files/post-${shown}.pdf">Post ${shown}</a>`
+    document.getElementById('feed').append(li)
+  }
+}
+more()
+window.addEventListener('scroll', () => {
+  if (window.innerHeight + window.scrollY >= document.body.scrollHeight - 50) setTimeout(more, 200)
+})
+</script></body></html>"""
+
+
 class Site:  # pylint: disable=too-few-public-methods
     """The site's state: who signed in and which downloads were asked to wait."""
 
@@ -82,6 +131,12 @@ class Site:  # pylint: disable=too-few-public-methods
             return 200, html, LOGIN.encode()
         if path == "/select/mag/archiv":
             return 200, html, archive(self.oldest_first).encode()
+        if path == "/pages":
+            return 200, html, numbered(int(parse_qs(parsed.query).get("page", ["1"])[0])).encode()
+        if path == "/buttons":
+            return 200, html, BUTTONS.encode()
+        if path == "/feed":
+            return 200, html, FEED.encode()
         if path == "/list":
             return 200, html, listing(int(parse_qs(parsed.query).get("p", ["1"])[0])).encode()
         if path.startswith("/wait"):
