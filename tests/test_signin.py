@@ -57,7 +57,7 @@ def test_cookies_from_cookies_txt_and_from_a_cookie_header():
     found = cookies.parse(COOKIES_TXT, "example.org")
     assert found == [
         cookies.Cookie("session", "abc", ".example.org", "/", True, 2000000000),
-        cookies.Cookie("cart", "42", "shop.example.org", "/account"),
+        cookies.Cookie("cart", "42", "shop.example.org", "/account", http_only=True),
     ]
     assert cookies.parse("a=1; b = 2;broken", "www.example.org") == [
         cookies.Cookie("a", "1", ".www.example.org"),

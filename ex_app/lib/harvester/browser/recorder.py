@@ -19,7 +19,7 @@ The messages are JSON over the page's WebSocket:
   target, level}, {type: next-kind, kind (link, number)}, {type: undo} (the last step), {type:
   undo-pick} (the last change of the picks), {type: scroll} (a step: scroll to load more),
   {type: optional, step (its index), optional} (a step best effort, or required again), {type:
-  test, recipe, settings}, {type: test-stop}, {type: clear}.
+  test, recipe, settings}, {type: test-stop}, {type: clear}, and the cookies panel's (jar.py).
 
 Navigation (Back, Forward, Reload, an address) is never a step outside the mode record. In it,
 an address typed, Back and Forward are a step "goto" to the page arrived at (a job's browser has
@@ -62,7 +62,7 @@ from .. import browser, pagination, patterns
 from ..recipe import SCROLL_ROUNDS, frame_address, steps_from_events, uses_browser
 from ..sources import site
 from ..sources.base import SourceError
-from . import trial
+from . import jar, trial
 from . import (
     SCRIPT,
     TRACE_URL,
@@ -789,6 +789,10 @@ class Recorder:  # pylint: disable=too-many-instance-attributes
             await self._update()
         elif kind in ("back", "forward", "reload"):
             await self._navigate(kind)
+        elif kind in jar.COMMANDS and self._context is not None:
+            # The cookies panel: the recorder's own context (never the recipe's test's).
+            for answer in await jar.handle(self._context, page.url, message):
+                await self.send(answer)
         else:
             await self._handle_picks(kind, message)
 

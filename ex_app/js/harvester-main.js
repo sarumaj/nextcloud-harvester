@@ -527,7 +527,7 @@
 			const placeholder = stored[name] ? '(stored, leave empty to keep)' : ''
 			const [title, help] = (source.credential_help || {})[name] || [name, '']
 			inputs[name] = ['config', 'cookies'].includes(name)
-				? el('textarea', { rows: '6', class: 'harvester-recipe', placeholder, autocomplete: 'off', spellcheck: 'false' })
+				? el('textarea', { rows: '6', class: 'harvester-recipe', placeholder, autocomplete: 'off', spellcheck: 'false', 'data-credential': name })
 				: el('input', {
 					type: ['password', 'token', 'secret', 'totp', 'client_secret', 'refresh_token'].includes(name) ? 'password' : 'text',
 					placeholder,
@@ -1030,6 +1030,156 @@
 
 	// Which address the sites see this browser come from (the server's, or the proxy's), as the
 	// server asked Cloudflare through the browser's own connection: the proof that a proxy is used.
+	// The browser's cookies (the browser views' Cookies panel; the recorder's jar.py): grouped by
+	// domain, the page's site's or all, values hidden until "Show" (a value is often the sign-in
+	// itself); each to change or delete, a domain's all at once, one to add. intoAccount(text,
+	// count) takes a cookies.txt of the shown cookies into the job's account (null: not offered);
+	// keep offers "Use for this job" (the browser's session kept for the job, the browser open).
+	// Returns { button, box, handle(data) } (handle: whether the message was the panel's).
+	function cookiesPanel(send, intoAccount, keep) {
+		let everything = false
+		let host = ''
+		let groups = []
+		const values = {}
+		const key = (cookie) => JSON.stringify([cookie.name, cookie.domain, cookie.path])
+		const status = el('p', { class: 'harvester-muted', role: 'status' })
+		const error = el('p', { class: 'harvester-error' })
+		const list = el('div', { class: 'harvester-cookie-groups' })
+		const form = el('div', { class: 'harvester-cookie-form' })
+		const scope = el('select', { 'aria-label': 'Which cookies' },
+			el('option', { value: 'site', text: 'This site’s' }), el('option', { value: 'all', text: 'All' }))
+		const load = () => send({ type: 'cookies', all: everything })
+		scope.addEventListener('change', () => { everything = scope.value === 'all'; load() })
+		const readable = (expires) => expires ? new Date(expires * 1000).toLocaleString() : 'session'
+
+		// Add (cookie null) or change a cookie. A value left empty while changing keeps the one the
+		// panel never showed.
+		function edit(cookie) {
+			const input = (value, attributes = {}) => { const node = el('input', attributes); node.value = value; return node }
+			const name = input(cookie ? cookie.name : '', { 'aria-label': 'Name' })
+			const value = input(cookie && key(cookie) in values ? values[key(cookie)] : '', {
+				'aria-label': 'Value', placeholder: cookie && !(key(cookie) in values) ? '(unchanged)' : '', autocomplete: 'off', spellcheck: 'false',
+			})
+			const domain = input(cookie ? cookie.domain : host, { 'aria-label': 'Domain' })
+			const path = input(cookie ? cookie.path : '/', { 'aria-label': 'Path' })
+			const expiresAt = cookie && cookie.expires ? new Date(cookie.expires * 1000 - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ''
+			const expires = input(expiresAt, { type: 'datetime-local', 'aria-label': 'Expires (empty: the session)' })
+			const secure = el('input', { type: 'checkbox' })
+			secure.checked = cookie ? cookie.secure : true
+			const httpOnly = el('input', { type: 'checkbox' })
+			httpOnly.checked = Boolean(cookie && cookie.httpOnly)
+			const sameSite = el('select', { 'aria-label': 'SameSite' }, ...['Lax', 'Strict', 'None'].map((v) => el('option', { value: v, text: v })))
+			sameSite.value = cookie ? cookie.sameSite || 'Lax' : 'Lax'
+			const save = () => {
+				const wanted = {
+					name: name.value.trim(),
+					value: cookie && !value.value && !(key(cookie) in values) ? null : value.value,
+					domain: domain.value.trim(),
+					path: path.value.trim() || '/',
+					expires: expires.value ? Math.floor(new Date(expires.value).getTime() / 1000) : null,
+					secure: secure.checked,
+					httpOnly: httpOnly.checked,
+					sameSite: sameSite.value,
+				}
+				const message = { type: 'cookie-set', cookie: wanted, all: everything }
+				if (cookie) message.original = { name: cookie.name, domain: cookie.domain, path: cookie.path }
+				send(message)
+				form.replaceChildren()
+			}
+			form.replaceChildren(el('h4', { text: cookie ? `Change ${cookie.name}` : 'Add a cookie' }),
+				field('Name', name), field('Value', value), field('Domain', domain, 'This site, a parent (example.com) or a subdomain; a leading dot: its subdomains too.'),
+				field('Path', path), field('Expires', expires, 'Empty: until the browser closes (a session cookie).'),
+				el('label', {}, secure, ' Secure '), el('label', {}, httpOnly, ' HttpOnly '), field('SameSite', sameSite),
+				el('div', { class: 'harvester-toolbar' },
+					el('button', { type: 'button', class: 'primary', text: cookie ? 'Save cookie' : 'Add cookie', onclick: save }),
+					el('button', { type: 'button', text: 'Cancel', onclick: () => form.replaceChildren() })))
+		}
+
+		function render() {
+			list.replaceChildren(...(groups.length ? groups : [null]).map((group) => {
+				if (!group) return el('p', { class: 'harvester-muted', text: everything ? 'No cookies.' : `No cookies for ${host || 'this page'}.` })
+				return el('div', { class: 'harvester-cookie-group', 'data-domain': group.domain },
+					el('div', { class: 'harvester-level-head' }, el('h4', { text: group.domain }),
+						el('button', { type: 'button', class: 'error', text: 'Delete all', title: `Delete every cookie of ${group.domain}`, onclick: () => send({ type: 'cookies-delete-site', domain: group.domain, all: everything }) })),
+					el('table', { class: 'harvester-cookies' },
+						el('tr', {}, ...['Name', 'Value', 'Path', 'Expires', 'Flags', ''].map((text) => el('th', { text }))),
+						...group.cookies.map((cookie) => {
+							const known = key(cookie) in values
+							const flags = [cookie.secure ? 'Secure' : '', cookie.httpOnly ? 'HttpOnly' : '', `SameSite=${cookie.sameSite}`].filter(Boolean).join(' ')
+							return el('tr', { 'data-cookie': cookie.name },
+								el('td', {}, el('code', { text: cookie.name })),
+								el('td', {}, known ? el('code', { class: 'harvester-cookie-value', text: values[key(cookie)] }) : el('span', { class: 'harvester-muted', text: `•••• (${cookie.size})` }),
+									el('button', { type: 'button', class: 'harvester-link', text: known ? 'Hide' : 'Show', onclick: () => {
+										if (known) { delete values[key(cookie)]; render() } else send({ type: 'cookie-show', name: cookie.name, domain: cookie.domain, path: cookie.path })
+									} })),
+								el('td', { text: cookie.path }),
+								el('td', { text: readable(cookie.expires) }),
+								el('td', { text: flags }),
+								el('td', {},
+									el('button', { type: 'button', text: 'Edit', onclick: () => edit(cookie) }),
+									el('button', { type: 'button', class: 'error', text: 'Delete', onclick: () => send({ type: 'cookie-delete', name: cookie.name, domain: cookie.domain, path: cookie.path, all: everything }) })))
+						})))
+			}))
+		}
+
+		const actions = el('div', { class: 'harvester-toolbar' }, scope,
+			el('button', { type: 'button', text: 'Refresh', onclick: load }),
+			el('button', { type: 'button', text: 'Add', onclick: () => edit(null) }))
+		if (intoAccount) {
+			actions.append(el('button', {
+				type: 'button',
+				text: 'Into the account',
+				title: 'These cookies (this site’s, or all) as a cookies.txt into the job’s account: stored once you save it',
+				onclick: () => send({ type: 'cookies-export', all: everything }),
+			}))
+		}
+		if (keep) {
+			actions.append(el('button', {
+				type: 'button',
+				text: 'Use for this job',
+				title: 'Keep the browser’s session (cookies, local storage) for the job’s next run; the browser stays open',
+				onclick: () => send({ type: 'cookies-keep' }),
+			}))
+		}
+		const box = el('div', { class: 'harvester-cookies-panel', hidden: '' },
+			el('h3', { text: 'Cookies' }),
+			el('p', { class: 'harvester-muted', text: 'The browser’s cookies, changed at once. Values stay hidden until you show one: they are often the sign-in itself.' }),
+			actions, error, status, list, form)
+		const button = el('button', {
+			type: 'button',
+			text: 'Cookies',
+			title: 'See, change or take over the browser’s cookies',
+			'aria-expanded': 'false',
+			onclick: () => {
+				box.hidden = !box.hidden
+				button.setAttribute('aria-expanded', String(!box.hidden))
+				if (!box.hidden) load()
+			},
+		})
+
+		function handle(data) {
+			if (data.type === 'cookies') {
+				host = data.host
+				groups = data.groups
+				error.textContent = ''
+				render()
+			} else if (data.type === 'cookie-value') {
+				values[key(data)] = data.value
+				render()
+			} else if (data.type === 'cookies-error') error.textContent = data.message
+			else if (data.type === 'cookies-export') {
+				if (intoAccount) {
+					Promise.resolve(intoAccount(data.text, data.count))
+						.then((text) => { status.textContent = text || '' })
+						.catch((e) => { error.textContent = e.message })
+				}
+			} else if (data.type === 'cookies-kept') status.textContent = 'Kept for the job: its next run starts with this session.'
+			else return false
+			return true
+		}
+		return { button, box, handle }
+	}
+
 	function networkLine() {
 		const line = el('p', { class: 'harvester-muted harvester-network', text: 'Checking which address sites see…' })
 		line.show = (data) => {
@@ -1092,8 +1242,20 @@
 			title: 'Keep this session for the job and run it again',
 			onclick: () => { done.disabled = true; send({ type: 'save-session' }) },
 		})
+		// The job's account takes cookies when its source has the field; stored only once the
+		// person confirms (there is no form here to save it with).
+		const source = sources.find((s) => s.name === job.source)
+		const intoAccount = source && source.credentials.includes('cookies')
+			? async (text, count) => {
+				if (!confirm(`Store these ${count} cookies as the account’s Cookies of “${job.name}”? They replace the ones stored, and the job’s kept session is forgotten.`)) return 'Not stored.'
+				await api('PUT', `/jobs/${job.id}/credentials`, { cookies: text })
+				return `${count} cookies stored in the job’s account.`
+			}
+			: null
+		const cookies = cookiesPanel(send, intoAccount, true)
 		socket.addEventListener('message', (event) => {
 			const data = JSON.parse(event.data)
+			if (cookies.handle(data)) return
 			if (data.type === 'frame') {
 				if (left(screen, socket)) return
 				screen.frame(data.data)
@@ -1121,9 +1283,9 @@
 			overlay(
 				el('div', { class: 'harvester-toolbar' }, ...navigation(send), url,
 					el('button', { type: 'button', text: 'Go', onclick: () => send({ type: 'goto', url: url.value }) }),
-					fullWindow(container, box, send), done,
+					fullWindow(container, box, send), cookies.button, done,
 					el('button', { text: 'Cancel', onclick: () => { socket.close(); show(root) } })),
-				network, message),
+				network, message, cookies.box),
 			el('div', { class: 'harvester-stage' }, box))
 		root.replaceChildren(container)
 		screen.focusKeys()
@@ -1152,6 +1314,15 @@
 		const network = networkLine()
 		const panel = el('div', { class: 'harvester-steps' })
 		const modes = el('div', { class: 'harvester-modes' })
+		// No job yet (or not saved): the cookies go into the form's account field, stored with Save.
+		const cookieField = page.querySelector('[data-credential="cookies"]')
+		const cookies = cookiesPanel(send, cookieField
+			? (text, count) => {
+				cookieField.value = text
+				cookieField.dispatchEvent(new Event('input', { bubbles: true }))
+				return `${count} cookies in the account’s Cookies field: stored with the job when you save it.`
+			}
+			: null, false)
 		const help = {
 			record: 'Use the site as usual: sign in and go to the listing. Clicks, typing, addresses typed and Back or Forward are recorded; scrolling is not (add “scroll to load more” for a listing that grows as it is scrolled).',
 			browse: 'Go anywhere without recording (into a year, an issue, …) to pick there.',
@@ -1261,6 +1432,7 @@
 		socket.addEventListener('open', () => send({ type: 'load', recipe }))
 		socket.addEventListener('message', (event) => {
 			const data = JSON.parse(event.data)
+			if (cookies.handle(data)) return
 			if (data.type === 'frame') { if (!left(screen, socket)) screen.frame(data.data) }
 			else if (data.type === 'cursor') screen.style.cursor = data.cursor
 			else if (data.type === 'url') url.value = data.url
@@ -1301,10 +1473,11 @@
 					el('button', { type: 'button', text: 'Undo step', onclick: () => send({ type: 'undo' }) }),
 					el('button', { type: 'button', text: 'Clear picks', onclick: () => { recipe = { steps: recipe.steps }; send({ type: 'clear' }) } }),
 					fullWindow(container, box, send),
+					cookies.button,
 					drawer,
 					el('button', { class: 'primary', text: 'Done', onclick: () => close(true) }),
 					el('button', { text: 'Cancel', onclick: () => close(false) })),
-				modes, el('div', { class: 'harvester-toolbar' }, modeHelp, scroll), where, network, message),
+				modes, el('div', { class: 'harvester-toolbar' }, modeHelp, scroll), where, network, message, cookies.box),
 			el('div', { class: 'harvester-stage' }, box, panel))
 		root.replaceChildren(container)
 		renderPanel()
@@ -1630,6 +1803,10 @@
 		#harvester .harvester-steps .harvester-optional { margin: 0 2px 0 8px; min-height: 0; }
 		#harvester .harvester-steps .harvester-hint { font-size: 90%; }
 		#harvester .harvester-where { display: block; color: var(--color-text-maxcontrast); }
+		#harvester .harvester-cookies-panel { max-height: 50vh; overflow: auto; padding: 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); background: var(--color-main-background); }
+		#harvester .harvester-cookies { border-collapse: collapse; overflow-wrap: anywhere; }
+		#harvester .harvester-cookies th, #harvester .harvester-cookies td { padding: 2px 6px; text-align: left; vertical-align: top; }
+		#harvester .harvester-cookie-value { white-space: pre-wrap; }
 		#harvester .harvester-network { margin: 4px 0; }
 		#harvester .harvester-network.harvester-proxied { color: var(--color-success-text, var(--color-success)); }
 		#harvester .harvester-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 16px; }

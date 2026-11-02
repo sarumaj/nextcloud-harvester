@@ -15,6 +15,13 @@
   Steps list, a hint **make optional?** at clicks that look like consent buttons) waits 5 s at
   most and is skipped when it fails: a line in the log, no picture, no failure. *Test the
   recipe* lists the skipped ones apart from its problems. Recipes without either run as before.
+- **Cookies panel:** the recorder and *Continue in the browser* show the browser's cookies
+  (this site's or all, by domain, values hidden until *Show*), to change, delete (one, or a
+  domain's) or add, checked by the app (no control characters, sizes a browser keeps, only the
+  domains the browser is at or has cookies of). *Into the account* takes them as a cookies.txt
+  into the job's *Cookies* field (saved with the form, or stored after a confirmation in the
+  job's browser); *Use for this job* keeps the session for the job without ending the browser.
+  A cookies.txt keeps the HttpOnly mark when read and written.
 
 ## 0.10.0 - 2026-11-02
 

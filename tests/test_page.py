@@ -4,7 +4,8 @@ of a pick, numbered pages, scroll to load more and the recipe's test; a failed s
 from the progress log, with the job's browser opened at its page; the queue's status with why a
 job waits; and on-demand jobs: Fetch a URL…, the waiting addresses, the form's On demand, and the
 Send to Harvester bookmarklet with the page it opens (?fetch=); the recorder's steps in frames,
-their switch "optional" with its hint for consent buttons, and "Acting in"."""
+their switch "optional" with its hint for consent buttons, and "Acting in"; the cookies panel of both
+browser views."""
 
 # pylint: disable=missing-function-docstring
 
@@ -442,3 +443,109 @@ def test_the_recorders_frames_and_optional_steps(page):
     kept = json.loads(page.locator("textarea.harvester-recipe").first.input_value())
     assert kept["steps"][1]["optional"] is True and kept["steps"][1]["frame"] == frame
     assert "optional" not in kept["steps"][2]
+
+
+COOKIE_LIST = {
+    "type": "cookies",
+    "host": "site.example",
+    "all": False,
+    "groups": [
+        {
+            "domain": "site.example",
+            "cookies": [
+                {
+                    "name": "sid",
+                    "domain": "site.example",
+                    "path": "/",
+                    "expires": None,
+                    "secure": True,
+                    "httpOnly": True,
+                    "sameSite": "Lax",
+                    "size": 8,
+                }
+            ],
+        }
+    ],
+}
+SID = {"name": "sid", "domain": "site.example", "path": "/"}
+
+
+@needs_chromium
+def test_the_recorders_cookies_panel(page):
+    page.get_by_role("button", name="Edit").click()
+    page.get_by_role("button", name="Record in the browser").click()
+    page.wait_for_function("window.__sockets.length && window.__sockets[0].sent.length")
+    panel = page.locator(".harvester-cookies-panel")
+    assert panel.is_hidden()
+    page.get_by_role("button", name="Cookies", exact=True).click()
+    assert sent(page)[-1] == {"type": "cookies", "all": False}
+    assert panel.get_by_role("button", name="Use for this job").count() == 0, "no job here"
+    receive(page, COOKIE_LIST)
+    row = panel.locator("tr[data-cookie=sid]")
+    assert "•••• (8)" in row.inner_text() and "session" in row.inner_text() and "HttpOnly" in row.inner_text()
+    row.get_by_role("button", name="Show").click()
+    assert sent(page)[-1] == {"type": "cookie-show", **SID}
+    receive(page, {"type": "cookie-value", **SID, "value": "secret-1"})
+    assert row.locator(".harvester-cookie-value").inner_text() == "secret-1"
+    row.get_by_role("button", name="Hide").click()
+    assert "secret-1" not in row.inner_text()
+
+    # Changed without showing its value: the value stays the browser's (null).
+    row.get_by_role("button", name="Edit").click()
+    panel.get_by_label("Path").fill("/account")
+    panel.get_by_role("button", name="Save cookie").click()
+    change = sent(page)[-1]
+    assert change["type"] == "cookie-set" and change["original"] == SID
+    assert change["cookie"]["value"] is None and change["cookie"]["path"] == "/account"
+    panel.get_by_role("button", name="Add", exact=True).click()
+    assert panel.get_by_label("Domain").input_value() == "site.example", "the page's host"
+    panel.get_by_label("Name").fill("lang")
+    panel.get_by_label("Value").fill("de")
+    panel.get_by_role("button", name="Add cookie").click()
+    added = sent(page)[-1]["cookie"]
+    assert added["name"] == "lang" and added["value"] == "de" and added["path"] == "/" and added["expires"] is None
+    receive(page, {"type": "cookies-error", "message": "x: bank.example is none of the sites"})
+    assert "bank.example" in panel.locator(".harvester-error").inner_text()
+    row.get_by_role("button", name="Delete").click()
+    panel.get_by_role("button", name="Delete all").click()
+    panel.locator("select").first.select_option("all")
+    assert sent(page)[-3:] == [
+        {"type": "cookie-delete", **SID, "all": False},
+        {"type": "cookies-delete-site", "domain": "site.example", "all": False},
+        {"type": "cookies", "all": True},
+    ]
+
+    # Into the account: the form's Cookies field, stored with the job's Save.
+    panel.get_by_role("button", name="Into the account").click()
+    assert sent(page)[-1] == {"type": "cookies-export", "all": True}
+    text = "# Netscape HTTP Cookie File\nsite.example\tFALSE\t/\tTRUE\t0\tsid\tsecret-1\n"
+    receive(page, {"type": "cookies-export", "text": text, "count": 1})
+    assert "1 cookies in the account’s Cookies field" in panel.inner_text()
+    page.get_by_role("button", name="Cancel").click()
+    assert page.locator("textarea[data-credential=cookies]").input_value() == text
+    assert not [call for call in CALLS if "credentials" in call[1] and call[0] == "PUT"], "nothing stored yet"
+
+
+@needs_chromium
+def test_the_job_browsers_cookies_panel_keeps_the_session_and_fills_the_account(page):
+    page.get_by_role("button", name="Show what the browser saw").click()
+    page.get_by_role("button", name="Open in the browser").click()
+    page.wait_for_function("window.__sockets.length")
+    page.get_by_role("button", name="Cookies", exact=True).click()
+    receive(page, COOKIE_LIST)
+    panel = page.locator(".harvester-cookies-panel")
+    panel.get_by_role("button", name="Use for this job").click()
+    assert sent(page)[-1] == {"type": "cookies-keep"}
+    receive(page, {"type": "cookies-kept"})
+    assert "Kept for the job" in panel.inner_text()
+    assert page.locator("img.harvester-screen").count() == 1, "the browser stays open"
+
+    panel.get_by_role("button", name="Into the account").click()
+    text = "# Netscape HTTP Cookie File\nsite.example\tFALSE\t/\tTRUE\t0\tsid\tsecret-1\n"
+    page.once("dialog", lambda dialog: dialog.dismiss())
+    receive(page, {"type": "cookies-export", "text": text, "count": 1})
+    page.wait_for_function("document.querySelector('.harvester-cookies-panel').innerText.includes('Not stored.')")
+    page.once("dialog", lambda dialog: dialog.accept())
+    receive(page, {"type": "cookies-export", "text": text, "count": 1})
+    page.wait_for_function("document.querySelector('.harvester-cookies-panel').innerText.includes('stored in the job')")
+    assert ("PUT", "/jobs/1/credentials", {"cookies": text}) in CALLS, "stored once the person confirmed"

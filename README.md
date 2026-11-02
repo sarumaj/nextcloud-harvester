@@ -173,6 +173,22 @@ the app's browser or taken from a template, not by code.
   a drawer. When the browser cannot start, the page says why instead of showing an empty screen. The
   screen takes the cursor the page shows under the mouse (a crosshair while picking); the wheel's
   movement goes to the browser once a frame, in pixels.
+- **Cookies** (`browser/jar.py`): both browser views (the recorder, **Continue in the browser**)
+  have a **Cookies** panel with the browser's cookies, grouped by domain: this site's (those the
+  page gets) or all, with path, expiry ("session" without one), Secure, HttpOnly and SameSite.
+  Values stay hidden (`•••• (8)`, their length) until **Show**: they are often the sign-in
+  itself, and the WebSocket carries one only when asked to show or export it; none is logged.
+  **Edit** changes a cookie's value (left empty: unchanged), name, path, expiry or flags,
+  **Delete** removes one, **Delete all** a domain's, **Add** one (the page's host, `/`, Secure).
+  A change is the browser's at once. The app checks each: a name and value without control
+  characters (nor `;`, `,`; a name without `=` or spaces), name and value 4 kB at most, a path
+  from `/`, an expiry at most 400 days ahead, SameSite None only with Secure, and a domain of the
+  sites the browser is at or has cookies of (one of them, a parent short of a top-level domain,
+  or a subdomain): no cookies for other sites. **Into the account** writes the shown cookies as a
+  cookies.txt into the job's *Cookies* account field: in the recorder the form's field, stored
+  with the job's Save; in the job's browser after the person confirms (a new account forgets
+  the kept session). **Use for this job** (the job's browser) keeps the browser's session for
+  the job's next run, as Done does, but the browser stays open and no run starts.
 - **Sessions and challenges:** a job keeps its browser session (cookies, local storage;
   encrypted in Nextcloud, like its account) and replays the sign-in only when the listing shows
   a login form. When a site asks for a person instead (reCAPTCHA, hCaptcha, Cloudflare, "verify

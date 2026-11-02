@@ -2,7 +2,7 @@
 extensions such as "Get cookies.txt" write it) or a Cookie header's name=value; ... pairs.
 
 They go to the HTTP client, to Chromium (a website job), or as a cookies.txt file to yt-dlp and
-gallery-dl.
+gallery-dl. The browser views' cookies panel writes a cookies.txt (to_text) for the account.
 """
 
 import os
@@ -20,6 +20,8 @@ class Cookie:
     path: str = "/"
     secure: bool = False
     expires: int = 0
+    # Kept from a cookies.txt's "#HttpOnly_" mark, and written back with it.
+    http_only: bool = False
 
 
 def parse(text: str, host: str) -> list[Cookie]:
@@ -29,7 +31,8 @@ def parse(text: str, host: str) -> list[Cookie]:
     for line in lines:
         # cookies.txt: domain, subdomains, path, secure, expires, name, value (tab-separated);
         # "#HttpOnly_" marks a cookie, other "#" lines are comments.
-        if line.startswith("#HttpOnly_"):
+        http_only = line.startswith("#HttpOnly_")
+        if http_only:
             line = line.removeprefix("#HttpOnly_")
         elif line.startswith("#"):
             continue
@@ -38,7 +41,13 @@ def parse(text: str, host: str) -> list[Cookie]:
             domain, _, path, secure, expires, name, value = fields
             found.append(
                 Cookie(
-                    name, value, domain, path or "/", secure.upper() == "TRUE", int(expires) if expires.isdigit() else 0
+                    name,
+                    value,
+                    domain,
+                    path or "/",
+                    secure.upper() == "TRUE",
+                    int(expires) if expires.isdigit() else 0,
+                    http_only,
                 )
             )
             continue
@@ -64,14 +73,21 @@ def to_playwright(cookies: list[Cookie]) -> list[dict]:
     ]
 
 
+def to_text(cookies: list[Cookie]) -> str:
+    """The cookies as a cookies.txt (Netscape's format, as parse() reads it)."""
+    lines = ["# Netscape HTTP Cookie File"]
+    for c in cookies:
+        subdomains = "TRUE" if c.domain.startswith(".") else "FALSE"
+        secure = "TRUE" if c.secure else "FALSE"
+        mark = "#HttpOnly_" if c.http_only else ""
+        lines.append(f"{mark}{c.domain}\t{subdomains}\t{c.path}\t{secure}\t{c.expires}\t{c.name}\t{c.value}")
+    return "\n".join(lines) + "\n"
+
+
 def to_file(cookies: list[Cookie]) -> str:
     """A cookies.txt file (0600, in a temporary directory) for yt-dlp or gallery-dl; the caller
     removes it."""
     handle, path = tempfile.mkstemp(prefix="harvester-cookies-", suffix=".txt")
     with os.fdopen(handle, "w", encoding="utf-8") as file:
-        file.write("# Netscape HTTP Cookie File\n")
-        for c in cookies:
-            subdomains = "TRUE" if c.domain.startswith(".") else "FALSE"
-            secure = "TRUE" if c.secure else "FALSE"
-            file.write(f"{c.domain}\t{subdomains}\t{c.path}\t{secure}\t{c.expires}\t{c.name}\t{c.value}\n")
+        file.write(to_text(cookies))
     return path

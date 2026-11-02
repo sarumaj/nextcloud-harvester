@@ -561,7 +561,7 @@ async def record(websocket: WebSocket, nc: NC) -> None:
     With ?job=<id> (the user's job) the browser starts with the job's kept session at the page
     that asked for a person (with &at=shot: at the page of its last failed step); {type:
     save-session} keeps the browser's session for the job, clears the challenge and runs the job
-    again.
+    again; {type: cookies-keep} (the cookies panel's "Use for this job") keeps it and goes on.
 
     With ?rclone=<wizard> (the user's rclone wizard, at its sign-in question) the browser shows
     the provider's sign-in for `rclone authorize` instead (sign_in)."""
@@ -597,9 +597,8 @@ async def record(websocket: WebSocket, nc: NC) -> None:
         while True:
             message = await asyncio.wait_for(websocket.receive_json(), RECORDER_IDLE)
             try:
-                if message.get("type") == "save-session" and job:
-                    await save_answer(job, await recorder.session(), nc)
-                    await websocket.send_json({"type": "session-saved"})
+                if message.get("type") in ("save-session", "cookies-keep") and job:
+                    await keep_session(websocket, recorder, job, nc, message["type"])
                 else:
                     await recorder.handle(message)
             except Exception as error:  # pylint: disable=broad-exception-caught
@@ -747,6 +746,18 @@ def start_of(job: Job) -> str:
         return str(json.loads(str(job.options.get("recipe") or "{}") or "{}").get("start", ""))
     except (ValueError, AttributeError):
         return ""
+
+
+async def keep_session(websocket: WebSocket, recorder: Recorder, job: Job, nc: AsyncNextcloudApp, kind: str) -> None:
+    """Keeps the browser's session for the job: Done (save-session) also runs the job again and
+    ends the view; the cookies panel's "Use for this job" (cookies-keep) keeps it as it is now,
+    for the job's next run, and the browser stays open."""
+    if kind == "save-session":
+        await save_answer(job, await recorder.session(), nc)
+        await websocket.send_json({"type": "session-saved"})
+    else:
+        await save_session(nc, job, await recorder.session())
+        await websocket.send_json({"type": "cookies-kept"})
 
 
 async def save_answer(job: Job, session: dict, nc: AsyncNextcloudApp) -> None:
