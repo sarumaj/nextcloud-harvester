@@ -33,10 +33,11 @@
   older CookieLawInfo, Complianz, Osano, Iubenda, consentmanager.net, Cookie Script, Termly,
   Axeptio, Cookie Notice and Google's Funding Choices (*Do not consent*); a recorded click on
   one of their banners is optional then.
-- The recorder adds approvals and handovers: **Add: wait for my approval** (once the approval
-  went through, until the page's address then) and **Add: hand over to me** where the recording
-  is; the Steps list changes their label, an approval's wait and their `until` (an address's
-  pattern, **this page’s address**, an element typed or picked with **Pick an element**).
+- The recorder adds approvals and handovers: **Add step: wait for your approval** (once the
+  approval went through, until the page's address then) and **Add step: hand over to you**
+  where the recording is; the Steps list changes their label, an approval's wait and their
+  `until` (an address's pattern, **this page’s address**, an element typed or picked with **Pick
+  an element**).
 - Cookie banners dismissed in the progress log: an info line on the page where it happened,
   naming the consent manager (or *a cookie banner*) and the button clicked, once a manager in a
   run.
@@ -118,6 +119,11 @@
   default, saying how many do (*(2 changed)*); a website job's form was 21 options in a row.
   `GET /api/sources` gives each option its `group` (empty: an essential). Save and the form's
   other buttons stay at the window's foot while the form scrolls.
+- The recorder's step buttons are **Add step: scroll to load more**, **Add step: wait for your
+  approval** and **Add step: hand over to you**, on a line of their own below the modes; outside
+  Record steps they are off and say *Choose Record steps to add steps* (only a tooltip before).
+  The modes are a group named *Mode* for screen readers, and the Steps list's **↑**, **↓** and
+  **✕** are buttons of 34 pixels (a few pixels before), its *optional* kept with its checkbox.
 
 ### Fixed
 

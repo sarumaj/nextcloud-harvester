@@ -1897,7 +1897,7 @@
 		const message = el('p', { class: 'harvester-error', role: 'alert' })
 		const network = networkLine()
 		const panel = el('div', { class: 'harvester-steps' })
-		const modes = el('div', { class: 'harvester-modes' })
+		const modes = el('fieldset', { class: 'harvester-modes' }, el('legend', { class: 'harvester-hidden', text: t('Mode') }))
 		// No job yet (or not saved): the cookies go into the form's account field, stored with Save.
 		const cookieField = page.querySelector('[data-credential="cookies"]')
 		const cookies = cookiesPanel(send, cookieField
@@ -1923,7 +1923,7 @@
 		}
 		const scroll = el('button', {
 			type: 'button',
-			text: t('Add: scroll to load more'),
+			text: t('Add step: scroll to load more'),
 			title: t('A step: scroll to the end of the page until no more comes (a listing that loads more as it is scrolled)'),
 			onclick: () => send({ type: 'scroll' }),
 		})
@@ -1932,23 +1932,28 @@
 		// can do in the page).
 		const approve = el('button', {
 			type: 'button',
-			text: t('Add: wait for my approval'),
+			text: t('Add step: wait for your approval'),
 			title: t('After you approved the sign-in in your app and the site went on: a step that waits for your approval when the job runs, until the page shows this address'),
 			onclick: () => send({ type: 'person', action: 'approve', label: t('Approve the sign-in in your app') }),
 		})
 		const handover = el('button', {
 			type: 'button',
-			text: t('Add: hand over to me'),
+			text: t('Add step: hand over to you'),
 			title: t('Before what only you can do (a passkey, a check): a step that stops the job here, for you to go on in its browser'),
 			onclick: () => send({ type: 'person', action: 'handover', label: t('Sign in yourself (a passkey)') }),
 		})
+		// Steps are added only while recording: elsewhere the buttons are off, and say so.
+		const addHint = el('small', { class: 'harvester-muted', text: t('Choose Record steps to add steps') })
+		const addable = (on) => {
+			for (const button of [scroll, approve, handover]) button.disabled = !on
+			addHint.hidden = on
+		}
 		const radios = {}
 		let beforeUntil = null
 		const labels = [['record', t('Record steps')], ['browse', t('Browse')], ['follow', t('Pick links to follow')], ['links', t('Pick file links')], ['next', t('Pick next-page link')]]
 		const placing = el('div', { class: 'harvester-placing' })
 		let current = placed ? 'record' : 'browse'
-		// Steps are added only while recording.
-		for (const button of [scroll, approve, handover]) button.disabled = current !== 'record'
+		addable(current === 'record')
 		const choose = (mode, text, level, target) => {
 			// Picking a value has no radio of its own: it is a level's, started from its box. Recording
 			// on a recipe with steps waits for where the new ones go: the mode stays as it was.
@@ -1963,7 +1968,7 @@
 			beforeUntil = null
 			send(level === undefined ? { type: 'mode', mode } : { type: 'mode', mode, level, target })
 			modeHelp.textContent = text || help[mode]
-			for (const button of [scroll, approve, handover]) button.disabled = mode !== 'record'
+			addable(mode === 'record')
 			screen.focusKeys()
 		}
 		// The element an approval or a handover waits for, picked on the page: then back to the
@@ -1974,7 +1979,7 @@
 			current = 'until'
 			send({ type: 'mode', mode: 'until', step: index })
 			modeHelp.textContent = t('Click the element the page shows once you are through (your accounts, your name): the job waits for it.')
-			for (const button of [scroll, approve, handover]) button.disabled = true
+			addable(false)
 			screen.focusKeys()
 		}
 		// Where the new steps of a recipe with steps go: after a step (the last, unless chosen),
@@ -2096,7 +2101,7 @@
 			box.checked = Boolean(step.optional)
 			box.addEventListener('change', () => toggle(box.checked))
 			const tool = (text, label, message, usable = true) => {
-				const button = el('button', { type: 'button', class: 'harvester-link', text, title: label, 'aria-label': t('{action}: step {number}', { action: label, number: index + 1 }), onclick: () => send({ ...message, step: index }) })
+				const button = el('button', { type: 'button', class: 'harvester-step-tool', text, title: label, 'aria-label': t('{action}: step {number}', { action: label, number: index + 1 }), onclick: () => send({ ...message, step: index }) })
 				button.disabled = !usable
 				return button
 			}
@@ -2143,7 +2148,7 @@
 				mailCode(step, index),
 				phoneCode(step, index),
 				// An approval or a handover is never optional: its until says when it is not needed.
-				['approve', 'handover'].includes(step.action) ? '' : el('label', { title: t('Best effort: when it fails (not there, not visible), the job waits a few seconds at most and goes on without it') }, box, ` ${t('optional')}`),
+				['approve', 'handover'].includes(step.action) ? '' : el('label', { class: 'harvester-optional-label', title: t('Best effort: when it fails (not there, not visible), the job waits a few seconds at most and goes on without it') }, box, ` ${t('optional')}`),
 				!step.optional && looksLikeConsent(step)
 					? el('button', { type: 'button', class: 'harvester-link harvester-hint', text: t('make optional?'), title: t('A consent banner often shows only on the first visit'), onclick: () => toggle(true) })
 					: '',
@@ -2475,7 +2480,7 @@
 					el('span', { class: 'harvester-toolbar-end' },
 						el('button', { class: 'primary', text: t('Done'), onclick: () => close(true) }),
 						el('button', { text: t('Cancel'), onclick: () => close(false) }))),
-				modes, placing, el('div', { class: 'harvester-toolbar' }, modeHelp, scroll, approve, handover), where, network, message, cookies.box, networkBox),
+				modes, placing, modeHelp, el('div', { class: 'harvester-toolbar harvester-add-steps' }, scroll, approve, handover, addHint), where, network, message, cookies.box, networkBox),
 			el('div', { class: 'harvester-stage' }, box, panel))
 		root.replaceChildren(container)
 		renderPanel()
@@ -2939,7 +2944,11 @@
 		#harvester .harvester-steps .harvester-optional { margin: 0 2px 0 8px; min-height: 0; }
 		#harvester .harvester-steps .harvester-hint { font-size: 90%; }
 		#harvester .harvester-steps .harvester-step-tools { margin-inline-start: 6px; white-space: nowrap; }
-		#harvester .harvester-steps .harvester-step-tools button { min-height: 0; padding: 0 4px; }
+		#harvester .harvester-steps .harvester-step-tools { display: inline-flex; gap: 2px; vertical-align: middle; }
+		#harvester .harvester-steps .harvester-step-tool { min-width: 34px; min-height: 34px; margin: 0; padding: 0; border: none; border-radius: var(--border-radius); background: none; color: var(--color-main-text); font-size: 16px; line-height: 1; cursor: pointer; }
+		#harvester .harvester-steps .harvester-step-tool:hover:not(:disabled) { background: var(--color-background-hover); }
+		#harvester .harvester-steps .harvester-step-tool:disabled { opacity: 0.4; cursor: default; }
+		#harvester .harvester-steps .harvester-optional-label { white-space: nowrap; }
 		#harvester .harvester-steps .harvester-step-details { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; margin: 2px 0 6px; }
 		#harvester .harvester-person-step { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
 		#harvester .harvester-steps .harvester-step-details select, #harvester .harvester-steps .harvester-step-value { min-height: 0; margin: 0; }
@@ -3060,7 +3069,8 @@
 		#harvester .harvester-test-failed { background: color-mix(in srgb, var(--color-error) 15%, transparent); color: var(--color-error-text, var(--color-main-text)); }
 		#harvester .harvester-test-empty { background: color-mix(in srgb, var(--color-warning) 15%, transparent); color: var(--color-warning-text, var(--color-main-text)); }
 		#harvester .harvester-test-stopped { background: var(--color-background-dark); }
-		#harvester .harvester-modes label { margin-inline-end: 12px; }
+		#harvester .harvester-modes { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 8px 0; padding: 0; border: 0; max-width: none; }
+		#harvester .harvester-modes label { white-space: nowrap; }
 		#harvester .harvester-stage { display: flex; gap: 12px; align-items: flex-start; margin-top: 8px; }
 		#harvester .harvester-screen-box { flex: 3; min-width: 0; max-width: calc((100vh - 260px) * 1.6); position: relative; }
 		#harvester .harvester-screen {

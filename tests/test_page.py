@@ -292,7 +292,7 @@ def test_the_recorders_controls(page):
     assert page.locator("input[value=follow]").is_checked() is False and page.locator("input[value=links]").is_checked()
 
     # Scroll to load more: a step, so only while recording.
-    scroll = page.get_by_role("button", name="Add: scroll to load more")
+    scroll = page.get_by_role("button", name="Add step: scroll to load more")
     assert scroll.is_disabled()
     page.locator("input[value=record]").click()
     page.get_by_role("button", name="Append").click()
@@ -951,8 +951,8 @@ def test_the_recorder_adds_an_approval_and_a_handover_and_the_steps_list_edits_t
     page.get_by_role("button", name="Edit").click()
     page.get_by_role("button", name="Record in the browser").click()
     page.wait_for_function("window.__sockets.length && window.__sockets[0].sent.length")
-    approve = page.get_by_role("button", name="Add: wait for my approval")
-    handover = page.get_by_role("button", name="Add: hand over to me")
+    approve = page.get_by_role("button", name="Add step: wait for your approval")
+    handover = page.get_by_role("button", name="Add step: hand over to you")
     assert approve.is_disabled() and handover.is_disabled(), "steps: only while recording"
     page.locator("input[value=record]").click()
     page.get_by_role("button", name="Append").click()
