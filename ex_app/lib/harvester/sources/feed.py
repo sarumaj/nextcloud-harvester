@@ -97,7 +97,7 @@ class Feed(Source):
         if not url:
             problems.append("no feed")
         elif not browser.allowed_url(url):
-            problems.append(f"the feed {url} may not be opened")
+            problems.append(f"the feed {url} may not be opened{browser.dns_refusal(url)}")
         if self.settings["take"] not in TAKES:
             problems.append(f"take is {' or '.join(TAKES)}, not {self.settings['take']}")
         try:

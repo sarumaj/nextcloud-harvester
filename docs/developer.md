@@ -7,7 +7,8 @@
   registration.
 - `ex_app/lib/harvester/`: the jobs' store (`store.py`, SQLite), the executor and its runners
   (`executor.py`, `runner.py`), the sources (`sources/`), recipes and their patterns, the
-  browser, the recorder and the guard (`browser/`), the templates (`presets/`).
+  browser, the recorder and the guard (`browser/`), the templates (`presets/`), the admin's DNS
+  servers through dnsproxy (`dns.py`).
 - `ex_app/js/harvester-main.js`: the page in Nextcloud (plain JavaScript, no build).
 - `l10n/`: the translations (German `de` and formal `de_DE`, Polish `pl`), `.json` and `.js`
   alike; `scripts/l10n.py` collects the texts and writes the `.js` files (see
@@ -15,7 +16,8 @@
 - `tests/`: pytest, against fake sites and servers, without network.
 - `scripts/rclone_backends.py`: the review of a new rclone's remotes (see
   [Sources](user.md#sources)).
-- `Dockerfile`, `start.sh`, `healthcheck.sh`: the image.
+- `Dockerfile`, `start.sh`, `healthcheck.sh`: the image (frpc, rclone and dnsproxy pinned with
+  their SHA-256 checksums, raised by hand).
 
 ## Developing
 

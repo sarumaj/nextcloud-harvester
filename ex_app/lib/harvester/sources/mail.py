@@ -272,7 +272,7 @@ class Mail(Source):
         if not host:
             problems.append("no IMAP server")
         elif not browser.allowed_host(host):
-            problems.append(f"the IMAP server {host} may not be reached")
+            problems.append(f"the IMAP server {host} may not be reached{browser.dns_refusal(host)}")
         try:
             port = int(self.settings["port"])
             if not 0 < port < 65536:

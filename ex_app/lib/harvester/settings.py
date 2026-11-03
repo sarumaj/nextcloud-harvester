@@ -1,10 +1,12 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The admin's settings (Administration settings > Additional settings > Harvester): how many jobs
 run at once, how many browsers may be open, the proxy the jobs may choose, and whether the
-browsers go through their network guard. Their defaults come from the environment
+browsers go through their network guard; in a form of its own, the DNS servers the container's
+lookups go to (dns.py) and its status. Their defaults come from the environment
 (HARVESTER_RUNNERS, HARVESTER_BROWSERS, HARVESTER_PROXY, HARVESTER_PROXY_NAME, HARVESTER_GUARD,
-which the deployment may set); a value the admin chooses wins (an emptied proxy: none), and the
-executor reads them each minute, so a change needs no restart.
+HARVESTER_DNS, HARVESTER_DNS_FALLBACK, which the deployment may set); a value the admin chooses
+wins (an emptied proxy: none), and the executor reads them each minute, so a change needs no
+restart.
 """
 
 import logging
@@ -13,13 +15,17 @@ from urllib.parse import urlparse
 
 from nc_py_api.ex_app.ui.settings import SettingsField, SettingsFieldType, SettingsForm
 
+from . import dns
+
 LOG = logging.getLogger("harvester.settings")
 RUNNERS = "runners"
 BROWSERS = "browsers"
 PROXY = "proxy"
 PROXY_NAME = "proxy_name"
 GUARD = "guard"
-KEYS = (RUNNERS, BROWSERS, PROXY, PROXY_NAME, GUARD)
+DNS = "dns"
+DNS_FALLBACK = "dns_fallback"
+KEYS = (RUNNERS, BROWSERS, PROXY, PROXY_NAME, GUARD, DNS, DNS_FALLBACK)
 PROXY_SCHEMES = ("http", "https", "socks5", "socks5h")
 _REFUSED: set[str] = set()
 DEFAULT_PROXY = os.environ.get("HARVESTER_PROXY", "").strip()
@@ -30,6 +36,9 @@ ON_WORDS = ("1", "true", "on", "yes")
 OFF_WORDS = ("0", "false", "off", "no")
 # On unless the deployment says off (as browser.GUARD, which the setting changes).
 DEFAULT_GUARD = os.environ.get("HARVESTER_GUARD", "").strip().lower() not in OFF_WORDS
+# None (Docker's DNS) unless the deployment names servers; their fallback off unless it says on.
+DEFAULT_DNS = os.environ.get("HARVESTER_DNS", "").strip()
+DEFAULT_DNS_FALLBACK = os.environ.get("HARVESTER_DNS_FALLBACK", "").strip().lower() in ON_WORDS
 # The choices: each runner is a thread, each browser some 300-600 MB of the server's memory.
 MAX_RUNNERS = 8
 MAX_BROWSERS = 8
@@ -99,6 +108,46 @@ def form(runners: int, browsers: int, address: str = "", name: str = "the proxy"
                     "off the private network. Switch it off only when the External Apps' network is already "
                     "firewalled from private networks and the cloud's metadata service (169.254.169.254). "
                     "A change applies to browsers started afterwards."
+                ),
+            ),
+        ],
+    )
+
+
+def dns_form(servers: str = "", fallback: bool = False, status: str = dns.UNSET) -> SettingsForm:
+    """The DNS servers' form, its description the status (dns.STATUSES): registered again when
+    the status changes."""
+    return SettingsForm(
+        id="harvester_dns",
+        section_type="admin",
+        section_id="additional",
+        title="Harvester: DNS servers",
+        description=status,
+        fields=[
+            SettingsField(
+                id=DNS,
+                title="DNS servers",
+                type=SettingsFieldType.TEXT,
+                default=servers,
+                placeholder="tls://dns.example",
+                description=(
+                    "Every name the app, its browsers and its helper programs look up goes to these servers, "
+                    "e.g. a filtering resolver: plain addresses (9.9.9.9, port 53), DNS over TLS "
+                    "(tls://dns.example, port 853) or DNS over HTTPS (https://dns.example/dns-query), a "
+                    "ClientID in the name or the path as the server wants it; several separated by commas. "
+                    "Empty: Docker's DNS. A name the servers block (they answer 0.0.0.0) is refused, and the "
+                    "job's log says so. Nextcloud's and HaRP's names are still looked up with Docker's DNS."
+                ),
+            ),
+            SettingsField(
+                id=DNS_FALLBACK,
+                title="Docker's DNS when the servers fail",
+                type=SettingsFieldType.SELECT,
+                default=ON if fallback else OFF,
+                options=[OFF, ON],
+                description=(
+                    "Off: while the DNS servers do not answer, names do not resolve and the jobs fail, so "
+                    "that a filtering choice is never bypassed unseen. On: Docker's DNS answers meanwhile."
                 ),
             ),
         ],

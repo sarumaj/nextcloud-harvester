@@ -651,6 +651,9 @@ async def look_up(host: str) -> list[str]:
     except (OSError, TimeoutError) as error:
         raise Refused(502, "the name does not resolve") from error
     found = list(dict.fromkeys(ipaddress.ip_address(str(info[4][0]).split("%", 1)[0]) for info in infos))
+    if found and all(address.is_unspecified for address in found):
+        # A filter's answer (AdGuard Home's, Pi-hole's): said as such, not as a private address.
+        raise Refused(403, f"blocked by the DNS server (it answered {', '.join(map(str, found))})")
     if not found or not all(address.is_global for address in found):
         raise Refused(403, "not a public address")
     return [str(address) for address in found]

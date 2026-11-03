@@ -127,6 +127,9 @@ TIMEZONE = os.environ.get("HARVESTER_TIMEZONE", "Europe/Berlin")
 # Playwright sees, and the External Apps' firewall alone keeps the rest (a web worker's
 # WebSockets, a name that changes after its check) off the private network.
 GUARD = os.environ.get("HARVESTER_GUARD", "").strip().lower() not in ("0", "false", "off", "no")
+# Whether the container's lookups go to the admin's DNS servers (dns.py; the executor sets it):
+# a name that does not resolve then may be one they block.
+DNS = False
 # What the browser and the helper programs (rclone, gallery-dl) may see of the app's
 # environment: the app's AppAPI secret and HaRP's key stay out (a page that broke out of
 # Chromium, which has no sandbox in a container, would find nothing to take).
@@ -282,13 +285,61 @@ def fitted_viewport(width: object, height: object) -> dict:
 
 
 def connection_refused(error: Exception) -> str:
-    """A clearer word for a page the site would not give the browser at all, else ""."""
+    """A clearer word for a page the site would not give the browser at all, else "": the site's
+    protection, or the DNS servers blocking its name (Playwright's error ends in "at <address>")."""
     text = str(error)
     if "ERR_HTTP2_PROTOCOL_ERROR" in text or "ERR_CONNECTION_RESET" in text:
         return (
             "the site cut the browser's connection (its bot protection, most likely): try the job's option "
             "HTTP/1.1 only, or continue in the browser"
         )
+    address = text.split(" at ", 1)[1].split()[0] if " at " in text else ""
+    if address and ("ERR_BLOCKED_BY_CLIENT" in text or "ERR_TUNNEL_CONNECTION_FAILED" in text):
+        return dns_refusal(address).lstrip(": ")
+    if "ERR_NAME_NOT_RESOLVED" in text:
+        return unresolved(address).lstrip("; ")
+    return ""
+
+
+# What a failed lookup says: glibc's (Python's socket), curl's, Chromium's.
+UNRESOLVED = (
+    "Name or service not known",
+    "No address associated",
+    "Temporary failure in name resolution",
+    "Could not resolve host",
+    "ERR_NAME_NOT_RESOLVED",
+)
+
+
+def unresolved(url: str, error: object = "ERR_NAME_NOT_RESOLVED") -> str:
+    """While the admin's DNS servers answer (DNS), what a lookup that failed may mean: "; the DNS
+    servers do not know <host>, or block it" (a filter may answer that no such name exists),
+    else ""."""
+    host = urlparse(url).hostname
+    if not DNS or not host or not any(sign in str(error) for sign in UNRESOLVED):
+        return ""
+    return f"; the DNS servers do not know {host}, or block it"
+
+
+def dns_refusal(target: str) -> str:
+    """Why an address or host that is refused is: ": blocked by the DNS server (it answered
+    0.0.0.0)" when its name resolves to nothing else (a filter's answer: AdGuard Home's,
+    Pi-hole's), else "". For the messages that refuse it."""
+    host = (urlparse(target).hostname if "://" in target else target.strip().strip("[]")) or ""
+    if local_name(host.lower()):
+        return ""
+    try:
+        ipaddress.ip_address(host)
+        return ""
+    except ValueError:
+        pass
+    try:
+        found = _look_up(host)
+    except TimeoutError:
+        return ""
+    addresses = {str(info[4][0]).split("%", maxsplit=1)[0] for info in found}
+    if addresses and all(ipaddress.ip_address(address).is_unspecified for address in addresses):
+        return f": blocked by the DNS server (it answered {', '.join(sorted(addresses))})"
     return ""
 
 
@@ -326,6 +377,12 @@ LOOKUP_TIMEOUT = 5.0
 def _resolves_public(host: str, _period: int) -> bool:
     """Whether every address the name resolves to is public (cached per five-minute period; a
     lookup that takes longer than LOOKUP_TIMEOUT raises TimeoutError, and is not cached)."""
+    return all(ipaddress.ip_address(str(info[4][0]).split("%", maxsplit=1)[0]).is_global for info in _look_up(host))
+
+
+def _look_up(host: str) -> list:
+    """getaddrinfo's answer for the name ([] if it does not resolve); TimeoutError after
+    LOOKUP_TIMEOUT."""
     found: list = []
 
     def look_up() -> None:
@@ -340,7 +397,7 @@ def _resolves_public(host: str, _period: int) -> bool:
     lookup.join(LOOKUP_TIMEOUT)
     if not found:
         raise TimeoutError(f"{host} did not resolve within {LOOKUP_TIMEOUT:.0f} s")
-    return all(ipaddress.ip_address(str(info[4][0]).split("%", maxsplit=1)[0]).is_global for info in found[0])
+    return found[0]
 
 
 def reachable(url: str) -> bool:

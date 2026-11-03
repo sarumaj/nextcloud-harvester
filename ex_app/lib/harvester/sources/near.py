@@ -85,7 +85,7 @@ def json_pages(
     for number in range(1, pages + 1):
         url = jsonrequest.address(first, spec, number, cursor)
         if not browser.allowed_url(url):
-            raise SourceError(f"the JSON listing's next page {url} may not be opened")
+            raise SourceError(f"the JSON listing's next page {url} may not be opened{browser.dns_refusal(url)}")
         try:
             content = jsonrequest.body(spec, values, number, cursor)
         except ValueError as error:

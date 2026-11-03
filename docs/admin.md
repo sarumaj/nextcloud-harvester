@@ -39,7 +39,8 @@ JSON names a folder the Nextcloud server can read, `"translations_folder": "/pat
 
 - **Admin settings:** *Administration settings > Additional settings > Harvester* sets the
   numbers of jobs and browsers at once (1 to 8 each), the proxy, and the **Browser network
-  guard** (on by default; see *Safety*); the environment's values (`HARVESTER_RUNNERS`,
+  guard** (on by default; see *Safety*), and in a form of its own the
+  [DNS servers](#dns-servers); the environment's values (`HARVESTER_RUNNERS`,
   `HARVESTER_BROWSERS`, `HARVESTER_PROXY`, `HARVESTER_PROXY_NAME`, `HARVESTER_GUARD`: off with
   `0`, `false` or `off`) are the defaults. The app reads them each minute, so a change needs no
   restart: a lowered number lets the running jobs and open browsers finish first, and the guard's
@@ -77,6 +78,47 @@ JSON names a folder the Nextcloud server can read, `"translations_folder": "/pat
   changes what the form says, e.g. *Through the home connection* for a proxy at home. Without
   one the option is not offered, and a job that chose it goes directly. The recorder follows the
   form's choice.
+
+## DNS servers
+
+- **DNS servers** (the form *Harvester: DNS servers* below the other settings, or
+  `HARVESTER_DNS`; read each minute like them): every name the container looks up goes to these
+  servers instead of Docker's: the app's own, the browsers' guard, the browsers (with the guard
+  off too), the downloads, yt-dlp, gallery-dl, rclone and the mail servers. Plain addresses
+  (`9.9.9.9`, `[2620:fe::fe]:53`), DNS over TLS (`tls://dns.example`, port 853 unless given) or DNS
+  over HTTPS (`https://dns.example/dns-query`), several separated by commas; a ClientID goes into
+  the TLS name (`tls://<clientid>.dns.example`) or the path
+  (`https://dns.example/dns-query/<clientid>`), as AdGuard Home takes it. Nothing else is taken
+  (no other scheme, credentials, query or option); an entry the app cannot use leaves all of
+  them unused, and the app's log says why. Empty: Docker's DNS, as before.
+- **How:** AdGuard's [dnsproxy](https://github.com/AdguardTeam/dnsproxy) (in the image, its
+  version pinned and its checksum checked) runs as the app's user, without its secrets, on
+  `127.0.0.1:53` (Docker lets a container's users take port 53), and the app points
+  `/etc/resolv.conf` at it, which glibc, Go and Chromium read again when it changes. `start.sh`,
+  as root, keeps Docker's file as `/etc/resolv.conf.docker`, puts it back at a restart, and lets
+  the app's user write the file; emptied, the setting gives Docker's file back and dnsproxy
+  ends. The servers' own names (of `tls://` and `https://`) are looked up with Docker's servers,
+  and so are the names that must stay Docker's: Nextcloud's (`NEXTCLOUD_URL`), HaRP's
+  (`HP_FRP_ADDRESS`), the proxy's and Docker's search domains, which a public resolver may not
+  know.
+- **When they fail:** while the servers do not answer, names do not resolve and the jobs fail,
+  so that a filtering choice is never bypassed unseen; **Docker's DNS when the servers fail**
+  (`HARVESTER_DNS_FALLBACK`, off by default) has Docker's answer meanwhile (after dnsproxy's 10
+  s for a server). Nextcloud stays reachable either way, so a corrected setting is read. A
+  dnsproxy that does not start leaves Docker's DNS in place, and the status says so.
+- **Status:** the form's description says whether the servers are in use: the proxy runs and a
+  test lookup (`example.com`) works, or it failed, or why they are not in use (no servers, a
+  wrong entry, a proxy that does not start, a `/etc/resolv.conf` that cannot be changed).
+- **Blocked names:** a name the servers block with `0.0.0.0` or `::` (AdGuard Home's and
+  Pi-hole's default) is refused as any address that is not public, and the job's log says
+  *blocked by the DNS server (it answered 0.0.0.0)*, from the browser's guard, the browser's
+  checks and the downloads'. One blocked with *no such name* (NXDOMAIN) cannot be told from a
+  name that does not exist: its failure adds *the DNS servers do not know …, or block it*.
+- **With a proxy:** the guard looks the names up itself and asks the proxy for the checked
+  address, so the browser's names go to these servers; yt-dlp, gallery-dl and the downloads give
+  the proxy the names, which it looks up with its own resolver. Chromium uses the system's
+  resolver, the proxy at `127.0.0.1`: its secure DNS upgrades only resolvers it knows as DoH
+  providers.
 
 ## Bot checks: the browser, disguise and impersonation
 

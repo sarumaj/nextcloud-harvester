@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Added
+
+- DNS servers of the admin's choice: **DNS servers** (a form of its own in Harvester's admin
+  settings, or `HARVESTER_DNS`) sends every name the container looks up (the app and its guard,
+  the browsers, the downloads, yt-dlp, gallery-dl, rclone, the mail servers) to plain addresses,
+  DNS over TLS (`tls://host[:port]`) or DNS over HTTPS (`https://host[:port]/path`), a ClientID in
+  the name or path, e.g. a filtering AdGuard Home. AdGuard's `dnsproxy` (in the image, pinned
+  and checked) runs on `127.0.0.1:53` and `/etc/resolv.conf` names it; Nextcloud's, HaRP's and
+  the proxy's names stay Docker's. Servers that do not answer fail the lookups, unless **Docker's
+  DNS when the servers fail** (`HARVESTER_DNS_FALLBACK`, off by default) is on. The form's
+  description is the status: whether the proxy runs and a test lookup works.
+- A name the DNS servers block (they answer `0.0.0.0` or `::`) is told as such in the job's log,
+  by the browser's guard and the downloads' checks (*blocked by the DNS server*), and a name they
+  do not know as possibly blocked.
+
 ### Fixed
 
 - A recorded click that closes its own window (a sign-in popup's **Allow**) no longer fails its

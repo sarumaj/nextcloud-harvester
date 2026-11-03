@@ -18,7 +18,7 @@ from nc_py_api import AsyncNextcloudApp
 from nc_py_api.ex_app import AppAPIAuthMiddleware, anc_app, persistent_storage, run_app, set_handlers
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
-from harvester import browser, l10n, needs, ondemand, recipe_file, schedule, settings, watch
+from harvester import browser, dns, l10n, needs, ondemand, recipe_file, schedule, settings, watch
 from harvester.rclone_wizard import AUTHORIZE_ORIGIN, Authorization, WizardError, Wizards, remote_types
 from harvester.browser.recorder import Recorder
 from harvester.executor import (
@@ -971,9 +971,13 @@ async def enabled_handler(enabled: bool, nc: AsyncNextcloudApp) -> str:
                 RUNNERS, browser.BROWSERS, settings.DEFAULT_PROXY, settings.DEFAULT_PROXY_NAME, settings.DEFAULT_GUARD
             )
         )
+        await nc.ui.settings.register_form(
+            settings.dns_form(settings.DEFAULT_DNS, settings.DEFAULT_DNS_FALLBACK, dns.PROXY.status)
+        )
     else:
         await nc.ui.top_menu.unregister("harvester")
         await nc.ui.settings.unregister_form("harvester_admin")
+        await nc.ui.settings.unregister_form("harvester_dns")
     return ""
 
 

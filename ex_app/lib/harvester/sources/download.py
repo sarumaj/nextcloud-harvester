@@ -19,7 +19,7 @@ from urllib.parse import unquote, urljoin, urlparse
 import httpx
 from bs4 import BeautifulSoup
 
-from ..browser import allowed_url, challenge_in_html, reachable
+from ..browser import allowed_url, challenge_in_html, dns_refusal, reachable, unresolved
 from .impersonate import CurlTransport
 from .base import ChallengeError, Denied, Option, Refused, SourceError, WebPage, check_stop, pattern_search
 
@@ -239,7 +239,7 @@ def guarded_client(impersonate: bool = False, **options) -> httpx.Client:
 
     def check(request: httpx.Request) -> None:
         if not reachable(str(request.url)):
-            raise SourceError(f"{request.url} may not be reached")
+            raise SourceError(f"{request.url} may not be reached{dns_refusal(str(request.url))}")
 
     hooks = options.pop("event_hooks", {})
     settings = {"follow_redirects": True, "timeout": 120, "headers": {"User-Agent": USER_AGENT}} | options
@@ -395,7 +395,7 @@ def fetch(  # pylint: disable=too-many-arguments
     the file is followed once to the file it names (stand_in_target). told hears the answer
     the file came with (its headers: the name it gives)."""
     if not allowed_url(url):
-        raise SourceError(f"{url} may not be opened")
+        raise SourceError(f"{url} may not be opened{dns_refusal(url)}")
     failures = 0
     asked, followed = url, False
     for _ in range(MAX_WAITS + RETRIES + 1):
@@ -406,7 +406,7 @@ def fetch(  # pylint: disable=too-many-arguments
             # written so far is dropped.
             failures += 1
             if failures > RETRIES:
-                raise SourceError(f"{url} could not be fetched: {error}") from error
+                raise SourceError(f"{url} could not be fetched: {error}{unresolved(url, error)}") from error
             dest.seek(0)
             dest.truncate()
             sleep(RETRY_PAUSE * failures)

@@ -10,7 +10,8 @@ the app's notifications with the .json. The texts are:
 - what the page shows of the server's (the API's lists, translated on the page): the sources'
   titles, descriptions and account fields, their options' titles and help, the templates'
   titles, descriptions and parameters, as the app has them when it runs;
-- the admin's settings (settings.form): their titles, help and placeholders that are words;
+- the admin's settings (settings.form, settings.dns_form with each status): their titles, help
+  and placeholders that are words;
 - the API's errors given as plain strings (HTTPException(status, "…")), and the subjects and
   messages of the notifications (self.notify(nc, "…", values, "…"));
 - the server's texts with values, sent as templates the page translates (harvester.l10n):
@@ -112,8 +113,8 @@ def settings_texts() -> Iterator[tuple[object, str]]:
     example address, which is shown as it is)."""
     from harvester import settings  # pylint: disable=import-outside-toplevel,import-error
 
-    form = settings.form(1, 1)
-    for item in [form, *form.fields]:
+    forms = [settings.form(1, 1), *(settings.dns_form(status=status) for status in settings.dns.STATUSES)]
+    for item in [item for form in forms for item in [form, *form.fields]]:
         placeholder = getattr(item, "placeholder", "") or ""
         for text in (item.title, item.description, "" if "://" in placeholder else placeholder):
             yield text, "admin settings"

@@ -90,7 +90,7 @@ class Gallery(Source):
         super().__init__({"file_type": "image"} | options, credentials, client)
         self.url = str(self.settings["url"]).strip()
         if not allowed_url(self.url):
-            raise SourceError(f"the page {self.url or '(none)'} may not be opened")
+            raise SourceError(f"the page {self.url or '(none)'} may not be opened{browser.dns_refusal(self.url)}")
         problems = download.problems(self.settings)
         if problems:
             raise SourceError("; ".join(problems))

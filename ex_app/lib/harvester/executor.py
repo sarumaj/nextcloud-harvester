@@ -20,7 +20,7 @@ import httpx
 from croniter import croniter
 from nc_py_api import AsyncNextcloudApp
 
-from . import browser, needs, ondemand, runner, settings, versions
+from . import browser, dns, needs, ondemand, runner, settings, versions
 from .deleted import Deleted
 from .l10n import Said, said, said_n
 from .schedule import zone
@@ -311,8 +311,9 @@ class Executor:
             threading.Thread(target=self._runner, args=(number,), name=f"runner-{number}", daemon=True).start()
 
     def read_settings(self) -> None:
-        """Takes the admin's settings (runners, browsers, the proxy, the browsers' guard); unset,
-        the environment's stay."""
+        """Takes the admin's settings (runners, browsers, the proxy, the browsers' guard, the DNS
+        servers, whose form shows their status anew when it changes); unset, the environment's
+        stay."""
         if self._settings_client is None:
             self._settings_client = self.connect()
         nc = self._settings_client
@@ -336,6 +337,14 @@ class Executor:
         browser.SLOTS.limit = browsers
         browser.PROXY, browser.PROXY_NAME = proxy, name
         browser.GUARD = guard
+        servers = values.get(settings.DNS)
+        fallback = settings.switch(values.get(settings.DNS_FALLBACK), settings.DEFAULT_DNS_FALLBACK)
+        before = dns.PROXY.status
+        status = dns.PROXY.apply(settings.DEFAULT_DNS if servers is None else servers, fallback, dns.own_names(proxy))
+        browser.DNS = dns.PROXY.active
+        if status != before:
+            form = settings.dns_form(settings.DEFAULT_DNS, settings.DEFAULT_DNS_FALLBACK, status)
+            self.call(nc.ui.settings.register_form(form))
 
     def request(self, job_id: int, run: bool = True) -> None:
         """Runs the job as soon as a runner and its site are free (once, if asked twice); with

@@ -151,7 +151,7 @@ class Media(Source):
         super().__init__(*args, **kwargs)
         self.url = str(self.settings["url"]).strip()
         if not allowed_url(self.url):
-            raise SourceError(f"the page {self.url or '(none)'} may not be opened")
+            raise SourceError(f"the page {self.url or '(none)'} may not be opened{browser.dns_refusal(self.url)}")
         if int(self.settings["max_entries"]) < 1:
             raise SourceError("at least one entry per run")
         # The class used, so that tests can stand in for yt-dlp.
@@ -255,7 +255,7 @@ class Media(Source):
 
     def fetch(self, item: Item, dest: BinaryIO) -> None:
         if not allowed_url(item.url):
-            raise SourceError(f"{item.url} may not be opened")
+            raise SourceError(f"{item.url} may not be opened{browser.dns_refusal(item.url)}")
         with tempfile.TemporaryDirectory(prefix="harvester-media-") as directory:
             options = self.base() | {
                 "format": str(self.settings["format"]),

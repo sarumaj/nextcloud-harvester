@@ -26,7 +26,7 @@ from collections.abc import Callable, Iterator
 from typing import BinaryIO
 
 from .. import patterns
-from ..browser import allowed_host, allowed_url, child_env
+from ..browser import allowed_host, allowed_url, child_env, dns_refusal
 from .base import Item, Option, Source, SourceError, check_stop, killed_on_stop, stoppable_run
 
 # rclone's remotes that may not be used, and why (scripts/rclone_backends.py lists the rest from
@@ -186,7 +186,7 @@ def parse_config(text: str) -> tuple[str, dict[str, str]]:
         if key in AMBIENT_KEYS and value.strip().lower() not in ("", "false", "0", "no"):
             raise SourceError(f"the remote's setting {key} is not allowed (credentials from the app's machine)")
         if key in SERVER_KEYS and value and not reachable_server(value):
-            raise SourceError(f"the remote's {key} {value} may not be reached")
+            raise SourceError(f"the remote's {key} {value} may not be reached{dns_refusal(value)}")
     return name, settings
 
 

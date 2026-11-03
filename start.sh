@@ -85,6 +85,20 @@ if [ "$(id -u)" = 0 ] && id harvester >/dev/null 2>&1; then
         mkdir -p "$APP_PERSISTENT_STORAGE"
         chown -R harvester:harvester "$APP_PERSISTENT_STORAGE"
     fi
+    # The admin's DNS servers (harvester/dns.py): while they are set, the app points
+    # /etc/resolv.conf at its DNS proxy on 127.0.0.1. Docker's file is kept as
+    # /etc/resolv.conf.docker, root's; a file the app had changed before a restart (which Docker
+    # leaves as it is) is first given Docker's back. The app's user may write the file in place
+    # (Docker mounts it, so it is never replaced); a file that cannot be changed stays Docker's.
+    if [ -f /etc/resolv.conf ]; then
+        if head -n 1 /etc/resolv.conf | grep -q '^# Harvester: its DNS proxy' && [ -f /etc/resolv.conf.docker ]; then
+            cat /etc/resolv.conf.docker > /etc/resolv.conf || true
+        else
+            cp /etc/resolv.conf /etc/resolv.conf.docker && chmod 0644 /etc/resolv.conf.docker
+        fi
+        { chgrp harvester /etc/resolv.conf && chmod 0664 /etc/resolv.conf; } \
+            || echo "/etc/resolv.conf cannot be changed: the admin's DNS servers are not used"
+    fi
     AS_APP="setpriv --reuid=harvester --regid=harvester --init-groups --no-new-privs -- env HOME=/home/harvester"
     AS_FRP="setpriv --reuid=$FRP_USER --regid=$FRP_USER --init-groups --no-new-privs --"
 fi

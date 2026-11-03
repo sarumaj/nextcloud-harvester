@@ -48,6 +48,9 @@ the app's browser or taken from a template, not by code.
   recorder's screen above its steps; a job's form with the source's essentials, the other options
   folded into groups; Escape twice takes the keyboard out of a browser's screen; questions in a
   dialog of the page, errors and a run's outcomes told to screen readers once.
+- **DNS servers of the admin's choice:** every lookup of the app, its browsers and its helper
+  programs through plain DNS, DNS over TLS or DNS over HTTPS (a filtering AdGuard Home, say); a
+  blocked name is said to be blocked.
 - **Careful with sites and with the server:** one job per site at a time, the pauses a site asks
   for, files fetched once, a browser that skips images, fonts and videos while it walks a site;
   the browsers and downloads reach only public addresses.
@@ -70,9 +73,10 @@ the app's browser or taken from a template, not by code.
 
 Register the app with AppAPI on a deploy daemon: its image is `ghcr.io/sarumaj/harvester`, as
 `appinfo/info.xml` names it (also on Forgejo's registry). Then set the numbers of jobs and
-browsers, the proxy and the network guard under *Administration settings > Additional settings >
-Harvester*. The [administrator's guide](docs/admin.md) has the details: the registry, the
-settings, the proxy, the guard, disguise and impersonation, and the backup.
+browsers, the proxy, the network guard and the DNS servers under *Administration settings >
+Additional settings > Harvester*. The [administrator's guide](docs/admin.md) has the details:
+the registry, the settings, the proxy, the DNS servers, the guard, disguise and impersonation,
+and the backup.
 
 ## Using it
 

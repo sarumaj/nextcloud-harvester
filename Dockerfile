@@ -77,6 +77,24 @@ open('/usr/local/bin/rclone', 'wb').write(z.read(next(n for n in z.namelist() if
     rm /tmp/rclone.zip; \
     /usr/local/bin/rclone version | head -1
 
+# AdGuard's dnsproxy, through which the container's lookups go to the admin's DNS servers
+# (harvester/dns.py): a static Go program, checked like frpc.
+ARG DNSPROXY_VERSION=0.86.0
+ARG DNSPROXY_AMD64_SHA256=17ac43f76ebfcedf547c663f6f31aa70e68b8eb6fc41d2fc37d3bfe21a2ced66
+ARG DNSPROXY_ARM64_SHA256=eda840d39da0c2777ea2431d3d73407e813e3fc0e411bfe256a9fb4b97d08247
+
+RUN set -ex; \
+    if [ "$(uname -m)" = "aarch64" ]; then DNSPROXY_ARCH=arm64; DNSPROXY_SHA256="${DNSPROXY_ARM64_SHA256}"; \
+    else DNSPROXY_ARCH=amd64; DNSPROXY_SHA256="${DNSPROXY_AMD64_SHA256}"; fi; \
+    curl -fsSL "https://github.com/AdguardTeam/dnsproxy/releases/download/v${DNSPROXY_VERSION}/dnsproxy-linux-${DNSPROXY_ARCH}-v${DNSPROXY_VERSION}.tar.gz" \
+        -o /tmp/dnsproxy.tar.gz; \
+    echo "${DNSPROXY_SHA256}  /tmp/dnsproxy.tar.gz" | sha256sum -c -; \
+    mkdir /tmp/dnsproxy; \
+    tar -C /tmp/dnsproxy -xzf /tmp/dnsproxy.tar.gz; \
+    install -m 0755 "/tmp/dnsproxy/linux-${DNSPROXY_ARCH}/dnsproxy" /usr/local/bin/dnsproxy; \
+    rm -rf /tmp/dnsproxy /tmp/dnsproxy.tar.gz; \
+    /usr/local/bin/dnsproxy --version
+
 #############################
 # Stage 2: Final Runtime Image
 #############################
