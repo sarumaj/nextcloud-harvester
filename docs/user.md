@@ -234,9 +234,12 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   ablehnen*, *Odrzuć wszystkie*, … or, without one, *Only necessary*, *Nur notwendige Cookies*,
   *Tylko niezbędne*, …; such a button counts only inside a known manager's banner, or inside a
   dialog or a floating banner (named cookie, consent or gdpr) whose text speaks of cookies.
-  Nothing else is clicked, and the recorder records none of it. A click a recipe recorded on such
-  a banner (a known manager's element, *Accept all*, …) is optional then: the banner may be gone.
-  A banner of another kind still takes a recorded click (optional, as above).
+  Nothing else is clicked, and the recorder records none of it. The run's progress log says so
+  on the page where it happened (*OneTrust's cookie banner dismissed on shop.example: “Reject
+  All”*, *A cookie banner dismissed on …*), once a manager in a run (and once for the banners of
+  none), not on every page of the walk. A click a recipe recorded on such a banner (a known
+  manager's element, *Accept all*, …) is optional then: the banner may be gone. A banner of
+  another kind still takes a recorded click (optional, as above).
 - **Pauses and retries:** a step with `"pause": 5` waits that many seconds (above 0, at most 60)
   before it, for a page that needs a moment after the step before. A step with `"retry":
   {"times": 3, "delay": 2}` is tried again up to 3 more times (1 to 10), 2 seconds apart (0 to

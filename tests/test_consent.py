@@ -6,7 +6,8 @@ banners of exact texts in German, English and Polish, answered with "Reject all"
 necessary"; nothing else clicked (a dialog that is no cookie banner, a button outside a banner, a
 cookie page that does not float); the job's steps and pages, its
 option (on for new jobs, off for those saved before) and the recorder's browser, which records no
-step of it; a recorded click on a banner made optional."""
+step of it; a recorded click on a banner made optional; the dismissals in a run's progress log,
+once a manager."""
 
 # pylint: disable=missing-function-docstring,protected-access
 
@@ -161,6 +162,52 @@ def test_more_consent_managers_are_answered_by_their_own_reject_buttons(monkeypa
             assert clicked(driver.main, len(expected)) == expected, path
     finally:
         driver.close()
+
+
+@needs_chromium
+def test_the_dismissals_are_in_the_progress_log_once_a_manager(monkeypatch):
+    monkeypatch.setattr(site_module, "guard", serve)
+    lines: list[tuple[str, str]] = []
+    driver = site_module.BrowserDriver([], {}, consent=True, dismissed=consent.Told(lambda *line: lines.append(line)))
+    try:
+        for path in ("/onetrust", "/cookieyes", "/de", "/onetrust", "/pl"):
+            page = driver.open(SITE + path)
+            clicked(page, 1)
+            driver.done(page)
+    finally:
+        driver.close()
+    assert lines == [
+        ("info", "OneTrust's cookie banner dismissed on shop.example: “Reject All”"),
+        ("info", "CookieYes's cookie banner dismissed on shop.example: “Reject all”"),
+        ("info", "A cookie banner dismissed on shop.example: “Nur notwendige Cookies”"),
+    ], "each manager once, the banners of none once"
+    assert lines[0][1].template == {  # type: ignore[attr-defined]
+        "text": "{manager}'s cookie banner dismissed on {host}: “{button}”",
+        "params": {"manager": "OneTrust", "host": "shop.example", "button": "Reject All"},
+    }
+
+
+class Frame:  # pylint: disable=too-few-public-methods
+    """A frame whose consent.js noted these clicks."""
+
+    def __init__(self, noted):
+        self.noted = noted
+
+    def evaluate(self, script: str):
+        assert script == consent.NOTED
+        return self.noted
+
+
+def test_only_known_managers_are_logged():
+    lines: list[tuple[str, str]] = []
+    told = consent.Told(lambda *line: lines.append(line))
+    page = type("Page", (), {"url": "https://shop.example/x", "frames": []})()
+    page.frames = [
+        Frame([{"name": "Evil <script>", "text": "x"}, "banner", {"name": "Osano", "text": "Reject" * 40}]),
+        Frame(None),
+    ]
+    told(page)
+    assert lines == [("info", f"Osano's cookie banner dismissed on shop.example: “{('Reject' * 40)[:80]}”")]
 
 
 @needs_chromium

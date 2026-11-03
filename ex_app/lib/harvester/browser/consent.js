@@ -13,8 +13,9 @@
 //   text speaks of cookies.
 //
 // Each button is clicked once; the page's root carries data-harvester-consent while the click is
-// dispatched, so that recorder.js records no step of it. The pages are swept as they change, for
-// a minute after they load.
+// dispatched, so that recorder.js records no step of it, and noted in window.__harvesterConsent
+// ({name, text}: the manager, or "banner", and the button's text), which a job's run reads for
+// its progress log (consent.py). The pages are swept as they change, for a minute after they load.
 (() => {
 	if (window.__harvesterConsent) return
 	window.__harvesterConsent = []
@@ -101,6 +102,7 @@
 
 	function press(el, name) {
 		clicked.add(el)
+		const text = (el.tagName === 'INPUT' ? el.value : el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80)
 		const root = document.documentElement
 		root.setAttribute('data-harvester-consent', '')
 		try {
@@ -108,7 +110,7 @@
 		} finally {
 			root.removeAttribute('data-harvester-consent')
 		}
-		window.__harvesterConsent.push(name)
+		window.__harvesterConsent.push({ name, text })
 	}
 
 	// An element named like a banner, or the floating element it is in (up to a few levels up).

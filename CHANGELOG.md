@@ -28,6 +28,9 @@
   older CookieLawInfo, Complianz, Osano, Iubenda, consentmanager.net, Cookie Script, Termly,
   Axeptio, Cookie Notice and Google's Funding Choices (*Do not consent*); a recorded click on
   one of their banners is optional then.
+- Cookie banners dismissed in the progress log: an info line on the page where it happened,
+  naming the consent manager (or *a cookie banner*) and the button clicked, once a manager in a
+  run.
 
 ### Changed
 

@@ -115,8 +115,10 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes,too
     # Told of each step as it is played (tabs.step_event): the recorder's test shows it on its
     # Steps, a job's run logs its pauses and retries.
     told: Callable[[dict], None] | None = None
-    # Whether cookie banners are dismissed on their own (consent.py): a step's banner may be gone.
+    # Whether cookie banners are dismissed on their own (consent.py): a step's banner may be gone;
+    # told of each page the run is done with, for its dismissals (consent.Told).
     consent = False
+    dismissed: Callable[[Any], None] | None = None
 
     def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
         self,
@@ -135,10 +137,11 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes,too
         stealth: bool = False,
         told: Callable[[dict], None] | None = None,
         consent: bool = False,
+        dismissed: Callable[[Any], None] | None = None,
     ):
         self.saw = saw
         self.told = told
-        self.consent = consent
+        self.consent, self.dismissed = consent, dismissed
         self.timezone = timezone
         if not browser.SLOTS.acquire(timeout=LOCK_TIMEOUT, kind="job"):  # pylint: disable=consider-using-with
             raise SourceError("no browser came free (recordings use them all)")
@@ -179,6 +182,8 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes,too
                 self.context.add_init_script(banners.SCRIPT)
             self.main = self.context.new_page()
             self.sign_in(steps, secrets, session, start)
+            if dismissed is not None:
+                dismissed(self.main)
         except BaseException as error:
             # Whatever failed, the browser closes and its lock is free for the next job; a page
             # handed over to the person keeps its session, for them to go on in.
@@ -435,6 +440,8 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes,too
         return page.url
 
     def done(self, page: Any) -> None:
+        if self.dismissed is not None:
+            self.dismissed(page)  # pylint: disable=not-callable
         # A page a click landed on: back to the listing it was clicked on (the newest first).
         landings = self.__dict__.get("_landings", [])
         if landings and landings[-1].page is page:
@@ -804,6 +811,8 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
                     stealth=bool(int(self.settings["stealth"])),
                     told=self._step_told,
                     consent=bool(int(self.settings["consent"])),
+                    # Once a manager a run, through a sign-in anew too.
+                    dismissed=self.__dict__.setdefault("_banners", banners.Told(self.report)),
                 )
             except attend.HandedOver as error:
                 self.handed = error.session
