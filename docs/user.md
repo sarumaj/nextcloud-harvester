@@ -648,7 +648,9 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   it takes the screen's size, pages lay out for it, the controls float over it and the recipe is in
   a drawer. When the browser cannot start, the page says why instead of showing an empty screen. The
   screen takes the cursor the page shows under the mouse (a crosshair while picking); the wheel's
-  movement goes to the browser once a frame, in pixels.
+  movement goes to the browser once a frame, in pixels. While the screen has the keyboard every
+  key goes to the site, Tab and Escape too (*Keys go to the site; press Esc twice to leave*):
+  Escape twice within a second leaves it for the page's next control.
 - **Cookies** (`browser/jar.py`): both browser views (the recorder, **Continue in the browser**)
   have a **Cookies** panel with the browser's cookies, grouped by domain: this site's (those the
   page gets) or all, with path, expiry ("session" without one), Secure, HttpOnly and SameSite.

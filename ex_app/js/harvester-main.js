@@ -961,7 +961,7 @@
 			signIn = socket
 			socket.addEventListener('close', () => { if (signIn === socket) signIn = null })
 			const send = (message) => socket.readyState === WebSocket.OPEN && socket.send(JSON.stringify(message))
-			const screen = el('img', { class: 'harvester-screen', tabindex: '0', alt: t('The sign-in’s browser') })
+			const screen = el('img', { class: 'harvester-screen', alt: t('The sign-in’s browser') })
 			const url = el('input', { class: 'harvester-url', readonly: '' })
 			const starting = t('Starting rclone and the browser…')
 			const message = el('p', { class: 'harvester-muted', text: starting })
@@ -1342,14 +1342,18 @@
 	// whose text goes to the browser as text. Returns the box to put on the page.
 	function wireScreen(screen, send, socket) {
 		watchScreen(screen, send, socket)
+		// Every key goes to the site, Tab and Escape too: Escape twice within a second leaves the
+		// screen for the page's next control, as the hint says while the screen has the keyboard.
+		wireScreens += 1
+		const hint = el('small', { class: 'harvester-keys-hint', id: `harvester-keys-hint-${wireScreens}`, text: t('Keys go to the site; press Esc twice to leave') })
 		const keys = el('textarea', {
-			class: 'harvester-keys', 'aria-label': t('Keyboard of the remote browser'),
+			class: 'harvester-keys', 'aria-label': t('Keyboard of the remote browser'), 'aria-describedby': hint.id,
 			autocomplete: 'off', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false',
 		})
 		// Until its first frame (or instead of it, when the browser cannot start or is taken),
 		// the screen says what is going on, not an empty image.
 		const notice = el('div', { class: 'harvester-screen-notice', text: t('Starting the browser…') })
-		const box = el('div', { class: 'harvester-screen-box' }, screen, notice, keys)
+		const box = el('div', { class: 'harvester-screen-box' }, screen, notice, keys, hint)
 		// A frame: a binary message's JPEG (its object URL, the one before revoked), or base64.
 		let frameUrl = null
 		screen.frame = (data) => {
@@ -1412,7 +1416,17 @@
 			wheel.dy += event.deltaY * unit * scale
 		}, { passive: false })
 
+		let escaped = 0
 		keys.addEventListener('keydown', (event) => {
+			if (event.key === 'Escape' && !event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey) {
+				if (Date.now() - escaped < 1000) {
+					event.preventDefault()
+					escaped = 0
+					leaveScreen(box)
+					return
+				}
+				escaped = Date.now()
+			}
 			const action = keyAction(event)
 			if (!action) return // typing: the text arrives as input
 			event.preventDefault()
@@ -1431,6 +1445,18 @@
 			send({ type: 'text', text: event.clipboardData.getData('text') })
 		})
 		return box
+	}
+
+	// The keyboard out of a browser's screen (Escape twice): to the next control after it on the
+	// page, or the first one before it when none follows.
+	let wireScreens = 0
+	function leaveScreen(box) {
+		const controls = [...document.querySelectorAll('button, input, select, textarea, a[href], summary')]
+			.filter((node) => !box.contains(node) && !node.disabled && node.getClientRects().length)
+		const next = controls.find((node) => box.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING)
+		const target = next || controls.reverse().find((node) => box.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_PRECEDING)
+		if (target) target.focus()
+		else document.activeElement.blur()
 	}
 
 	// The recorder's view over the whole window, with its controls floating over the screen:
@@ -1732,7 +1758,7 @@
 	function openSession(root, job, at = '') {
 		const socket = new WebSocket(`${RECORDER}?job=${job.id}${at ? `&at=${encodeURIComponent(at)}` : ''}`)
 		const send = (message) => socket.readyState === WebSocket.OPEN && socket.send(JSON.stringify(message))
-		const screen = el('img', { class: 'harvester-screen', tabindex: '0', alt: t('The job’s browser') })
+		const screen = el('img', { class: 'harvester-screen', alt: t('The job’s browser') })
 		const url = el('input', { class: 'harvester-url', value: job.challenge_url || '', 'aria-label': t('Address') })
 		url.addEventListener('keydown', (event) => { if (event.key === 'Enter') send({ type: 'goto', url: url.value }) })
 		const starting = t('Starting the browser…')
@@ -1836,7 +1862,7 @@
 		const query = flags.filter((box) => box && box.checked).map((box) => `${box.dataset.option}=1`).join('&')
 		const socket = new WebSocket(query ? `${RECORDER}?${query}` : RECORDER)
 		const send = (message) => socket.readyState === WebSocket.OPEN && socket.send(JSON.stringify(message))
-		const screen = el('img', { class: 'harvester-screen', tabindex: '0', alt: t('The recorder’s browser') })
+		const screen = el('img', { class: 'harvester-screen', alt: t('The recorder’s browser') })
 		const url = el('input', { class: 'harvester-url', placeholder: t('https://… the site’s first page'), 'aria-label': t('Address') })
 		const message = el('p', { class: 'harvester-error' })
 		const network = networkLine()
@@ -2945,6 +2971,8 @@
 		#harvester .harvester-screen-notice { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px; text-align: center; color: var(--color-text-maxcontrast); }
 		#harvester .harvester-screen-notice[hidden] { display: none; }
 		#harvester .harvester-screen-box:focus-within .harvester-screen { outline: 2px solid var(--color-primary-element); }
+		#harvester .harvester-keys-hint { position: absolute; left: 8px; bottom: 8px; padding: 2px 8px; border-radius: var(--border-radius); background: var(--color-main-background); color: var(--color-main-text); box-shadow: 0 1px 4px var(--color-box-shadow); opacity: 0; pointer-events: none; }
+		#harvester .harvester-screen-box:focus-within .harvester-keys-hint { opacity: 0.92; }
 		#harvester .harvester-drawer-switch { display: none; }
 		#harvester .harvester-overlay-toggle { display: none; }
 		/* A full window: the screen fills it, the controls float over it, the recipe is a drawer. */

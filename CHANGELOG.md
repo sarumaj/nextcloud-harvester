@@ -123,6 +123,10 @@
 - The jobs' states *OK*, *Failed*, *Sign-in refused*, *Changed*, *Needs you* and *Paused* were
   their text colour on their full colour, hard to read in both themes: a light tint of the colour
   behind the text now.
+- The browser views' screen kept the keyboard: Tab, Shift+Tab and Escape went to the site, with
+  no way out but the mouse. Escape twice within a second leaves it for the page's next control,
+  which a hint says while the screen has the keyboard; the screen's picture is no longer a stop
+  of its own for Tab (its hidden keyboard field is).
 
 ## 0.13.1 - 2026-11-03
 

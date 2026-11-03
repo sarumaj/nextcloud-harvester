@@ -307,6 +307,7 @@
         "File links that are clicked are listed, not clicked: the test downloads nothing (a run clicks each).": "Dateilinks, die angeklickt werden, sind nur aufgelistet, nicht angeklickt: Der Test lädt nichts herunter (ein Durchlauf klickt jeden an).",
         "Pages to save, or to keep the files of, are listed, not opened: the test saves nothing (a run opens each; a title in the file name comes from the page then).": "Seiten, die gespeichert werden oder deren Dateien behalten werden, sind nur aufgelistet, nicht geöffnet: Der Test speichert nichts (ein Durchlauf öffnet jede; ein Titel im Dateinamen kommt dann von der Seite).",
         "What the browser showed then": "Was der Browser damals zeigte",
+        "Keys go to the site; press Esc twice to leave": "Tasten gehen an die Seite; zweimal Esc drücken, um sie zu verlassen",
         "Keyboard of the remote browser": "Tastatur des entfernten Browsers",
         "Starting the browser…": "Browser wird gestartet …",
         "Full window (again: back)": "Ganzes Fenster (erneut: zurück)",

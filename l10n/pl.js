@@ -324,6 +324,7 @@ OC.L10N.register(
         "File links that are clicked are listed, not clicked: the test downloads nothing (a run clicks each).": "Linki do plików, które się klika, są tylko wypisane, nie kliknięte: test niczego nie pobiera (przebieg klika każdy).",
         "Pages to save, or to keep the files of, are listed, not opened: the test saves nothing (a run opens each; a title in the file name comes from the page then).": "Strony do zapisania albo do zachowania ich plików są tylko wypisane, nie otwarte: test niczego nie zapisuje (przebieg otwiera każdą; tytuł w nazwie pliku pochodzi wtedy ze strony).",
         "What the browser showed then": "Co wtedy pokazywała przeglądarka",
+        "Keys go to the site; press Esc twice to leave": "Klawisze trafiają do strony; naciśnij dwa razy Esc, by wyjść",
         "Keyboard of the remote browser": "Klawiatura zdalnej przeglądarki",
         "Starting the browser…": "Uruchamianie przeglądarki…",
         "Full window (again: back)": "Pełne okno (ponownie: powrót)",
