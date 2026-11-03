@@ -84,7 +84,9 @@ its attribute or else its text, narrowed by regex, of a type (text, number, date
 
 The file links may be a JSON listing instead ("kind": "json", harvester.jsonlist): the request's
 address, the path to its items and the fields of each item; their values have a "field" in
-place of where on the page.
+place of where on the page. Its request may be a POST with a body (a form, JSON, GraphQL), headers
+whose tokens a run reads from a cookie, a <meta> or the page's storage, and pages counted in the
+body or chained by a cursor from the answer (harvester.jsonrequest).
 
 The file links may keep the pages they lead to instead of downloading them: "save": "pdf",
 "html" or "markdown" opens each in the browser and saves the page itself as such a file (a
@@ -105,7 +107,7 @@ import re
 import string
 from urllib.parse import urlsplit
 
-from . import patterns
+from . import jsonrequest, patterns
 from .browser import VIEWPORT_MAX, VIEWPORT_MIN, allowed_url
 from .l10n import Said, listed, said
 from .patterns import token_parameters
@@ -687,8 +689,10 @@ def _check_json(links: dict) -> list[str]:
         and page.get("step", 1) >= 1
     ):
         return ["file links: the JSON's pages are a parameter with its first value (0 or more) and step (1 or more)"]
-    return _check_pattern("file links", links.get("pattern", "")) + _check_values(
-        "file links", links.get("values"), True
+    return (
+        _check_pattern("file links", links.get("pattern", ""))
+        + _check_values("file links", links.get("values"), True)
+        + jsonrequest.check(links)
     )
 
 
@@ -817,14 +821,15 @@ def token_warnings(recipe: dict) -> list[Said]:
 def uses_browser(recipe: dict) -> bool:
     """Whether the recipe needs the browser: it has steps to replay, a next page or numbered
     pages that are buttons (clicked, no address to fetch), file links or links to follow that
-    are clicked, a level that loads more by scrolling or with a button, or pages it saves or
-    captures files of."""
+    are clicked, a level that loads more by scrolling or with a button, pages it saves or
+    captures files of, or a JSON listing's header read from the page's storage."""
     after = recipe.get("next") or {}
     buttons = isinstance(after, dict) and bool(after.get("buttons"))
     clicked = any(spec.get("click") for spec in levels(recipe))
     loading = any("scroll" in spec or "load_more" in spec for spec in levels(recipe))
     keeping = bool(recipe.get("save")) or any(spec.get("save") or spec.get("capture") for spec in levels(recipe))
-    return bool(recipe.get("steps")) or buttons or clicked or loading or keeping
+    stored = isinstance(recipe.get("links"), dict) and jsonrequest.uses_browser(recipe["links"])
+    return bool(recipe.get("steps")) or buttons or clicked or loading or keeping or stored
 
 
 def edit_step(step: dict, message: dict) -> None:

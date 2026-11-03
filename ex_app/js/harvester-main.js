@@ -1053,8 +1053,40 @@
 		const param = el('input', { class: 'harvester-pattern', value: page.param || '', spellcheck: 'false', 'aria-label': t('Page parameter'), placeholder: 'page' })
 		const first = el('input', { type: 'number', min: '0', value: String(page.first ?? 1), 'aria-label': t('First value') })
 		const step = el('input', { type: 'number', min: '1', value: String(page.step ?? 1), 'aria-label': t('Step') })
-		const pages = () => send({ type: 'json-edit', changes: { page: param.value.trim() ? { param: param.value.trim(), first: Number(first.value || 0), step: Number(step.value || 1) } : null } })
-		for (const box of [param, first, step]) box.addEventListener('change', pages)
+		const post = spec.method === 'POST'
+		const inBody = (part) => el('label', { title: t('The value goes into the request’s body (a field’s path such as variables.page), not into its address') }, (() => {
+			const box = el('input', { type: 'checkbox', class: 'harvester-json-in' })
+			box.checked = Boolean(part && part.in === 'body')
+			return box
+		})(), ` ${t('in the body')}`)
+		const pageIn = inBody(page)
+		const pages = () => send({ type: 'json-edit', changes: { page: param.value.trim() ? { param: param.value.trim(), first: Number(first.value || 0), step: Number(step.value || 1), in: pageIn.firstChild.checked ? 'body' : 'query' } : null } })
+		for (const box of [param, first, step, pageIn.firstChild]) box.addEventListener('change', pages)
+		const chain = spec.cursor || {}
+		const cursorBox = (key, label, placeholder) => el('input', { class: 'harvester-pattern', value: chain[key] || '', spellcheck: 'false', 'aria-label': label, title: label, placeholder })
+		const cursorFrom = cursorBox('from', t('Cursor: its field in the answer'), 'data.items.pageInfo.endCursor')
+		const cursorTo = cursorBox('to', t('Sent as (empty: the field is the next page’s address)'), 'variables.after')
+		const cursorMore = cursorBox('more', t('More pages while (a field that is true; optional)'), 'pageInfo.hasNextPage')
+		const cursorIn = inBody(chain)
+		const cursors = () => send({ type: 'json-edit', changes: { cursor: cursorFrom.value.trim() ? { from: cursorFrom.value, to: cursorTo.value, more: cursorMore.value, in: cursorIn.firstChild.checked ? 'body' : 'query' } : null } })
+		for (const box of [cursorFrom, cursorTo, cursorMore, cursorIn.firstChild]) box.addEventListener('change', cursors)
+		const request = []
+		if (post) {
+			const text = typeof spec.body === 'string' ? spec.body : JSON.stringify(spec.body ?? {}, null, 2)
+			const body = el('textarea', { class: 'harvester-json-body', rows: '6', spellcheck: 'false', 'aria-label': t('Body') })
+			body.value = text
+			body.addEventListener('change', () => send({ type: 'json-edit', changes: { body: body.value } }))
+			request.push(el('p', { class: 'harvester-muted', text: t('Asked for with POST ({type}), with this body; a text that is only a value’s placeholder, such as {year}, takes the value.', { type: spec.content_type || 'application/json', year: '"{year}"' }) }), body)
+		}
+		const headers = Object.entries(spec.headers || {})
+		if (headers.length) {
+			request.push(el('p', { class: 'harvester-muted', text: t('Headers it sends:') }), el('ul', {}, ...headers.map(([name, value]) => el('li', {},
+				el('code', { text: name }), ' ',
+				el('span', { text: typeof value === 'string' ? value : t('read when the job runs from the {source} {name}', { source: { cookie: t('cookie'), meta: t('page’s meta'), storage: t('page’s storage') }[value.from] || value.from, name: value.name }) })))))
+		}
+		if (proposal && proposal.dropped && proposal.dropped.length) {
+			request.push(el('p', { class: 'harvester-error', text: t('The page also sent {names}, a token found in none of its cookies, meta or storage: the job leaves it out and sends its cookies. If the listing then answers 401 or 403, it needs a sign-in in the browser (steps) or cookies in the job’s account.', { names: proposal.dropped.join(', ') }) }))
+		}
 		const fieldName = el('input', { class: 'harvester-pattern', spellcheck: 'false', 'aria-label': t('Field'), placeholder: t('e.g. issued or meta.date') })
 		const box = el('div', { class: 'harvester-level', 'data-target': 'links', 'data-level': '0' },
 			el('div', { class: 'harvester-level-head' }, el('h4', { text: `${title} (JSON)` }),
@@ -1065,11 +1097,14 @@
 			input('file', t('File’s address (field of an item, e.g. pdf.href)')),
 			input('text', t('Text (field of an item, e.g. title)')),
 			input('pattern', t('Pattern on the file’s address (optional; named groups become values)')),
-			el('div', { class: 'harvester-toolbar' }, el('span', { text: `${t('Pages: parameter')} ` }), param, el('span', { text: ` ${t('from')} ` }), first, el('span', { text: ` ${t('step')} ` }), step))
+			...request,
+			el('div', { class: 'harvester-toolbar' }, el('span', { text: `${t('Pages: parameter')} ` }), param, el('span', { text: ` ${t('from')} ` }), first, el('span', { text: ` ${t('step')} ` }), step, ...(post ? [' ', pageIn] : [])),
+			el('div', { class: 'harvester-toolbar' }, el('span', { text: `${t('Or a cursor:')} ` }), cursorFrom, ' → ', cursorTo, ' ', cursorMore, ...(post ? [' ', cursorIn] : [])))
 		if (proposal && proposal.error) box.append(el('p', { class: 'harvester-error', text: proposal.error }))
 		if (proposal && proposal.chosen) {
 			const counts = { items: proposal.items, found: proposal.found, matching: proposal.matching }
-			box.append(el('p', { text: `${t('In the answer: {items} items, {found} with a file’s address; {matching} match the pattern.', counts)} ${proposal.following ? t('The next page:') : t('One page (no page parameter).')}` }))
+			const single = spec.cursor ? t('The answer gives no next cursor: one page.') : t('One page (no page parameter).')
+			box.append(el('p', { text: `${t('In the answer: {items} items, {found} with a file’s address; {matching} match the pattern.', counts)} ${proposal.following ? t('The next page:') : single}` }))
 			if (proposal.following) box.append(el('code', { text: proposal.following }))
 			if (proposal.sample) box.append(el('details', {}, el('summary', { text: t('The first item') }), el('code', { text: proposal.sample })))
 			box.append(examplesList(proposal))
@@ -1757,9 +1792,11 @@
 		testJob.disabled = !jobId()
 		const networkBox = el('div', { class: 'harvester-requests', hidden: '' })
 		const renderRequests = () => networkBox.replaceChildren(
-			el('p', { class: 'harvester-muted', text: requests.length ? t('The page’s requests answered with JSON (newest last). One whose items are the files can be the file links.') : t('No answers in JSON yet: browse the listing, its requests show here.') }),
+			el('p', { class: 'harvester-muted', text: requests.length ? t('The page’s requests answered with JSON, GET and POST (newest last). One whose items are the files can be the file links.') : t('No answers in JSON yet: browse the listing, its requests show here.') }),
 			el('ul', {}, ...requests.map((request) => el('li', {},
+				request.method === 'POST' ? el('strong', { text: 'POST ' }) : '',
 				el('code', { text: request.url }), ` ${(request.size / 1000).toFixed(1)} KB (${request.status}) `,
+				request.summary ? el('small', { class: 'harvester-muted', text: `${request.summary} ` }) : '',
 				el('button', {
 					type: 'button',
 					text: previews.has(request.id) ? t('Hide') : t('Preview'),
@@ -2487,6 +2524,7 @@
 		#harvester .harvester-cookies th, #harvester .harvester-cookies td { padding: 2px 6px; text-align: left; vertical-align: top; }
 		#harvester .harvester-cookie-value { white-space: pre-wrap; }
 		#harvester .harvester-network { margin: 4px 0; }
+		#harvester .harvester-json-body { width: 100%; font-family: monospace; font-size: 12px; }
 		#harvester .harvester-preview { max-height: 320px; overflow: auto; margin: 6px 0; padding: 8px; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--color-background-dark); border-radius: var(--border-radius); }
 		#harvester .harvester-network.harvester-proxied { color: var(--color-success-text, var(--color-success)); }
 		#harvester .harvester-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 16px; }

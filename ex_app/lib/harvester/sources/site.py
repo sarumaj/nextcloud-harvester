@@ -414,19 +414,31 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes,too
         if page is not self.main:
             page.close()
 
+    def here(self) -> str:
+        return self.main.url
+
+    def cookie_value(self, url: str, name: str) -> str | None:
+        return next((cookie["value"] for cookie in self.context.cookies(url) if cookie["name"] == name), None)
+
+    def page_value(self, page: Any, kind: str, name: str) -> str | None:
+        return page.evaluate(near.PAGE_VALUE, [kind, name])
+
     @contextlib.contextmanager
-    def download(self, url: str) -> Iterator[Response]:
+    def download(
+        self, url: str, *, method: str = "GET", content: bytes | None = None, headers: dict | None = None
+    ) -> Iterator[Response]:
         # Over HTTP with the browser's cookies, user agent, language and proxy, not with the
         # context's own requests (context.request), which pass by its routes: the guarded client
         # checks every request and redirect on the addresses the names resolve to, and the file
         # comes in chunks, never whole into memory.
         hooks = {"request": [cookie_jar.session_cookies(self.context.storage_state()["cookies"])]}
         options = {"proxy": self.proxy} if self.proxy else {}
-        headers = {"User-Agent": self.user_agent, "Accept-Language": accept_language(browser.LOCALE)}
+        own = {"User-Agent": self.user_agent, "Accept-Language": accept_language(browser.LOCALE)}
         with download.guarded_client(
-            **download.impersonation(self.impersonate), event_hooks=hooks, headers=headers, **options
+            **download.impersonation(self.impersonate), event_hooks=hooks, headers=own, **options
         ) as client:
-            with download.http(client, {"Referer": self.referer} if self.referer else None)(url) as response:
+            sent = ({"Referer": self.referer} if self.referer else {}) | (headers or {})
+            with download.http(client, sent or None, method, content)(url) as response:
                 yield response
 
     def close(self) -> None:

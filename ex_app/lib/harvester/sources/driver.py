@@ -10,6 +10,7 @@ the browser, and says so.
 
 import abc
 import contextlib
+import functools
 import time
 from collections.abc import Callable
 from typing import Any, BinaryIO, NamedTuple
@@ -48,7 +49,7 @@ def moved(asked: str, url: str) -> bool:
     return (before.hostname, before.path.rstrip("/")) != (after.hostname, after.path.rstrip("/"))
 
 
-class Driver(abc.ABC):
+class Driver(abc.ABC):  # pylint: disable=too-many-public-methods
     """Fetches pages and files: over HTTP or in the browser."""
 
     # What the browser showed when a step failed or a page asked for a person (snapshot()), and
@@ -115,9 +116,23 @@ class Driver(abc.ABC):
         the values (specs: a level's "values"; None where a value's element is missing)."""
         return [(url, text, [None] * len(specs)) for url, text in self.links(page, selector)]
 
-    def read_json(self, url: str) -> Any:
-        """A JSON listing's page, asked for as a file is (near.read_json)."""
-        return near.read_json(self.download, url)
+    def read_json(self, url: str, request: dict | None = None) -> Any:
+        """A JSON listing's page, asked for as a file is (near.read_json); request: its method,
+        body (content) and headers, when it is no plain GET (harvester.jsonrequest)."""
+        return near.read_json(functools.partial(self.download, **request) if request else self.download, url)
+
+    def here(self) -> str:
+        """The address of the page the steps ended on ("" without the browser)."""
+        return ""
+
+    @abc.abstractmethod
+    def cookie_value(self, url: str, name: str) -> str | None:
+        """The value of the job's cookie of that name for the address, None without one."""
+
+    def page_value(self, page: Any, kind: str, name: str) -> str | None:
+        """What the page holds under a name: a <meta name>'s content ("meta"), a localStorage key's
+        value ("storage", the browser only); None without one."""
+        raise SourceError(f"the JSON listing reads its page's {kind} {name}, which only the browser can")
 
     @abc.abstractmethod
     def next(self, page: Any, selector: str) -> Any:
@@ -133,8 +148,10 @@ class Driver(abc.ABC):
         """The page's address."""
 
     @abc.abstractmethod
-    def download(self, url: str) -> contextlib.AbstractContextManager[Response]:
-        """Asks for the file."""
+    def download(
+        self, url: str, *, method: str = "GET", content: bytes | None = None, headers: dict | None = None
+    ) -> contextlib.AbstractContextManager[Response]:
+        """Asks for the file (or a JSON listing's page: its method, body and headers)."""
 
     @abc.abstractmethod
     def challenge(self, page: Any) -> tuple[str, str] | None:
@@ -266,5 +283,22 @@ class HttpDriver(Driver):
     def address(self, page: Any) -> str:
         return page[0]
 
-    def download(self, url: str) -> contextlib.AbstractContextManager[Response]:
-        return download.http(self.client, {"Referer": self.referer} if self.referer else None)(url)
+    def download(
+        self, url: str, *, method: str = "GET", content: bytes | None = None, headers: dict | None = None
+    ) -> contextlib.AbstractContextManager[Response]:
+        sent = ({"Referer": self.referer} if self.referer else {}) | (headers or {})
+        return download.http(self.client, sent or None, method, content)(url)
+
+    def cookie_value(self, url: str, name: str) -> str | None:
+        host = urlparse(url).hostname or ""
+        for cookie in self.client.cookies.jar:
+            domain = cookie.domain.lstrip(".")
+            if cookie.name == name and (not domain or host == domain or host.endswith("." + domain)):
+                return cookie.value
+        return None
+
+    def page_value(self, page: Any, kind: str, name: str) -> str | None:
+        if kind != "meta":
+            return super().page_value(page, kind, name)
+        found = page.soup.find("meta", attrs={"name": name})
+        return str(found.get("content") or "") or None if found else None

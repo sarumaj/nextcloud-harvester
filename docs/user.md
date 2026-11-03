@@ -332,6 +332,26 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   no items, or the job's *Pages*. The job asks for it as for a file: the guarded HTTP client,
   with the browser's cookies when it has a browser (not the browser's own `context.request`,
   which passes by its routes); at most 16 MB, 64 levels deep and 1000 items a page.
+- **JSON listings asked for with POST** (`harvester/jsonrequest.py`): a listing may be a POST
+  (`"method": "POST"`) with its `"body"`: JSON (a GraphQL query and its variables, say) or a
+  form's text (`year=2026&page=1`), and its `"content_type"`. A text in the body that is only a
+  value's placeholder (`"{year}"`, `"{choice}"`) takes the walk's value, with its type. The
+  `"headers"` are those the page sent that matter: `x-requested-with` and GraphQL clients' as
+  text, and a token that changes (`x-csrf-token`, `authorization`, …) never as text but as where
+  a run reads it: `{"from": "cookie", "name": "XSRF-TOKEN"}` (the job's cookies),
+  `{"from": "meta", "name": "csrf-token"}` (the `<meta>` of the page the listing is read from) or
+  `{"from": "storage", "name": "auth", "prefix": "Bearer "}` (its `localStorage`, the browser
+  only). A token copied into the recipe would be spent by the next run and would travel with an
+  exported recipe; where it comes from stays right. A token found in none of them is left out:
+  the job sends its cookies, the Referer and an `Origin`. Pages are counted in the body
+  (`"page": {"param": "variables.page", "first": 1, "step": 1, "in": "body"}`: a field's path,
+  or a form's field), or chained by a cursor: `"cursor": {"from":
+  "data.invoices.pageInfo.endCursor", "to": "variables.after", "in": "body", "more":
+  "data.invoices.pageInfo.hasNextPage"}` reads the next cursor from each answer and sends it as
+  the next request's variable (or, without `"in": "body"`, as the address's parameter `to`), while
+  `more` is true; `{"from": "next"}` without `to` follows an answer's next page's address. A
+  missing cursor, or one seen before, ends the listing; *Pages* still bounds it. Every request goes
+  through the guarded HTTP client, a next page's address too, checked before it is asked for.
 - **Pages saved as files** (`harvester/sources/keep.py`): for what exists only as a web page (a
   receipt, an order's confirmation, a payslip, an article), the file links may have `"save": "pdf"`,
   `"html"` or `"markdown"`: each page a link leads to (its address, or what an element that is
@@ -441,13 +461,16 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   date in its row, a title in its card), adds a value: where it is from the link, and a type and
   pattern proposed from what it reads beside every link (a date's form recognised); the examples
   show the values, and their names, types and patterns can be changed. **Network** lists the
-  page's answers in JSON to its XHR and fetch() requests (address, size); **Preview** shows one,
-  indented (its first 20 000 characters; one larger than 2 MB is not kept); **Use as the file
-  links** makes one the JSON listing, its items, fields, date and page parameter proposed from
-  the answer, to check and change. In the Steps list a code typed into a field offers **code from
-  e-mail?** (its sender and subject), which makes it the step above. The window's size the steps
-  were recorded and the links picked in is the recipe's `"viewport"`; the job's browser takes it
-  (1280 × 800 without one).
+  page's answers in JSON to its XHR and fetch() requests, GET and POST (address, size; a POST's
+  body in a few words: a GraphQL operation's name); **Preview** shows one, indented (its first
+  20 000 characters; one larger than 2 MB is not kept); **Use as the file links** makes one the
+  JSON listing, its items, fields, date and page parameter proposed from the answer, to check and
+  change: a POST's body (editable), a page counter in the body or a cursor the answer gives, and
+  the headers with where each token is read from (the cookie or `<meta>` whose value it is); a
+  token found nowhere is named, and left out. In the Steps list a code typed into a field offers
+  **code from e-mail?** (its sender and subject), which makes it the step above. The window's
+  size the steps were recorded and the links picked in is the recipe's `"viewport"`; the job's
+  browser takes it (1280 × 800 without one).
   **Test the recipe** runs it as a job would (the site source's own walk, `Site.survey`, in a
   browser context of its own with the recorder's session, shown on the screen; nothing recorded,
   nothing downloaded) and lists the pages it read with the links matched, the first 20 file

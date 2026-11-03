@@ -4,6 +4,12 @@
 
 ### Added
 
+- JSON listings asked for with POST: a form's or a JSON body (GraphQL with its variables), whose
+  pages are counted in the body or chained by a cursor the answer gives (`endCursor` with
+  `hasNextPage`, `nextCursor`, an answer's next page's address); the headers the page sent that
+  matter, a token that changes read when the job runs from a cookie, a `<meta>` or the page's
+  storage, never written into the recipe. The Network panel lists POST answers too, with a
+  GraphQL operation's name, and proposes all of it from one.
 - The recorder's Network panel shows an answer's content: **Preview** beside each one, its JSON
   indented (the first 20 000 characters).
 - File links that are clicked (`"click": true`) give the file also when the click opens a tab

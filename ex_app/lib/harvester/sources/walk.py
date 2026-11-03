@@ -103,12 +103,13 @@ class Walk:  # pylint: disable=too-many-instance-attributes,too-many-public-meth
     def listing(self, url: str | None, level: int, values: dict, outcome: dict) -> Iterator[Item]:
         """The listing at the level: its pages, or the JSON listing that holds the file links."""
         if level == len(self.follow) and self.recipe["links"].get("kind") == "json":
-            return self.json_files(level, values, outcome)
+            return self.json_files(url.address if isinstance(url, Target) else url, level, values, outcome)
         return self.walk(url, level, values, outcome)
 
-    def json_files(self, level: int, values: dict, outcome: dict) -> Iterator[Item]:
-        """A JSON listing's pages, read one after another while its files go on."""
-        pages = near.json_pages(self.recipe["links"], self.site.settings, self.driver, values)
+    def json_files(self, url: str | None, level: int, values: dict, outcome: dict) -> Iterator[Item]:
+        """A JSON listing's pages, read one after another while its files go on (url: the page it
+        is read from, None: where the steps ended)."""
+        pages = near.json_pages(self.recipe["links"], self.site.settings, self.driver, values, url)
         for number, page in enumerate(pages, 1):
             if (yield from self.files(page, number, values, outcome, level)):
                 return

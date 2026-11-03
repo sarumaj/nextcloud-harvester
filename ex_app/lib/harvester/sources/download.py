@@ -190,13 +190,17 @@ def guarded_client(impersonate: bool = False, **options) -> httpx.Client:
     return httpx.Client(event_hooks=hooks | {"request": [check, *hooks.get("request", [])]}, **settings)
 
 
-def http(client: httpx.Client, headers: dict[str, str] | None = None) -> Opener:
-    """Downloads over HTTP with the client (its cookies, its headers, and these)."""
+def http(
+    client: httpx.Client, headers: dict[str, str] | None = None, method: str = "GET", content: bytes | None = None
+) -> Opener:
+    """Downloads over HTTP with the client (its cookies, its headers, and these); a JSON listing's
+    request may be a POST with its body (content)."""
 
     @contextlib.contextmanager
     def open_url(url: str) -> Iterator[Response]:
         # Without headers, as it always was (a client of a source's own may take no more).
-        with client.stream("GET", url, **({"headers": headers} if headers else {})) as response:
+        more = ({"headers": headers} if headers else {}) | ({"content": content} if content is not None else {})
+        with client.stream(method, url, **more) as response:
             yield Response(
                 response.status_code,
                 str(response.url),

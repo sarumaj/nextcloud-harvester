@@ -6,15 +6,17 @@
 """
 
 import asyncio
+import contextlib
 import json
 import re
 import time
 from collections.abc import Awaitable, Callable
+from urllib.parse import unquote
 
 import regex
 from playwright.async_api import Page
 
-from .. import jsonlist, patterns
+from .. import jsonlist, jsonrequest, patterns
 from ..sources import near
 
 EXAMPLES = 8
@@ -30,9 +32,54 @@ REQUEST_BODY = 2 * 1024 * 1024
 PREVIEW_CHARS = 20_000
 # What a value of the page may change of its spec (the page's message), and what a JSON listing may.
 VALUE_KEYS = ("name", "regex", "type", "attribute", "closest", "selector", "field")
-JSON_KEYS = ("url", "items", "file", "text", "pattern", "page")
+JSON_KEYS = ("url", "items", "file", "text", "pattern", "page", "cursor")
 # The page's messages DataPicks.handle_data answers.
 DATA_MESSAGES = frozenset({"value", "value-add", "value-remove", "json-pick", "json-edit", "json-preview"})
+# The page's <meta name> and localStorage entries, where a header's token may come from.
+PAGE_ENTRIES = """() => {
+  const meta = [...document.querySelectorAll('meta[name][content]')].map(m => [m.getAttribute('name'), m.content])
+  let storage = []
+  try { storage = Object.keys(localStorage).map(key => [key, localStorage.getItem(key)]) } catch (error) {}
+  return {meta, storage}
+}"""
+
+
+def edited_part(key: str, given: object) -> dict | None:
+    """The JSON listing's page counter or cursor as the person set it (None: none): a page's
+    parameter, first value and step; a cursor's from, to and more; either's place (in: body)."""
+    if not isinstance(given, dict):
+        return None
+    if key == "page":
+        if not given.get("param"):
+            return None
+        part: dict = {
+            "param": str(given["param"]),
+            "first": max(0, int(given.get("first", 1) or 0)),
+            "step": max(1, int(given.get("step", 1) or 1)),
+        }
+    else:
+        if not given.get("from"):
+            return None
+        part = {name: str(given[name]).strip() for name in ("from", "to", "more") if str(given.get(name) or "").strip()}
+    return part | ({"in": "body"} if given.get("in") == "body" else {})
+
+
+def next_page(spec: dict, url: str, data: object) -> str:
+    """What the JSON listing's next page asks for, for the person to check: its address, its
+    page's field in the body, or the cursor the answer gives ("" for one page, or no cursor)."""
+    page, chain = spec.get("page"), spec.get("cursor")
+    if page and page.get("in") == "body":
+        return f"{page['param']} = {int(page.get('first', 1)) + int(page.get('step', 1))}"
+    if page:
+        return jsonlist.page_url(str(spec.get("url") or url), page, 2)
+    if not chain:
+        return ""
+    cursor = jsonrequest.next_cursor(data, chain)
+    if cursor is None:
+        return ""
+    if not chain.get("to"):
+        return jsonrequest.address(str(spec.get("url") or url), spec, 2, cursor)
+    return f"{chain['to']} = {cursor}"
 
 
 def preview(body: bytes) -> str:
@@ -183,17 +230,22 @@ class DataPicks:  # pylint: disable=too-few-public-methods
         await self._describe("links" if chosen[0] == "links" else f"follow{chosen[1]}")
 
     async def _response(self, page: Page, response) -> None:
-        """An answer of the page: one in JSON to an XHR or fetch() GET of the recorder's own pages
-        (not the test's) goes into the Network panel, its body kept while small enough."""
+        """An answer of the page: one in JSON to an XHR or fetch() GET or POST of the recorder's own
+        pages (not the test's) goes into the Network panel, its body kept while small enough; a
+        POST's body, type and the headers that matter (jsonrequest.LITERAL, SECRET) are kept with
+        it to replay it, never sent to the page."""
         try:
             request = response.request
             if (
                 page.context != self._context
-                or request.method != "GET"
+                or request.method not in jsonrequest.METHODS
                 or request.resource_type not in ("xhr", "fetch")
             ):
                 return
             if "json" not in (response.headers.get("content-type") or ""):
+                return
+            sent = await self._sent(request)
+            if sent is None:
                 return
             announced = response.headers.get("content-length", "")
             body = None if announced.isdigit() and int(announced) > REQUEST_BODY else await response.body()
@@ -202,10 +254,45 @@ class DataPicks:  # pylint: disable=too-few-public-methods
         number = (self.requests[-1]["id"] + 1) if self.requests else 1
         size = len(body) if body is not None else int(announced)
         entry = {"id": number, "url": response.url, "size": size, "status": response.status}
-        self.requests = (self.requests + [entry | {"body": body if body and len(body) <= REQUEST_BODY else None}])[
-            -REQUESTS_KEPT:
-        ]
+        entry |= {"method": request.method, "summary": jsonrequest.short_body(sent)}
+        kept = {"body": body if body and len(body) <= REQUEST_BODY else None, "request": sent}
+        self.requests = (self.requests + [entry | kept])[-REQUESTS_KEPT:]
         await self.send({"type": "requests", "items": [{key: item[key] for key in entry} for item in self.requests]})
+
+    @staticmethod
+    async def _sent(request) -> dict | None:
+        """What a request sent that its replay needs: its method, a POST's body and type, the
+        headers that matter (by lower-case name); None for a body too large or not text."""
+        headers = await request.all_headers()
+        kept = {
+            name: value
+            for name, value in headers.items()
+            if name in jsonrequest.LITERAL or (jsonrequest.SECRET.search(name) and name not in jsonrequest.FORBIDDEN)
+        }
+        sent = {"method": request.method, "headers": kept, "content_type": headers.get("content-type", "")}
+        if request.method == "POST":
+            try:
+                text = request.post_data or ""
+            except Exception:  # pylint: disable=broad-exception-caught
+                return None  # a body that is no text (a file's upload): no listing's request
+            if len(text) > jsonrequest.BODY_MAX:
+                return None
+            sent["body"] = text
+        return sent
+
+    async def _token_sources(self, url: str) -> dict[str, list[tuple[str, str]]]:
+        """Where a run could read a header's token (jsonrequest.header_plan): the cookies for the
+        request's address (as they are, and decoded: an XSRF-TOKEN cookie is sent decoded), the
+        page's <meta name> and its localStorage."""
+        found: dict[str, list[tuple[str, str]]] = {"cookie": [], "meta": [], "storage": []}
+        for cookie in await self._context.cookies(url) if self._context is not None else []:  # type: ignore[attr-defined]
+            found["cookie"] += [(cookie["name"], cookie["value"]), (cookie["name"], unquote(cookie["value"]))]
+        if self._page is not None:
+            with contextlib.suppress(Exception):
+                held = await self._page.evaluate(PAGE_ENTRIES)
+                found["meta"] = [(str(name), str(value)) for name, value in held["meta"]]
+                found["storage"] = [(str(name), str(value)) for name, value in held["storage"]]
+        return found
 
     async def _json_preview(self, number: object) -> None:
         """A JSON answer of the Network panel shown to the person ({type: request-body, id, text,
@@ -244,26 +331,39 @@ class DataPicks:  # pylint: disable=too-few-public-methods
         self._json = (chosen["url"], data)
         if self._page is not None and not self.follow:
             self.start_url = self.start_url or self._page.url
-        self.links = jsonlist.propose(chosen["url"], data)
-        self.proposals["links"] = {"level": len(self.follow)}
+        spec = jsonlist.propose(chosen["url"], data)
+        sent = chosen.get("request") or {"method": "GET", "headers": {}}
+        more = jsonrequest.propose(chosen["url"], data, sent, len(jsonlist.items(data, spec["items"])))
+        if more.get("page") or more.get("cursor"):
+            spec.pop("page", None)
+        headers, dropped = jsonrequest.header_plan(sent["headers"], await self._token_sources(chosen["url"]))
+        self.links = spec | more | ({"headers": headers} if headers else {})
+        self.proposals["links"] = {"level": len(self.follow), "dropped": dropped}
         await self._describe("links")
 
     async def _json_edit(self, changes: object) -> None:
-        """The person's changes to the JSON listing (its address, items, fields, pages, pattern)."""
+        """The person's changes to the JSON listing (its address, items, fields, pages, cursor,
+        body, pattern)."""
         if not isinstance(changes, dict) or self.links.get("kind") != "json":
             return
+        body = self.links.get("body")
+        if isinstance(changes.get("body"), str) and self.links.get("method") == "POST":
+            try:
+                body = changes["body"] if jsonrequest.is_form(self.links) else json.loads(changes["body"] or "{}")
+            except ValueError as error:
+                await self.send({"type": "error", "message": f"The body is no JSON: {error}"})
+                return
         self._remember()
+        if "body" in self.links:
+            self.links["body"] = body
         for key in JSON_KEYS:
-            if key == "page" and key in changes:
-                page = changes["page"]
-                if isinstance(page, dict) and page.get("param"):
-                    self.links["page"] = {
-                        "param": str(page["param"]),
-                        "first": max(0, int(page.get("first", 1) or 0)),
-                        "step": max(1, int(page.get("step", 1) or 1)),
-                    }
+            if key in ("page", "cursor") and key in changes:
+                part = edited_part(key, changes[key])
+                if part:
+                    self.links[key] = part
+                    self.links.pop("cursor" if key == "page" else "page", None)
                 else:
-                    self.links.pop("page", None)
+                    self.links.pop(key, None)
             elif isinstance(changes.get(key), str):
                 self.links[key] = changes[key].strip()
         await self._describe("links")
@@ -307,7 +407,7 @@ class DataPicks:  # pylint: disable=too-few-public-methods
             await self._update()
             return
         items = jsonlist.items(data, str(spec.get("items") or ""))
-        following = jsonlist.page_url(str(spec.get("url") or url), spec.get("page"), 2) if spec.get("page") else ""
+        following = next_page(spec, url, data)
         proposal.update(
             error="" if entries else "No item of the JSON has a file's address in that field.",
             examples=examples,
