@@ -52,6 +52,9 @@
   error, a check for changes, a sign-in anew), so that saving and tagging the file are part of
   it: the site still sees the whole pause between two downloads, and a run waits about a second
   less a file.
+- The jobs page asks for the progress log every 30 seconds while none of your jobs runs or
+  waits (10 before), and not at all while the page is hidden (another tab, a minimized window):
+  at once when it shows again.
 
 ### Fixed
 

@@ -349,6 +349,35 @@ def test_the_queues_status_and_why_a_job_waits(page):
 
 @needs_chromium
 @pytest.mark.parametrize("page", [[JOB, CLIPS]], indirect=True)
+def test_the_log_is_not_polled_while_the_page_is_hidden(page):
+    """A job runs: the log is asked every 2 seconds, but not while the page is hidden (another
+    tab), and at once when it shows again."""
+
+    def polls() -> int:
+        return sum(1 for _, path, _ in CALLS if path.startswith("/log"))
+
+    def hidden(value: bool) -> None:
+        page.evaluate(
+            """hidden => {
+                Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden })
+                document.dispatchEvent(new Event('visibilitychange'))
+            }""",
+            value,
+        )
+
+    page.wait_for_timeout(300)
+    hidden(True)
+    page.wait_for_timeout(300)
+    before = polls()
+    page.wait_for_timeout(4500)
+    assert polls() == before, "two polls' time, none asked"
+    hidden(False)
+    page.wait_for_timeout(300)
+    assert polls() == before + 1, "asked at once when shown"
+
+
+@needs_chromium
+@pytest.mark.parametrize("page", [[JOB, CLIPS]], indirect=True)
 def test_an_on_demand_job_fetches_an_address(page):
     row = page.locator("tbody tr").nth(1)
     assert row.locator("td").nth(2).locator(".harvester-chip").all_inner_texts() == ["On demand", "once"]

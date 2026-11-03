@@ -498,8 +498,9 @@
 	}
 
 	// The jobs' progress log: what the runs do, live while one runs, of all jobs or of one.
-	// Polled, often while a job runs or waits its turn; a run that is queued, starts or ends
-	// redraws the list (its states and messages change).
+	// Polled, often while a job runs or waits its turn (every 2 seconds, else 30); a run that is
+	// queued, starts or ends redraws the list (its states and messages change). Not while the
+	// page is hidden (another tab, a minimized window): polled at once when it shows again.
 	function progressPanel(root, jobs) {
 		const select = el('select', { 'aria-label': t('Job') },
 			el('option', { value: '', text: t('All jobs') }),
@@ -513,6 +514,7 @@
 			el('div', { class: 'harvester-progress-head' }, el('h3', { text: t('Progress') }), select), list)
 		let after = 0
 		let timer = null
+		let busy = false
 		const running = jobs.filter((job) => job.running).map((job) => job.id)
 		const queued = jobs.filter((job) => job.queued && !job.running).map((job) => job.id)
 		// The jobs whose runs wait for their person (a code): the list is drawn again when they change.
@@ -537,7 +539,14 @@
 					onclick: () => showShot(root, jobs.find((job) => job.id === entry.job) || { id: entry.job, name: entry.name }),
 				}) : ''))
 		async function poll() {
-			if (!document.body.contains(panel)) return
+			if (!document.body.contains(panel)) {
+				document.removeEventListener('visibilitychange', woken)
+				return
+			}
+			clearTimeout(timer)
+			timer = null
+			if (document.hidden) return
+			busy = true
 			try {
 				const data = await api('GET', `/log?after=${after}${select.value ? `&job=${select.value}` : ''}`)
 				// Another view opened while the log was asked for (a job's form): it is not replaced.
@@ -566,9 +575,14 @@
 				if (!list.children.length) list.append(el('li', { class: 'harvester-muted', text: t('No runs yet.') }))
 				else if (data.lines.length && list.firstChild.classList.contains('harvester-muted')) list.firstChild.remove()
 				if (stick) list.scrollTop = list.scrollHeight
-			} catch (e) { /* tried again below */ }
-			timer = setTimeout(poll, running.length || queued.length ? 2000 : 10000)
+			} catch (e) { /* tried again below */ } finally { busy = false }
+			timer = setTimeout(poll, running.length || queued.length ? 2000 : 30000)
 		}
+		// Shown again: polled at once, unless a poll is under way (it sets the next).
+		function woken() {
+			if (!document.hidden && !busy) poll()
+		}
+		document.addEventListener('visibilitychange', woken)
 		select.addEventListener('change', () => {
 			try { localStorage.setItem('harvester-log-job', select.value) } catch (e) { /* not kept */ }
 			clearTimeout(timer)
