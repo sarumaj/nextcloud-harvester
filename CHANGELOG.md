@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.13.0 - 2026-11-03
+## Unreleased
 
 ### Added
 
@@ -19,6 +19,11 @@
   hours: over HTTP with `If-None-Match` and `If-Modified-Since` (304: no download), else by the
   downloaded file's hash. A changed file is saved over its own, so that Nextcloud keeps the one
   before among its versions; a deleted file is not brought back, a failed check fails nothing.
+
+## 0.13.0 - 2026-11-03
+
+### Added
+
 - Cookie banners dismissed on their own: a website job's **Dismiss cookie banners** (on for new
   jobs, off for those saved before) has its browser answer OneTrust, Cookiebot, Usercentrics,
   Didomi, Quantcast (TCF), TrustArc, Borlabs and Klaro with "Reject all", else "Only necessary",
