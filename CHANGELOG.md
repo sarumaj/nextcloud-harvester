@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Screenshots of a demo Nextcloud in the README and in `appinfo/info.xml`.
+- `docs/user.md`, `docs/admin.md` and `docs/developer.md`: the README's details moved there,
+  with a section on the backup of Harvester's database; `tests/test_readme.py` checks them too.
+- `AGENTS.md`, `SECURITY.md`, `.editorconfig`, and SPDX lines in the Python and JavaScript
+  sources.
+- CI: `appinfo/info.xml` against the app store's schema (without AppAPI's routes), markdownlint,
+  and the AI review of a pull request on request.
+
+### Changed
+
+- The README in the structure the four apps share.
+- `appinfo/info.xml`: indented with 4 spaces, in Talk AI's order, with `<website>`; Nextcloud up
+  to 36.
+- CI runs on Renovate's branches (`renovate/**`) too, so their updates are merged once checked;
+  its steps are named as sentences.
+- The README's example of the address sites see is a documentation address (203.0.113.10).
+
 ## 0.11.0 - 2026-11-03
 
 ### Added
