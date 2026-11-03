@@ -619,6 +619,12 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   matching** (a pattern on their texts) can be changed there. The window's
   size the steps were recorded and the links picked in is the recipe's `"viewport"`; the job's
   browser takes it (1280 × 800 without one).
+  **Test the recipe** and **Test as the job runs** are in the recorder's toolbar, beside Done; a
+  test's result starts with its outcome in one line (*OK: 12 file links found.*, *Failed: 2
+  problems, listed below.*, *No file links found.*), coloured by it, and is scrolled into view
+  (in a full window, the recipe's drawer opens). On a narrow window (up to 800 pixels) the
+  recorder's screen is above its steps, at the full width, and the toolbar wraps, keeping Done
+  and Cancel together.
   **Test the recipe** runs it as a job would (the site source's own walk, `Site.survey`, in a
   browser context of its own with the recorder's session, shown on the screen; nothing recorded,
   nothing downloaded) and lists the pages it read with the links matched, the first 20 file

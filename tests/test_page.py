@@ -330,6 +330,10 @@ def test_the_recorders_controls(page):
     receive(page, {"type": "test", "result": result})
     panel = page.locator(".harvester-test").inner_text()
     assert "1 file link on 1 page." in panel and "2026/A" in panel and "a.month matched nothing" in panel
+    # The outcome first, in one line coloured by it.
+    assert (
+        page.locator(".harvester-test-summary.harvester-test-failed").inner_text() == "Failed: 1 problem, listed below."
+    )
 
     # A recipe without a next page (removed) is kept without one, with the recorder's steps.
     receive(page, {"type": "recipe", "recipe": {**RECIPE, "steps": RECIPE["steps"][:1], "next": None}, "proposals": {}})

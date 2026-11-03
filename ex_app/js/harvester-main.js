@@ -1244,6 +1244,17 @@
 	// What a page is saved as, in words.
 	const SAVED_AS = { pdf: 'PDF', html: 'HTML', markdown: 'Markdown' }
 
+	// The test's outcome in one line, first, coloured by it: failed (a problem, a failed step or
+	// file), no file links, stopped, or the file links found.
+	function testSummary(result) {
+		const problems = result.problems.length + (result.probe && !result.probe.ok ? 1 : 0)
+		const [outcome, text] = result.ended === 'stopped' ? ['stopped', t('Stopped.')]
+			: problems || result.ended === 'failed' ? ['failed', n('Failed: %n problem, listed below.', 'Failed: %n problems, listed below.', Math.max(problems, 1))]
+				: !result.files ? ['empty', t('No file links found.')]
+					: ['ok', n('OK: %n file link found.', 'OK: %n file links found.', result.files)]
+		return el('p', { class: `harvester-test-summary harvester-test-${outcome}`, text })
+	}
+
 	function renderTest(result) {
 		const ended = {
 			complete: t('It went through the whole site.'),
@@ -1255,8 +1266,9 @@
 		}[result.ended] || ''
 		const found = n('%n page', '%n pages', result.pages.length)
 		const counts = (page) => ({ level: page.level === 0 ? t('Listing') : t('Level {level}', { level: page.level }), page: page.page, matching: page.matching, found: page.found })
-		const box = el('div', { class: 'harvester-test', 'aria-live': 'polite' },
+		const box = el('div', { class: 'harvester-test' },
 			el('h3', { text: t('Test') }),
+			testSummary(result),
 			el('p', { text: `${n('%n file link on {pages}.', '%n file links on {pages}.', result.files, { pages: found })} ${ended}`.trim() }))
 		const choices = result.choices || []
 		if (choices.length) box.append(el('p', { text: n('It goes through %n choice: {choices}', 'It goes through %n choices: {choices}', choices.length, { choices: choices.join(', ') }) }))
@@ -2312,7 +2324,6 @@
 				recipe.next && recipe.next.selector
 					? renderLevel(t('Next page'), recipe.next, proposals.next, send, 'next', Number(recipe.next.level || 0), suggestions, repick)
 					: el('p', { text: t('Next page: none.') }),
-				el('div', { class: 'harvester-level-head' }, test, testJob),
 				testing ? el('p', { class: 'harvester-muted', 'aria-live': 'polite', text: t('Testing: the browser shows the job’s way through the site…') }) : '',
 				askingLine(),
 				tested && !testing ? renderTest(tested) : '')
@@ -2357,6 +2368,10 @@
 					else delete played[index]
 				}
 				renderPanel()
+				// The outcome where it is seen: the drawer opened in a full window, the panel scrolled.
+				container.classList.add('harvester-drawer-open')
+				const result = panel.querySelector('.harvester-test')
+				if (result) result.scrollIntoView({ block: 'nearest' })
 			}
 			else if (data.type === 'where') showWhere(data.frame)
 			else if (data.type === 'warning') leaks.append(el('p', { text: shown(data.message, data.message_l10n) }))
@@ -2397,8 +2412,12 @@
 					cookies.button,
 					networkButton,
 					drawer,
-					el('button', { class: 'primary', text: t('Done'), onclick: () => close(true) }),
-					el('button', { text: t('Cancel'), onclick: () => close(false) })),
+					test,
+					testJob,
+					// Done and Cancel together at the end, never one of them alone on a line.
+					el('span', { class: 'harvester-toolbar-end' },
+						el('button', { class: 'primary', text: t('Done'), onclick: () => close(true) }),
+						el('button', { text: t('Cancel'), onclick: () => close(false) }))),
 				modes, placing, el('div', { class: 'harvester-toolbar' }, modeHelp, scroll, approve, handover), where, network, message, cookies.box, networkBox),
 			el('div', { class: 'harvester-stage' }, box, panel))
 		root.replaceChildren(container)
@@ -2905,8 +2924,15 @@
 		#harvester .harvester-kinds .harvester-card p { flex: 1; }
 		#harvester .harvester-card { border: 1px solid var(--color-border); border-radius: var(--border-radius-large); padding: 12px 16px; margin: 12px 0; max-width: 760px; }
 		#harvester .harvester-recipe, #harvester .harvester-pattern { font-family: var(--font-face-monospace, monospace); }
-		#harvester .harvester-toolbar { display: flex; gap: 4px; margin: 8px 0; align-items: center; }
-		#harvester .harvester-url { flex: 1; margin: 0; }
+		#harvester .harvester-toolbar { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0; align-items: center; }
+		#harvester .harvester-toolbar button { margin: 0; }
+		#harvester .harvester-toolbar-end { display: flex; flex-wrap: nowrap; gap: 4px; margin-inline-start: auto; }
+		#harvester .harvester-url { flex: 1 1 14em; min-width: 10em; margin: 0; }
+		#harvester .harvester-test-summary { margin: 4px 0 8px; padding: 4px 10px; border-radius: var(--border-radius); font-weight: bold; }
+		#harvester .harvester-test-ok { background: color-mix(in srgb, var(--color-success) 15%, transparent); color: var(--color-success-text, var(--color-main-text)); }
+		#harvester .harvester-test-failed { background: color-mix(in srgb, var(--color-error) 15%, transparent); color: var(--color-error-text, var(--color-main-text)); }
+		#harvester .harvester-test-empty { background: color-mix(in srgb, var(--color-warning) 15%, transparent); color: var(--color-warning-text, var(--color-main-text)); }
+		#harvester .harvester-test-stopped { background: var(--color-background-dark); }
 		#harvester .harvester-modes label { margin-inline-end: 12px; }
 		#harvester .harvester-stage { display: flex; gap: 12px; align-items: flex-start; margin-top: 8px; }
 		#harvester .harvester-screen-box { flex: 3; min-width: 0; max-width: calc((100vh - 260px) * 1.6); position: relative; }
@@ -2947,6 +2973,12 @@
 		#harvester .harvester-test-pages { padding-inline-start: 20px; }
 		#harvester .harvester-shot-image { display: block; max-width: 100%; height: auto; border: 1px solid var(--color-border); border-radius: var(--border-radius); }
 		#harvester .harvester-link { border: none; background: none; min-height: 0; padding: 0 0 0 8px; color: var(--color-primary-element); text-decoration: underline; cursor: pointer; }
+		/* A narrow window: the recorder's screen above its steps, at the full width. */
+		@media (max-width: 800px) {
+			#harvester .harvester-stage { flex-direction: column; align-items: stretch; }
+			#harvester .harvester-recorder:not(.harvester-wide) .harvester-screen-box { flex: none; max-width: none; }
+			#harvester .harvester-recorder:not(.harvester-wide) .harvester-steps { min-width: 0; max-height: none; }
+		}
 		/* A phone: the jobs as cards, a header's parts one below the other, the log's lines wrapped. */
 		@media (max-width: 700px) {
 			#harvester { padding: 16px 12px; }

@@ -107,6 +107,10 @@
   than the screen; the header's parts one below the other, the progress log's text below its
   time, and a line of an earlier day with a short date and no seconds. The table's last column
   is named *Actions* for screen readers.
+- The recorder: **Test the recipe** and **Test as the job runs** in its toolbar beside Done
+  (below the steps and picks before); a test's result starts with its outcome in one line,
+  coloured by it, and is scrolled into view. On a narrow window the screen is above the steps at
+  the full width (a sliver beside them before), and the toolbar wraps, Done and Cancel together.
 
 ### Fixed
 

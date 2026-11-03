@@ -261,11 +261,20 @@ OC.L10N.register(
         "Use the picked link alone": "Nur den ausgewählten Link verwenden",
         "The link to the next page.": "Der Link zur nächsten Seite.",
         "Use numbered pages": "Nummerierte Seiten verwenden",
+        "Stopped.": "Gestoppt.",
+        "_Failed: %n problem, listed below._::_Failed: %n problems, listed below._": [
+            "Fehlgeschlagen: %n Problem, unten aufgeführt.",
+            "Fehlgeschlagen: %n Probleme, unten aufgeführt."
+        ],
+        "No file links found.": "Keine Dateilinks gefunden.",
+        "_OK: %n file link found._::_OK: %n file links found._": [
+            "OK: %n Dateilink gefunden.",
+            "OK: %n Dateilinks gefunden."
+        ],
         "It went through the whole site.": "Er ist die ganze Website durchgegangen.",
         "It stopped at the first file links (a test lists a few).": "Er hat bei den ersten Dateilinks aufgehört (ein Test listet einige).",
         "It stopped after its pages (a test reads a few).": "Er hat nach seinen Seiten aufgehört (ein Test liest einige).",
         "It stopped: its time was up.": "Er hat aufgehört: Seine Zeit war um.",
-        "Stopped.": "Gestoppt.",
         "It failed.": "Er ist fehlgeschlagen.",
         "_%n page_::_%n pages_": [
             "%n Seite",
