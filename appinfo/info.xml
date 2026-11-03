@@ -1,54 +1,59 @@
 <?xml version="1.0"?>
 <info xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
       xsi:noNamespaceSchemaLocation="https://apps.nextcloud.com/schema/apps/info.xsd">
-	<id>harvester</id>
-	<name>Harvester</name>
-	<summary>Fetches files from websites, mailboxes, feeds and drives into your folders, and tags them</summary>
-	<description><![CDATA[Jobs that fetch files into a folder of your files, on a schedule, and tag them: from
+    <id>harvester</id>
+    <name>Harvester</name>
+    <summary>Fetches files from websites, mailboxes, feeds and drives into your folders, and tags them</summary>
+    <description><![CDATA[Jobs that fetch files into a folder of your files, on a schedule, and tag them: from
 websites (a recipe recorded in the app's browser, which proposes the links' patterns, or a
 template such as heise's magazines), mailbox attachments (IMAP), feeds and podcasts, video and
 gallery sites (yt-dlp, gallery-dl), file stores and cloud drives (rclone), and release pages.
 When a site asks for a person, the job waits for you to answer it in its browser.]]></description>
-	<version>0.11.0</version>
-	<licence>agpl</licence>
-	<author>Dawid Ciepiela</author>
-	<namespace>Harvester</namespace>
-	<category>files</category>
-	<category>integration</category>
-	<bugs>https://git.ciepiela.org/dawid/nextcloud-harvester/issues</bugs>
-	<repository type="git">https://git.ciepiela.org/dawid/nextcloud-harvester</repository>
-	<dependencies>
-		<nextcloud min-version="32" max-version="35"/>
-	</dependencies>
-	<external-app>
-		<!-- The registry part includes the owner, so that an admin can take the same image from
-		     Forgejo instead: AppAPI replaces only this part when the deploy daemon maps registry
-		     ghcr.io/sarumaj to git.ciepiela.org/dawid (occ app_api:daemon:registry:add). -->
-		<docker-install>
-			<registry>ghcr.io/sarumaj</registry>
-			<image>harvester</image>
-			<image-tag>0.11.0</image-tag>
-		</docker-install>
-		<routes>
-			<route>
-				<url>^/(js|img)/.*</url>
-				<verb>GET</verb>
-				<access_level>USER</access_level>
-				<headers_to_exclude>[]</headers_to_exclude>
-			</route>
-			<route>
-				<url>^/api/.*</url>
-				<verb>GET,POST,PUT,DELETE</verb>
-				<access_level>USER</access_level>
-				<headers_to_exclude>[]</headers_to_exclude>
-			</route>
-			<!-- The recorder's WebSocket goes through HaRP, the rest through AppAPI's proxy. -->
-			<route>
-				<url>^/ws/record$</url>
-				<verb>GET</verb>
-				<access_level>USER</access_level>
-				<headers_to_exclude>[]</headers_to_exclude>
-			</route>
-		</routes>
-	</external-app>
+    <version>0.11.0</version>
+    <licence>agpl</licence>
+    <author>Dawid Ciepiela</author>
+    <namespace>Harvester</namespace>
+    <category>files</category>
+    <category>integration</category>
+    <website>https://git.ciepiela.org/dawid/nextcloud-harvester</website>
+    <bugs>https://git.ciepiela.org/dawid/nextcloud-harvester/issues</bugs>
+    <repository type="git">https://git.ciepiela.org/dawid/nextcloud-harvester</repository>
+    <screenshot>https://raw.githubusercontent.com/sarumaj/nextcloud-harvester/main/screenshots/1-jobs.png</screenshot>
+    <screenshot>https://raw.githubusercontent.com/sarumaj/nextcloud-harvester/main/screenshots/2-new-job.png</screenshot>
+    <screenshot>https://raw.githubusercontent.com/sarumaj/nextcloud-harvester/main/screenshots/3-job.png</screenshot>
+    <screenshot>https://raw.githubusercontent.com/sarumaj/nextcloud-harvester/main/screenshots/4-recorder.png</screenshot>
+    <dependencies>
+        <nextcloud min-version="32" max-version="36"/>
+    </dependencies>
+    <external-app>
+        <!-- The registry part includes the owner, so that an admin can take the same image from
+             Forgejo instead: AppAPI replaces only this part when the deploy daemon maps registry
+             ghcr.io/sarumaj to git.ciepiela.org/dawid (occ app_api:daemon:registry:add). -->
+        <docker-install>
+            <registry>ghcr.io/sarumaj</registry>
+            <image>harvester</image>
+            <image-tag>0.11.0</image-tag>
+        </docker-install>
+        <routes>
+            <route>
+                <url>^/(js|img)/.*</url>
+                <verb>GET</verb>
+                <access_level>USER</access_level>
+                <headers_to_exclude>[]</headers_to_exclude>
+            </route>
+            <route>
+                <url>^/api/.*</url>
+                <verb>GET,POST,PUT,DELETE</verb>
+                <access_level>USER</access_level>
+                <headers_to_exclude>[]</headers_to_exclude>
+            </route>
+            <!-- The recorder's WebSocket goes through HaRP, the rest through AppAPI's proxy. -->
+            <route>
+                <url>^/ws/record$</url>
+                <verb>GET</verb>
+                <access_level>USER</access_level>
+                <headers_to_exclude>[]</headers_to_exclude>
+            </route>
+        </routes>
+    </external-app>
 </info>
