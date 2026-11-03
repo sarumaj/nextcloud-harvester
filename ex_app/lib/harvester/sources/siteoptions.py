@@ -53,6 +53,19 @@ OPTIONS = {
         "speaks the older HTTP/1.1 with them, also in the recorder.",
         kind="flag",
     ),
+    # Images, fonts and videos left out of the job's pages (site.LIGHT): each would come through the
+    # browser's routes, uncached (the routes turn Chromium's cache off), for nothing a walk reads.
+    # On for new jobs, off for those saved before (they ran with them).
+    "light": Option(
+        "Light browser",
+        1,
+        "Skip images, fonts and videos while walking the site: the pages load faster and the server works "
+        "less. The links of pictures are found all the same (by their addresses); a picture of a failed step "
+        "shows the pages without them. Not for a disguised browser, nor for jobs that save pages or capture "
+        "the files they load.",
+        kind="flag",
+        before=0,
+    ),
     "stealth": STEALTH,
     "consent": CONSENT,
     "recheck": RECHECK,

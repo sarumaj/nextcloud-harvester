@@ -225,6 +225,15 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   its switch **optional**; a click whose text reads like a consent button (*Accept*, *OK*,
   *Alle akzeptieren*, *Zgadzam się*, …) gets the hint **make optional?**, never more.
   **Test the recipe** lists the steps it went on without apart from the problems.
+- **Light browser:** a website job's **Light browser** (on for new jobs; off for jobs saved
+  before it existed, until switched on) has its browser skip images, fonts and videos while it
+  walks the site: each would otherwise come through the browser's checks, uncached (Chromium's
+  cache is off behind them). The links of pictures are found all the same, as the walk reads an
+  image's addresses from its attributes (`src`, `srcset`, `data-src`, …), not the image loaded.
+  A picture of a failed step (**Show what the browser saw**) then shows the pages without their
+  images and in a fallback font. Ignored for a disguised browser (**Disguise the browser**: a
+  page without its images looks automated) and for jobs that keep pages (saved as PDF, HTML or
+  Markdown, or the files they load captured), which need them as they look.
 - **Cookie banners:** a website job's **Dismiss cookie banners** (on for new jobs; off for jobs
   saved before it existed, until switched on) has its browser answer the common cookie banners
   on its own as they show, in the steps and on every page of the walk, in frames too, and in the

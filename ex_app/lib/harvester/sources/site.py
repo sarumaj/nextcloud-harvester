@@ -71,6 +71,9 @@ STEP_TIMEOUT = 30_000
 # comes at once with its page, and the run should not wait half a minute for one that does not.
 OPTIONAL_TIMEOUT = 5_000
 LOCK_TIMEOUT = 1800
+# What a light browser (the job's option) never loads: no walk reads them (an image link's address
+# is its element's attributes, harvester.images), and each would pass the routes uncached.
+LIGHT = frozenset({"image", "font", "media"})
 # What the browser showed when a step failed or a page asked for a person: a JPEG of the window
 # at this quality, again at the lower one when larger than SHOT_BYTES (else none is kept).
 SHOT_QUALITY = (60, 35)
@@ -140,6 +143,7 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes,too
         told: Callable[[dict], None] | None = None,
         consent: bool = False,
         dismissed: Callable[[Any], None] | None = None,
+        light: bool = False,
     ):
         self.saw = saw
         self.told = told
@@ -175,7 +179,7 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes,too
                 accept_downloads=downloads,
                 storage_state=session or None,  # type: ignore[arg-type]
             )
-            engine.guard_routes(self.context, guard, socket_guard)
+            engine.guard_routes(self.context, light_guard if light else guard, socket_guard)
             # The account's cookies over the kept session's: the user gave them for this job.
             if cookies:
                 self.context.add_cookies(cookies)  # type: ignore[arg-type]
@@ -540,6 +544,14 @@ def guard(route: Route) -> None:
         route.abort("blockedbyclient")
 
 
+def light_guard(route: Route) -> None:
+    """guard, for a light browser: images, fonts and videos (LIGHT) never loaded."""
+    if route.request.resource_type in LIGHT:
+        route.abort("blockedbyclient")
+    else:
+        guard(route)
+
+
 def socket_guard(route: WebSocketRoute) -> None:
     """Lets a page's WebSocket connect only where the browser may go (the routes do not see
     them); another is never connected: the page's socket opens to nothing (Playwright's stand-in,
@@ -770,6 +782,9 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
                     consent=bool(int(self.settings["consent"])),
                     # Once a manager a run, through a sign-in anew too.
                     dismissed=self.__dict__.setdefault("_banners", banners.Told(self.report)),
+                    # Never for a disguised browser (a page that lacks its images looks automated),
+                    # nor where pages are kept: saved as they look, or their files captured.
+                    light=bool(int(self.settings["light"])) and not int(self.settings["stealth"]) and not self.keeps,
                 )
             except attend.HandedOver as error:
                 self.handed = error.session

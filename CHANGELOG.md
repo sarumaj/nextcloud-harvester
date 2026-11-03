@@ -4,6 +4,11 @@
 
 ### Added
 
+- **Light browser** (website jobs; on for new jobs, off for those saved before): the job's
+  browser skips images, fonts and videos while it walks the site, each of which came through the
+  browser's checks uncached; pictures' links are still found by their addresses. Ignored for a
+  disguised browser and for jobs that save pages or capture the files they load. A picture of a
+  failed step shows the pages without their images then.
 - Files linked in an e-mail: a mail job's **Also the files linked in the message** (off by
   default) downloads the files its messages link to ("Download your invoice"), from the HTML
   part's links and the plain text's addresses, of the **Link address** or **Link text** pattern

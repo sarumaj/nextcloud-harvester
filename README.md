@@ -45,7 +45,8 @@ the app's browser or taken from a template, not by code.
   in words), the admin's settings and the notifications follow each person's language in
   Nextcloud (others are English).
 - **Careful with sites and with the server:** one job per site at a time, the pauses a site asks
-  for, files fetched once; the browsers and downloads reach only public addresses.
+  for, files fetched once, a browser that skips images, fonts and videos while it walks a site;
+  the browsers and downloads reach only public addresses.
 
 ## Screenshots
 
