@@ -5,11 +5,17 @@ window sizes, and a clearer word for a refused connection."""
 # pylint: disable=missing-function-docstring
 
 import asyncio
+import os
+import subprocess
+import sys
+from pathlib import Path
 
 from test_browser import needs_chromium
 
 from harvester import browser
 from harvester.browser.recorder import Recorder
+
+LIB = Path(__file__).parent.parent / "ex_app" / "lib"
 
 
 def test_the_user_agent_is_chromes_without_headless():
@@ -58,6 +64,18 @@ def test_pages_see_a_persons_browser():
     assert language == browser.LOCALE and zone == browser.TIMEZONE
     # --max-old-space-size=1024 and the young generation's (some 3.7 GB without it).
     assert heap <= 1_300_000_000
+
+
+def test_an_empty_channel_is_the_full_browser_too():
+    """The image has no headless shell, which Playwright starts without a channel."""
+    shown = subprocess.run(
+        [sys.executable, "-c", "from harvester import browser; print(browser.launch_options(9)['channel'])"],
+        env=os.environ | {"HARVESTER_BROWSER_CHANNEL": " ", "PYTHONPATH": str(LIB)},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert shown.stdout.strip() == "chromium"
 
 
 @needs_chromium

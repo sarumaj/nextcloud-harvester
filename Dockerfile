@@ -103,9 +103,11 @@ RUN mkdir -p /usr/local/lib/harvester-ffmpeg && \
 
 # Chromium for the recorder and the browser source, at Playwright's own version, with the
 # libraries it needs: the full browser, run in its new headless mode (browser.CHANNEL), not
-# the headless shell, which sites' bot protection tells from Chrome (about 150 MB more).
+# the headless shell, which sites' bot protection tells from Chrome. The shell is not installed
+# (--no-shell: some 270 MB that nothing starts; an empty HARVESTER_BROWSER_CHANNEL means the full
+# browser too); Patchright starts this Chromium and installs none of its own.
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-RUN playwright install --with-deps chromium && \
+RUN playwright install --with-deps --no-shell chromium && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # The unprivileged user the app runs as (start.sh drops to it), and frpc's own: HaRP's key in

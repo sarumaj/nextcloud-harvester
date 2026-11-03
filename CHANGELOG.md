@@ -58,6 +58,8 @@
 - A page's JavaScript in the job's browser and the recorder's has at most 1 GB of memory (some
   3.7 GB before), so that a page that runs away fails by itself rather than taking the memory of
   the other browsers and the app.
+- The image is some 270 MB smaller: without Playwright's headless shell, which nothing starts
+  (the browsers are the full Chromium); an empty `HARVESTER_BROWSER_CHANNEL` means it too.
 
 ### Fixed
 

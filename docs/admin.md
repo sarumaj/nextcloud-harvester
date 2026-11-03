@@ -75,7 +75,8 @@ JSON names a folder the Nextcloud server can read, `"translations_folder": "/pat
 
 - **A person's browser:** sites' bot protection (Cloudflare, ...) refuses a browser that says it is
   automated, or cuts its connection (`ERR_HTTP2_PROTOCOL_ERROR`). Chromium runs as the full browser
-  in its new headless mode (not the headless shell), without the automation flag, with Chrome's
+  in its new headless mode (not the headless shell, which the image does not have: an empty
+  `HARVESTER_BROWSER_CHANNEL` is the full browser too), without the automation flag, with Chrome's
   user agent and one language and time zone for recordings and runs (`HARVESTER_LOCALE`,
   `HARVESTER_TIMEZONE`, default `en-US`, `Europe/Berlin`). A website job's **HTTP/1.1 only**
   serves the sites that cut HTTP/2 connections, in the recorder too.

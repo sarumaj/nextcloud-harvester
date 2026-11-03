@@ -109,8 +109,10 @@ LAUNCH_ARGS = ["--disable-dev-shm-usage", "--js-flags=--max-old-space-size=1024"
 # (ERR_HTTP2_PROTOCOL_ERROR). The person still answers any challenge; this only keeps
 # the browser from giving itself away. Full Chromium in its new headless mode (the
 # headless shell differs from Chrome), without the automation flag, with Chrome's own
-# user agent and one language and time zone for the recorder and the jobs alike.
-CHANNEL = os.environ.get("HARVESTER_BROWSER_CHANNEL", "chromium")
+# user agent and one language and time zone for the recorder and the jobs alike. The image has
+# only that browser (playwright install --no-shell): an empty HARVESTER_BROWSER_CHANNEL, which
+# would ask Playwright for the headless shell, means it too.
+CHANNEL = os.environ.get("HARVESTER_BROWSER_CHANNEL", "").strip() or "chromium"
 LOCALE = os.environ.get("HARVESTER_LOCALE", "en-US")
 # A proxy for the jobs that choose it (http:// or https://, credentials in the address if it
 # needs them, or socks5:// and socks5h:// without), e.g. a home connection: sites that refuse
@@ -223,7 +225,7 @@ def launch_options(
     args = [*LAUNCH_ARGS, "--disable-blink-features=AutomationControlled", f"--lang={LOCALE}"]
     if http1:
         args.append("--disable-http2")
-    options = {"args": args, "env": child_env()} | ({"channel": CHANNEL} if CHANNEL else {})
+    options = {"args": args, "env": child_env(), "channel": CHANNEL}
     if guard:
         # The guard for loopback too: Chromium would otherwise connect to 127.0.0.1 and localhost
         # by itself ("<-loopback>" removes that implicit exception). Playwright's own requests of
