@@ -1590,8 +1590,10 @@
 		// marks (they would fall on other steps).
 		let playedShape = ''
 		const shape = () => JSON.stringify((recipe.steps || []).map((step) => [step.action, step.selector || step.url || '']))
-		// The page's answers in JSON (the Network panel).
+		// The page's answers in JSON (the Network panel), and those shown (Preview): id → the
+		// server's {text, truncated, kept}, or null while it is on its way.
 		let requests = []
+		const previews = new Map()
 		const suggestions = {}
 		// A recipe with steps opens in Browse: recording asks first where its new steps go (after
 		// which step, and whether the later ones stay), never replacing them unasked.
@@ -1721,7 +1723,30 @@
 			el('p', { class: 'harvester-muted', text: requests.length ? t('The page’s requests answered with JSON (newest last). One whose items are the files can be the file links.') : t('No answers in JSON yet: browse the listing, its requests show here.') }),
 			el('ul', {}, ...requests.map((request) => el('li', {},
 				el('code', { text: request.url }), ` ${(request.size / 1000).toFixed(1)} KB (${request.status}) `,
-				el('button', { type: 'button', text: t('Use as the file links'), onclick: () => send({ type: 'json-pick', id: request.id }) })))))
+				el('button', {
+					type: 'button',
+					text: previews.has(request.id) ? t('Hide') : t('Preview'),
+					'aria-expanded': String(previews.has(request.id)),
+					onclick: () => {
+						if (previews.has(request.id)) previews.delete(request.id)
+						else { previews.set(request.id, null); send({ type: 'json-preview', id: request.id }) }
+						renderRequests()
+					},
+				}),
+				' ',
+				el('button', { type: 'button', text: t('Use as the file links'), onclick: () => send({ type: 'json-pick', id: request.id }) }),
+				...requestPreview(request.id)))))
+		// What Preview shows of an answer: its JSON indented, scrollable.
+		const requestPreview = (id) => {
+			if (!previews.has(id)) return []
+			const shown = previews.get(id)
+			if (shown === null) return [el('p', { class: 'harvester-muted', text: t('Loading…') })]
+			if (!shown.kept) return [el('p', { class: 'harvester-muted', text: t('This answer is not kept (larger than 2 MB, or gone): its content cannot be shown.') })]
+			return [
+				el('pre', { class: 'harvester-preview', text: shown.text }),
+				...(shown.truncated ? [el('p', { class: 'harvester-muted', text: t('Only its beginning is shown.') })] : []),
+			]
+		}
 		const networkButton = el('button', {
 			type: 'button',
 			text: t('Network'),
@@ -1987,6 +2012,7 @@
 			else if (data.type === 'where') showWhere(data.frame)
 			else if (data.type === 'warning') leaks.append(el('p', { text: shown(data.message, data.message_l10n) }))
 			else if (data.type === 'requests') { requests = data.items; if (!networkBox.hidden) renderRequests() }
+			else if (data.type === 'request-body') { if (previews.has(data.id)) { previews.set(data.id, data); renderRequests() } }
 			else if (data.type === 'recipe') {
 				// The steps and picks are the recorder's (it started with the form's).
 				recipe = { ...recipe, ...data.recipe }
@@ -2424,6 +2450,7 @@
 		#harvester .harvester-cookies th, #harvester .harvester-cookies td { padding: 2px 6px; text-align: left; vertical-align: top; }
 		#harvester .harvester-cookie-value { white-space: pre-wrap; }
 		#harvester .harvester-network { margin: 4px 0; }
+		#harvester .harvester-preview { max-height: 320px; overflow: auto; margin: 6px 0; padding: 8px; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--color-background-dark); border-radius: var(--border-radius); }
 		#harvester .harvester-network.harvester-proxied { color: var(--color-success-text, var(--color-success)); }
 		#harvester .harvester-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
 		#harvester .harvester-header p { margin: 0; }

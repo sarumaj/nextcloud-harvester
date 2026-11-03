@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+
+- The recorder's Network panel shows an answer's content: **Preview** beside each one, its JSON
+  indented (the first 20 000 characters).
+
 ### Changed
 
 - Releases through the shared action `nextcloud-app-release` of `dawid/ci-actions`: the release's

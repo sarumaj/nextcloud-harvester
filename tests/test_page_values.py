@@ -17,6 +17,7 @@ from test_browser import FREE, needs_chromium
 from test_recorder_features import recording, settled
 
 from harvester import jsonlist, patterns
+from harvester.browser import datapicks
 from harvester.recipe import check_recipe
 from harvester.sources import SourceError
 from harvester.sources import download
@@ -429,19 +430,28 @@ def test_the_network_panel_lists_json_answers_and_makes_one_the_listing():
                     break
                 await asyncio.sleep(0.05)
             listed = [message for message in driver.sent if message["type"] == "requests"][-1]["items"]
+            # Other messages (the page's recipe) may come after an answer: the answer itself.
+            bodies = lambda: [message for message in driver.sent if message["type"] == "request-body"]
+            await recorder.handle({"type": "json-preview", "id": listed[0]["id"]})
+            previewed = bodies()[-1]
+            await recorder.handle({"type": "json-preview", "id": 999})
+            gone = bodies()[-1]
             await recorder.handle({"type": "json-pick", "id": listed[0]["id"]})
             chosen = driver.last()
             await recorder.handle({"type": "json-edit", "changes": {"pattern": r"2\.pdf$", "page": None}})
             edited = driver.last()
             await recorder.handle({"type": "value-add", "target": "links", "level": 0, "field": "pdf.href"})
             added = driver.last()
-            return listed, chosen, edited, added
+            return listed, previewed, gone, chosen, edited, added
         finally:
             await recorder.close()
 
-    listed, chosen, edited, added = asyncio.run(scenario())
+    listed, previewed, gone, chosen, edited, added = asyncio.run(scenario())
     assert [item["url"] for item in listed] == [f"{SHOP}/api/items?page=1&size=2"] and listed[0]["size"] > 100
     assert "body" not in listed[0], "the page gets the list, not the answers"
+    assert previewed["type"] == "request-body" and previewed["id"] == listed[0]["id"] and previewed["kept"]
+    assert previewed["text"].startswith("{\n  ") and not previewed["truncated"], "the answer indented"
+    assert gone == {"type": "request-body", "id": 999, "text": "", "truncated": False, "kept": False}
     links = chosen["recipe"]["links"]
     assert links | {"values": None} == LISTING | {"values": None, "pattern": ""}
     assert chosen["recipe"]["start"] == f"{SHOP}/app"
@@ -451,3 +461,11 @@ def test_the_network_panel_lists_json_answers_and_makes_one_the_listing():
     assert edited["proposals"]["links"]["matching"] == 1 and "page" not in edited["recipe"]["links"]
     assert added["recipe"]["links"]["values"][-1] == {"name": "href", "field": "pdf.href", "regex": "", "type": "text"}
     assert not check_recipe(added["recipe"])
+
+
+def test_a_preview_indents_json_and_shows_anything_else_as_text():
+    assert (
+        datapicks.preview(b'{"items":[{"name":"\xc3\xa9t\xc3\xa9"}]}')
+        == '{\n  "items": [\n    {\n      "name": "\u00e9t\u00e9"\n    }\n  ]\n}'
+    )
+    assert datapicks.preview(b"not json \xff") == "not json \ufffd"

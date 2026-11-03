@@ -27,8 +27,9 @@ The messages are JSON over the page's WebSocket:
   selector, field)} (one changed), {type: value-add, target, level, field} (a JSON item's field as one),
   {type: value-remove, target, level, index};
 - JSON listings: to the page {type: requests, items: [{id, url, size, status}]} (the page's
-  XHR and fetch answers in JSON, the Network panel); from it {type: json-pick, id} (one as the
-  file links), {type: json-edit, changes} (its address, items, fields, pages, pattern);
+  XHR and fetch answers in JSON, the Network panel); from it {type: json-preview, id} (its body
+  to read: to the page {type: request-body, id, text, truncated, kept}), {type: json-pick, id}
+  (one as the file links), {type: json-edit, changes} (its address, items, fields, pages, pattern);
 
 The steps are the recipe's: the form's (load), edited and recorded (steps.py); a popup is shown
 and recorded (popups.py). A click or press the page navigated after keeps the address it led to.

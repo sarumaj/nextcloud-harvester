@@ -26,11 +26,23 @@ PATTERN_TIMEOUT = 2.0
 # it keeps to propose a listing from (a listing is far smaller; the app's memory is shared).
 REQUESTS_KEPT = 30
 REQUEST_BODY = 2 * 1024 * 1024
+# How much of a kept answer the panel's Preview shows (characters, the JSON indented).
+PREVIEW_CHARS = 20_000
 # What a value of the page may change of its spec (the page's message), and what a JSON listing may.
 VALUE_KEYS = ("name", "regex", "type", "attribute", "closest", "selector", "field")
 JSON_KEYS = ("url", "items", "file", "text", "pattern", "page")
 # The page's messages DataPicks.handle_data answers.
-DATA_MESSAGES = frozenset({"value", "value-add", "value-remove", "json-pick", "json-edit"})
+DATA_MESSAGES = frozenset({"value", "value-add", "value-remove", "json-pick", "json-edit", "json-preview"})
+
+
+def preview(body: bytes) -> str:
+    """An answer's body to read: JSON indented (its characters as they are, not escaped), anything
+    else as text."""
+    text = body.decode("utf-8", errors="replace")
+    try:
+        return json.dumps(json.loads(text), indent=2, ensure_ascii=False)
+    except ValueError:
+        return text
 
 
 def search_all(pattern: str, texts: list[str]) -> list:
@@ -99,6 +111,8 @@ class DataPicks:  # pylint: disable=too-few-public-methods
             await self._json_pick(message.get("id"))
         elif kind == "json-edit":
             await self._json_edit(message.get("changes"))
+        elif kind == "json-preview":
+            await self._json_preview(message.get("id"))
 
     def _value_target(self, message: dict) -> tuple[str, int] | None:
         """The level a message names for its values: ("links", 0), or ("follow", level) of one
@@ -192,6 +206,25 @@ class DataPicks:  # pylint: disable=too-few-public-methods
             -REQUESTS_KEPT:
         ]
         await self.send({"type": "requests", "items": [{key: item[key] for key in entry} for item in self.requests]})
+
+    async def _json_preview(self, number: object) -> None:
+        """A JSON answer of the Network panel shown to the person ({type: request-body, id, text,
+        truncated, kept}): indented, its first PREVIEW_CHARS characters; an answer that is not JSON
+        after all as its text. kept is false for one too large to keep (REQUEST_BODY) or gone."""
+        chosen = next((item for item in self.requests if item["id"] == number), None)
+        if chosen is None or chosen["body"] is None:
+            await self.send({"type": "request-body", "id": number, "text": "", "truncated": False, "kept": False})
+            return
+        text = await asyncio.to_thread(preview, chosen["body"])
+        await self.send(
+            {
+                "type": "request-body",
+                "id": number,
+                "text": text[:PREVIEW_CHARS],
+                "truncated": len(text) > PREVIEW_CHARS,
+                "kept": True,
+            }
+        )
 
     async def _json_pick(self, number: object) -> None:
         """A JSON answer of the Network panel chosen as the listing: file links of kind json,

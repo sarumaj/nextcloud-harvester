@@ -357,7 +357,8 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   date in its row, a title in its card), adds a value: where it is from the link, and a type and
   pattern proposed from what it reads beside every link (a date's form recognised); the examples
   show the values, and their names, types and patterns can be changed. **Network** lists the
-  page's answers in JSON to its XHR and fetch() requests (address, size); **Use as the file
+  page's answers in JSON to its XHR and fetch() requests (address, size); **Preview** shows one,
+  indented (its first 20 000 characters; one larger than 2 MB is not kept); **Use as the file
   links** makes one the JSON listing, its items, fields, date and page parameter proposed from
   the answer, to check and change. In the Steps list a code typed into a field offers **code from
   e-mail?** (its sender and subject), which makes it the step above. The window's size the steps
