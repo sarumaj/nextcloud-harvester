@@ -322,6 +322,28 @@ def test_the_recorders_controls(page):
 
 
 @needs_chromium
+def test_the_recorders_screen_stops_while_hidden_and_its_socket_closes_when_left(page):
+    page.get_by_role("button", name="Edit").click()
+    page.get_by_role("button", name="Record in the browser").click()
+    page.wait_for_function("window.__sockets.length && window.__sockets[0].sent.length")
+    hide = """hidden => {
+      Object.defineProperty(document, 'visibilityState', { value: hidden ? 'hidden' : 'visible', configurable: true })
+      document.dispatchEvent(new Event('visibilitychange'))
+    }"""
+    page.evaluate(hide, True)
+    page.evaluate(hide, False)
+    assert [m for m in sent(page) if m["type"] == "screen"] == [
+        {"type": "screen", "visible": False},
+        {"type": "screen", "visible": True},
+    ]
+    # Another view of the app, without the recorder's Cancel: its browser ends at once.
+    page.evaluate("document.getElementById('harvester').replaceChildren()")
+    page.wait_for_function("window.__sockets[0].readyState === 3")
+    page.evaluate(hide, True)
+    assert [m for m in sent(page) if m["type"] == "screen"][-1]["visible"], "nothing sent once closed"
+
+
+@needs_chromium
 def test_a_failed_steps_picture_and_the_browser_at_its_page(page):
     page.get_by_role("button", name="Show what the browser saw").click()
     image = page.locator("img.harvester-shot-image")

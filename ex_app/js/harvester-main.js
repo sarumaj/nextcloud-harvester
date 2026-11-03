@@ -950,7 +950,7 @@
 					screen.say(message.textContent)
 				}
 			})
-			const box = wireScreen(screen, send)
+			const box = wireScreen(screen, send, socket)
 			const container = el('div', { class: 'harvester-recorder' })
 			container.append(
 				el('p', { class: 'harvester-muted', text: t('Sign in and allow rclone’s access; the browser closes by itself once rclone has the token (at most ten minutes).') }),
@@ -1284,7 +1284,8 @@
 	// The remote browser's screen: the person's mouse and wheel go to it at the browser's
 	// coordinates; the keyboard types into an invisible text field over it (the person's layout),
 	// whose text goes to the browser as text. Returns the box to put on the page.
-	function wireScreen(screen, send) {
+	function wireScreen(screen, send, socket) {
+		watchScreen(screen, send, socket)
 		const keys = el('textarea', {
 			class: 'harvester-keys', 'aria-label': t('Keyboard of the remote browser'),
 			autocomplete: 'off', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false',
@@ -1423,6 +1424,28 @@
 		})
 		bar.prepend(collapse)
 		return bar
+	}
+
+	// The screen's frames only while someone sees them: the browser stops sending them while the
+	// page is hidden (another tab, a minimized window) and starts again when it shows. Once the
+	// screen left the page (another view of the app, opened without the view's Cancel), its
+	// connection closes at once, which ends the browser on the server and frees it, instead of
+	// at the browser's idle time limit.
+	function watchScreen(screen, send, socket) {
+		let shown = false
+		const visibility = () => send({ type: 'screen', visible: document.visibilityState === 'visible' })
+		const watch = new MutationObserver(() => {
+			if (screen.isConnected) shown = true
+			else if (shown) socket.close()
+		})
+		const stop = () => {
+			watch.disconnect()
+			document.removeEventListener('visibilitychange', visibility)
+		}
+		watch.observe(document.body, { childList: true, subtree: true })
+		document.addEventListener('visibilitychange', visibility)
+		socket.addEventListener('open', () => { if (document.visibilityState !== 'visible') visibility() })
+		socket.addEventListener('close', stop)
 	}
 
 	// A browser's view that is no longer on the page (another view of the app was opened without
@@ -1675,7 +1698,7 @@
 			else if (data.type === 'network') network.show(data)
 		})
 		socket.addEventListener('close', () => { if (root.contains(screen)) { message.textContent ||= t('The browser closed.'); screen.say(message.textContent) } })
-		const box = wireScreen(screen, send)
+		const box = wireScreen(screen, send, socket)
 		const container = el('div', { class: 'harvester-recorder' })
 		container.append(
 			el('div', { class: 'harvester-header' },
@@ -2286,7 +2309,7 @@
 		})
 		socket.addEventListener('close', () => { message.textContent ||= t('The recorder’s browser closed.'); screen.say(message.textContent) })
 
-		const box = wireScreen(screen, send)
+		const box = wireScreen(screen, send, socket)
 		const container = el('div', { class: 'harvester-recorder' })
 		const drawer = el('button', {
 			class: 'harvester-drawer-switch',

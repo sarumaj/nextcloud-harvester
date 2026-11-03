@@ -26,7 +26,8 @@ The messages are JSON over the page's WebSocket:
   until, step} (an element picked for a step's until: to the page {type: until-picked}), {type:
   test, recipe, settings, as_job, job} (as_job: the app adds the saved job's account, main.py),
   {type: test-stop}, {type: test-code, code} (what a step of the test asks, {type: test-asking},
-  trial.py), {type: clear}, and the cookies panel's (jar.py);
+  trial.py), {type: clear}, {type: screen, visible} (the person's page hidden or shown again: the
+  screencast stops or starts), and the cookies panel's (jar.py);
 - values from the page: {type: mode, mode: value, target, level} (pick a value near the level's
   links), {type: value, target, level, index, changes (name, regex, type, attribute, closest,
   selector, field)} (one changed), {type: value-add, target, level, field} (a JSON item's field as one),
@@ -115,6 +116,10 @@ TYPED = 200
 # Tries to start a page's screencast while it is being attached, and the pause between them.
 SCREENCAST_TRIES = 10
 SCREENCAST_PAUSE = 0.2
+# Every how many of the page's frames Chromium sends one: every second frame is smooth enough to
+# follow the mouse and the scrolling, and takes a third less of the CPU than every frame (each one
+# is encoded, sent and acknowledged).
+EVERY_NTH_FRAME = 2
 DEPTH_TIMEOUT = 0.2
 # The changes of the picks Undo can take back.
 PICKS_KEPT = 50
@@ -202,8 +207,10 @@ class Recorder(LinkPicks, Popups, Trials):  # pylint: disable=too-many-instance-
         self._context: BrowserContext | None = None
         self._page: Page | None = None
         self._cdp: CDPSession | None = None
-        # Whether the page's screen comes as frames (its screencast started).
+        # Whether the page's screen comes as frames (its screencast started), and whether the page
+        # in the person's browser is hidden (another tab, a minimized window): no frames then.
         self._casting = False
+        self._hidden = False
         # The pages whose events the recorder listens to (each once, however often shown).
         self._watched: weakref.WeakSet = weakref.WeakSet()
         # The picks before each change (Undo), and the level of links to follow being picked again.
@@ -426,9 +433,12 @@ class Recorder(LinkPicks, Popups, Trials):  # pylint: disable=too-many-instance-
     async def _screencast(self) -> None:
         """The page's screen as frames, at the window's size. A page still being attached (just
         opened, or between two documents) refuses it ("Not attached to an active page"): tried
-        again a few times, else at the page's next load (_loaded), never left without a screen."""
+        again a few times, else at the page's next load (_loaded), never left without a screen.
+        None while the person's page is hidden (shown)."""
         assert self._cdp is not None
         self._casting = False
+        if self._hidden:
+            return
         for attempt in range(SCREENCAST_TRIES):
             try:
                 await self._cdp.send(
@@ -438,6 +448,7 @@ class Recorder(LinkPicks, Popups, Trials):  # pylint: disable=too-many-instance-
                         "quality": 60,
                         "maxWidth": self._size(self._page)["width"],
                         "maxHeight": self._size(self._page)["height"],
+                        "everyNthFrame": EVERY_NTH_FRAME,
                     },
                 )
             except Exception:  # pylint: disable=broad-exception-caught
@@ -467,6 +478,21 @@ class Recorder(LinkPicks, Popups, Trials):  # pylint: disable=too-many-instance-
             await self._cdp.send("Page.stopScreencast")
             await self._screencast()
         await self.send({"type": "viewport", **self.viewport})
+
+    async def shown(self, visible: bool) -> None:
+        """The person's page shows the screen again (visible), or is hidden: the screencast stops
+        while nobody sees it, and starts again at once when it shows."""
+        if visible == (not self._hidden):
+            return
+        self._hidden = not visible
+        if not self._cdp:
+            return
+        if self._hidden:
+            self._casting = False
+            with contextlib.suppress(Exception):
+                await self._cdp.send("Page.stopScreencast")  # the page is gone: nothing to stop
+        else:
+            await self._screencast()
 
     async def _frame(self, frame: dict) -> None:
         # Acknowledged once sent: Chromium sends the next frame only then, so frames never
@@ -871,6 +897,8 @@ class Recorder(LinkPicks, Popups, Trials):  # pylint: disable=too-many-instance-
             await self._trial_message(kind, message)
         elif kind == "viewport":
             await self.resize(message.get("width"), message.get("height"))
+        elif kind == "screen":
+            await self.shown(bool(message.get("visible")))
         elif kind == "clear":
             self._remember()
             self.start_url, self.follow, self.links, self.next, self.proposals = "", [], {}, {}, {}

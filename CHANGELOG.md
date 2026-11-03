@@ -38,6 +38,11 @@
 
 ### Changed
 
+- The browser's screen in the recorder (and in *Continue in the browser* and rclone's sign-in)
+  takes less of the server's CPU: every second frame of Chromium's (some 30 frames a second)
+  instead of every frame, and none while the jobs page is hidden (another tab, a minimized
+  window), again at once when it shows. A view left for another one of the app closes its
+  browser at once, instead of after 15 minutes without input.
 - An address sent to an on-demand job again brings back its files deleted in Nextcloud since,
   whatever the option, and the log says where each file fetched before is now (*Fetched before,
   in your files at …*).

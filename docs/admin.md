@@ -61,8 +61,10 @@ JSON names a folder the Nextcloud server can read, `"translations_folder": "/pat
   300-600 MB): each running website job takes one, recordings the others, so people record side
   by side and while jobs run. When all are taken, the recorder's screen says so instead of staying
   empty, and how many jobs and recordings hold them (not whose). A browser is freed whenever its
-  view ends: Done, Cancel, another view of the page, closing the page, the time limits, or
-  (rclone's sign-in) the wizard's end.
+  view ends: Done, Cancel, another view of the page (at once, not at the 15 minutes' idle limit),
+  closing the page, the time limits, or (rclone's sign-in) the wizard's end. Its screen comes as
+  every second frame of Chromium's (some third less CPU than every frame), and not at all while
+  the page is hidden (another tab, a minimized window): again at once when it shows.
 
 ## Proxy
 
