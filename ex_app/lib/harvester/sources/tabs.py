@@ -2,7 +2,8 @@
 """Part of the site source's replay (harvester.sources.site): how long a step settles, what a
 replayed step waits for (arrived), the tabs the steps act in (Tabs): the first, and a sign-in's
 popup a step went on in; the frame a step acts in (in_frame); a step's pause and its tries
-(with_tries), and the events the replay tells of each step (step_event).
+(with_tries), and the events the replay tells of each step (step_event); a page that loads more
+as it is scrolled (scroll_to_load) or with a button (load_more).
 """
 
 import re
@@ -23,6 +24,16 @@ SHORT_IDLE = 2_000
 POLL = 250
 # How often a step looks again for the frame it acts in while the page builds it (ms).
 FRAME_POLL = 250
+# A scroll step ends once the page stopped growing for this many rounds in a row, or after
+# SCROLL_SECONDS (a feed that never ends).
+SCROLL_STILL = 2
+SCROLL_SECONDS = 60
+# The page's size as a scroll step compares it: its links, its elements and its height.
+PAGE_SIZE = (
+    "() => [document.links.length, document.getElementsByTagName('*').length,"
+    " (document.scrollingElement || document.body).scrollHeight]"
+)
+SCROLL_DOWN = "() => window.scrollTo(0, (document.scrollingElement || document.body).scrollHeight)"
 
 
 class PopupMissing(SourceError):
@@ -210,3 +221,37 @@ class Tabs:
                 self.pages.pop()
             settle(self.pages[-1])
         return True
+
+
+def load_more(page, selector: str) -> None:
+    """Clicks the page's Load more button until it is gone or hidden, or the page stops growing
+    (as scroll_to_load), at most recipe.LOAD_MORE_MAX times or SCROLL_SECONDS."""
+    deadline = time.monotonic() + SCROLL_SECONDS
+    still = 0
+    for _ in range(recipes.LOAD_MORE_MAX):
+        button = page.query_selector(selector)
+        if not button or not button.is_visible():
+            return
+        before = page.evaluate(PAGE_SIZE)
+        try:
+            button.click()
+        except PlaywrightError:
+            return  # it went away or was covered as the page grew: what loaded is read
+        settle(page)
+        still = still + 1 if page.evaluate(PAGE_SIZE) == before else 0
+        if still >= SCROLL_STILL or time.monotonic() > deadline:
+            return
+
+
+def scroll_to_load(page, rounds: int) -> None:
+    """Scrolls to the page's end until it stops growing (no new links, elements or height for
+    SCROLL_STILL rounds), at most rounds times or SCROLL_SECONDS."""
+    deadline = time.monotonic() + SCROLL_SECONDS
+    still = 0
+    for _ in range(rounds):
+        before = page.evaluate(PAGE_SIZE)
+        page.evaluate(SCROLL_DOWN)
+        settle(page)
+        still = still + 1 if page.evaluate(PAGE_SIZE) == before else 0
+        if still >= SCROLL_STILL or time.monotonic() > deadline:
+            return

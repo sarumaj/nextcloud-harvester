@@ -1,0 +1,57 @@
+{
+  "title": "Save a page",
+  "source": "site",
+  "description": "No schedule: the pages you send it (Fetch a URL…, or Send to Harvester from the page) saved as files named after their titles, as PDF by default: receipts, order confirmations, articles that exist only as a web page.",
+  "parameters": {
+    "name": {
+      "title": "Name",
+      "default": "Saved pages",
+      "check": "^[^/{}$]{1,80}$",
+      "description": "For the folder and the tag.",
+      "suggestions": [
+        "Saved pages",
+        "Receipts",
+        "Articles"
+      ]
+    },
+    "format": {
+      "title": "Saved as",
+      "default": "pdf",
+      "check": "^(pdf|html|markdown)$",
+      "description": "PDF: the page as printed; HTML: the page with its pictures in one file; Markdown: its main text.",
+      "suggestions": [
+        {
+          "value": "pdf",
+          "label": "PDF"
+        },
+        {
+          "value": "html",
+          "label": "HTML (one file)"
+        },
+        {
+          "value": "markdown",
+          "label": "Markdown (the main text)"
+        }
+      ]
+    }
+  },
+  "job": {
+    "name": "${name}",
+    "source": "site",
+    "target": "/Documents/${name}",
+    "schedule": "",
+    "tags": [
+      "${name}"
+    ],
+    "options": {
+      "recipe": {
+        "start": "",
+        "save": "${format}"
+      },
+      "path": "{title}",
+      "file_type": "any",
+      "max_items": 1,
+      "stop_at_seen": 0
+    }
+  }
+}

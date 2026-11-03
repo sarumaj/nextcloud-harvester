@@ -86,6 +86,13 @@ The file links may be a JSON listing instead ("kind": "json", harvester.jsonlist
 address, the path to its items and the fields of each item; their values have a "field" in
 place of where on the page.
 
+The file links may keep the pages they lead to instead of downloading them: "save": "pdf",
+"html" or "markdown" opens each in the browser and saves the page itself as such a file (a
+receipt, an article that exists only as a page), and "capture": ["application/pdf", "image/*"]
+keeps the files of those types that each page loads or shows (a PDF in a viewer or an <embed>,
+images, blob: addresses) (harvester.sources.keep). A recipe's own "save" (beside start, without
+file links) saves the start page itself, where the steps end (a page sent to an on-demand job).
+
 "viewport": {"width": 1280, "height": 800} is the browser window's size the recipe was recorded
 at, which the job's browser takes too (pages lay out for it); without one, 1280 × 800.
 """
@@ -151,6 +158,11 @@ RETRY_DELAY = 2
 RETRY_DELAY_MAX = 60
 # What names an element's attribute a value is read from.
 ATTRIBUTE = re.compile(r"[A-Za-z_:][\w:.-]{0,60}$")
+# What a page is saved as (file links' or the recipe's "save"), and the types of the files a page
+# loads that "capture" keeps: a media type, its subtype "*" for any (image/*); at most CAPTURE_TYPES.
+SAVE_KINDS = ("pdf", "html", "markdown")
+CAPTURE_TYPE = re.compile(r"^[a-z]+/(?:\*|[a-z0-9][\w.+-]*)$")
+CAPTURE_TYPES = 10
 
 
 def frame_address(url: str) -> str:
@@ -727,14 +739,44 @@ def check_recipe(recipe: dict) -> list[str]:
 
 
 def _check_links(links: object, recipe: dict) -> list[str]:
-    """The file links: a JSON listing's parts, or a level's with its values, key and click."""
+    """The file links: a JSON listing's parts, or a level's with its values, key and click; what
+    they keep of the pages they lead to (save, capture). A recipe that saves its start page has
+    none."""
+    if "save" in recipe:
+        if recipe["save"] not in SAVE_KINDS:
+            return [f"save is one of {', '.join(SAVE_KINDS)}"]
+        if links or recipe.get("follow"):
+            return ["the recipe saves its start page (save) or has levels and file links, not both"]
+        return []
     if isinstance(links, dict) and links.get("kind") == "json":
-        return _check_json(links)
+        return _check_json(links) + _check_keep(links)
     problems = _check_level("file links", links)
     if isinstance(links, dict):
         problems += _check_values("file links", links.get("values"))
         problems += _check_key(links, recipe)
+        problems += _check_keep(links)
     return problems
+
+
+def _check_keep(links: dict) -> list[str]:
+    """What the file links keep of the pages they lead to: the page saved as a file (save), or the
+    files of some types that it loads (capture), not both."""
+    if "save" in links and links["save"] not in SAVE_KINDS:
+        return [f"file links: save is one of {', '.join(SAVE_KINDS)}"]
+    if "capture" not in links:
+        return []
+    types = links["capture"]
+    if (
+        not isinstance(types, list)
+        or not 1 <= len(types) <= CAPTURE_TYPES
+        or not all(isinstance(kind, str) and CAPTURE_TYPE.match(kind) for kind in types)
+    ):
+        return [f"file links: capture is a list of 1 to {CAPTURE_TYPES} media types, like application/pdf or image/*"]
+    if any(kind in ("text/html", "text/*", "application/xhtml+xml") for kind in types):
+        return ["file links: capture keeps files, not web pages (text/html): save the pages instead"]
+    if "save" in links:
+        return ["file links: save the pages (save) or capture what they load (capture), not both"]
+    return []
 
 
 def levels(recipe: dict) -> list[dict]:
@@ -775,12 +817,14 @@ def token_warnings(recipe: dict) -> list[Said]:
 def uses_browser(recipe: dict) -> bool:
     """Whether the recipe needs the browser: it has steps to replay, a next page or numbered
     pages that are buttons (clicked, no address to fetch), file links or links to follow that
-    are clicked, or a level that loads more by scrolling or with a button."""
+    are clicked, a level that loads more by scrolling or with a button, or pages it saves or
+    captures files of."""
     after = recipe.get("next") or {}
     buttons = isinstance(after, dict) and bool(after.get("buttons"))
     clicked = any(spec.get("click") for spec in levels(recipe))
     loading = any("scroll" in spec or "load_more" in spec for spec in levels(recipe))
-    return bool(recipe.get("steps")) or buttons or clicked or loading
+    keeping = bool(recipe.get("save")) or any(spec.get("save") or spec.get("capture") for spec in levels(recipe))
+    return bool(recipe.get("steps")) or buttons or clicked or loading or keeping
 
 
 def edit_step(step: dict, message: dict) -> None:

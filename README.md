@@ -10,11 +10,15 @@ the app's browser or taken from a template, not by code.
 - **Sources:** websites by a recipe, mailbox attachments (IMAP), feeds and podcasts, videos and
   audio (yt-dlp), galleries (gallery-dl), file stores and cloud drives (rclone), release
   downloads (GitHub, GitLab, Codeberg, Forgejo, Gitea).
+- **Pages as files:** what a site offers as no file of its own: pages saved as PDF, HTML (one
+  file) or Markdown (the main text), such as receipts and articles, also a page you send it; the
+  PDFs and pictures a page only shows (a viewer, an `<embed>`, a `blob:`); pictures at their
+  full size.
 - **Recorder:** a browser in the app, shown on the page: sign in and pick the links (or the
   buttons, rows and cards without an address, which the job clicks), and the app proposes their
   patterns, the files' names and tags; *Test the recipe* shows what a run would find.
-- **Templates** for known sites (heise's magazines, podcasts, channels, galleries, releases), and
-  recipes to export and import as files.
+- **Templates** for known sites (heise's magazines, podcasts, channels, galleries, releases, a
+  page saved on demand), and recipes to export and import as files.
 - **Sign-ins:** passwords, one-time codes, codes by e-mail, cookies, OAuth2 for mail; kept
   sessions; when a site asks for a person, the job waits for you in its browser.
 - **Languages:** English, German and Polish: the page (also the progress log and the schedule

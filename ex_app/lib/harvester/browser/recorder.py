@@ -17,7 +17,8 @@ The messages are JSON over the page's WebSocket:
   y, button}, {type: wheel, dx, dy}, {type: key, key}, {type: text, text}, {type: mode, mode,
   level (a level's links to pick again)}, {type: pattern, target (follow, links), level,
   pattern}, {type: selector, target (follow, links, next), level, selector}, {type: click, target,
-  level, click} (a pick clicked or not, linkpicks.py), {type: remove,
+  level, click} (a pick clicked or not, linkpicks.py), {type: save, save} (the file links' pages
+  saved as files, linkpicks.py), {type: remove,
   target, level}, {type: next-kind, kind (link, number)}, {type: undo} (the last step), {type:
   undo-pick} (the last change of the picks), {type: scroll} (a step: scroll to load more),
   the Steps list's edits (steps.EDITS: optional, step-delete, step-move, step-edit, record-at,
@@ -901,8 +902,9 @@ class Recorder(LinkPicks, Popups):  # pylint: disable=too-many-instance-attribut
             await self._apply_mode()
         elif kind == "pattern":
             await self._edit_pattern(message)
-        elif kind == "click":
-            await self._set_click(message)
+        elif kind in ("click", "save"):
+            # A pick clicked or not, the file links' pages saved or not (linkpicks.py).
+            await (self._set_click if kind == "click" else self._set_save)(message)
         elif kind in EDITS:
             if self.steps.edit(kind, message):
                 await self._update()

@@ -40,7 +40,7 @@ from ..l10n import said
 from ..browser import engine
 from ..browser.guard import Guard
 from ..schedule import zone
-from . import base, clicks, download, near
+from . import base, clicks, download, keep, near
 from .base import AuthError, ChallengeError, IMPERSONATE, Item, Option, Source, SourceError, Stopped, nap
 from .base import pattern_search
 from .download import Response
@@ -52,6 +52,8 @@ from .tabs import (
     Tabs,
     arrived,
     in_frame,
+    load_more,
+    scroll_to_load,
     settle,
     short_error,
     step_event,
@@ -69,16 +71,6 @@ LOCK_TIMEOUT = 1800
 # at this quality, again at the lower one when larger than SHOT_BYTES (else none is kept).
 SHOT_QUALITY = (60, 35)
 SHOT_BYTES = 400_000
-# A scroll step ends once the page stopped growing for this many rounds in a row, or after
-# SCROLL_SECONDS (a feed that never ends).
-SCROLL_STILL = 2
-SCROLL_SECONDS = 60
-# The page's size as a scroll step compares it: its links, its elements and its height.
-PAGE_SIZE = (
-    "() => [document.links.length, document.getElementsByTagName('*').length,"
-    " (document.scrollingElement || document.body).scrollHeight]"
-)
-SCROLL_DOWN = "() => window.scrollTo(0, (document.scrollingElement || document.body).scrollHeight)"
 OUTER_HTML = "s => { const e = document.querySelector(s); return e ? e.outerHTML : '' }"
 # The recipe test (Site.survey): the file links it lists, and the listing pages it opens at most.
 SURVEY_FILES = 20
@@ -382,6 +374,14 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes,too
             self.referer = ""
         return answer.get("name") or "download"
 
+    def keep_page(self, where: Any, dest: BinaryIO, settings: dict, spec: dict) -> tuple[str, str]:
+        return keep.save(self, where, dest, settings, spec, keep.saved_as(spec), STEP_TIMEOUT)
+
+    def capture(self, where: Any, settings: dict, spec: dict) -> tuple[list, str, str]:
+        # A file the page embeds is fetched as a file link's is: the browser's cookies, the page
+        # as Referer.
+        return keep.capture(self, where, settings, spec, STEP_TIMEOUT, keep.fetcher(self.download, settings))
+
     def open_clicked(self, target: clicks.Target) -> Any:
         landing = clicks.land(target, STEP_TIMEOUT)
         self.__dict__.setdefault("_landings", []).append(landing)
@@ -480,44 +480,10 @@ def snapshot(page, what: str) -> dict | None:
     return None
 
 
-def load_more(page, selector: str) -> None:
-    """Clicks the page's Load more button until it is gone or hidden, or the page stops growing
-    (as scroll_to_load), at most recipe.LOAD_MORE_MAX times or SCROLL_SECONDS."""
-    deadline = time.monotonic() + SCROLL_SECONDS
-    still = 0
-    for _ in range(recipes.LOAD_MORE_MAX):
-        button = page.query_selector(selector)
-        if not button or not button.is_visible():
-            return
-        before = page.evaluate(PAGE_SIZE)
-        try:
-            button.click()
-        except PlaywrightError:
-            return  # it went away or was covered as the page grew: what loaded is read
-        settle(page)
-        still = still + 1 if page.evaluate(PAGE_SIZE) == before else 0
-        if still >= SCROLL_STILL or time.monotonic() > deadline:
-            return
-
-
 def dated_step(step: dict, today: datetime.date) -> dict:
     """The step with the dates in its value filled in for today (recipe.dated)."""
     value = step.get("value")
     return step | {"value": recipes.dated(value, today)} if isinstance(value, str) and "{" in value else step
-
-
-def scroll_to_load(page, rounds: int) -> None:
-    """Scrolls to the page's end until it stops growing (no new links, elements or height for
-    SCROLL_STILL rounds), at most rounds times or SCROLL_SECONDS."""
-    deadline = time.monotonic() + SCROLL_SECONDS
-    still = 0
-    for _ in range(rounds):
-        before = page.evaluate(PAGE_SIZE)
-        page.evaluate(SCROLL_DOWN)
-        settle(page)
-        still = still + 1 if page.evaluate(PAGE_SIZE) == before else 0
-        if still >= SCROLL_STILL or time.monotonic() > deadline:
-            return
 
 
 def filled(step: dict, secrets: dict[str, str]) -> str:
@@ -707,7 +673,7 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
         except ValueError as error:
             raise SourceError(f"the recipe is not valid JSON: {error}") from error
         problems = recipes.check_recipe(self.recipe)
-        problems += download.problems(self.settings)
+        problems += download.problems(self.settings) + keep.problems(self.recipe, self.settings)
         if problems:
             raise SourceError("; ".join(problems))
         self.driver: Driver | None = None
@@ -723,6 +689,10 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
         self.repairs: list[str] = []
         # The pause before each listing page after the first (the recipe's test has none).
         self.page_pause = PAGE_PAUSE
+        # The walk lists the pages to capture files of without opening them (the recipe's test).
+        self.listing_only = False
+        # What the pages of the file links, or the start page, are saved as ("": downloaded).
+        self.saving = keep.saved_as(self.recipe) or keep.saved_as(self.recipe.get("links") or {})
 
     def _saw(self, shot: dict) -> None:
         self._shot = shot
@@ -889,25 +859,33 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
     def item(self, link: str, text: str, page: int, groups: dict, referer: str = "") -> Item:
         """The file of a link: its download URL and path from the link's values (an item that
         fails alone when they cannot be made). A File name with {disposition} is the answer's
-        name: a stand-in (the link's file name) until the download (fetch)."""
+        name, or with {title} a saved page's title: a stand-in (the link's file name, its text)
+        until the download (fetch)."""
         values = patterns.link_values(link, text, page) | groups
         template = str(self.settings["path"])
-        pending = "disposition" in names_in(template)
+        keeps = self.saving or (self.recipe.get("links") or {}).get("capture")
+        pending = bool(names_in(template) & ({"disposition", "title"} if keeps else {"disposition"}))
         key = patterns.stable_url(link)
         try:
             url = patterns.render(str(self.settings["download_url"]), values)
-            stand_in = values | {"disposition": values["filename"]} if pending else values
+            title = {"title": values["text"] or values["stem"]} if keeps else {}
+            stand_in = values | {"disposition": values["filename"]} | title if pending else values
             path = patterns.render_path(template, stand_in)
         except (KeyError, ValueError) as error:
             problem = SourceError(str(error).strip("'\""))
             return Item(key=key, path="", url=link, values=values, problem=problem, referer=referer)
-        path = download.with_extension(path, self.settings)
-        return Item(key=key, path=path, url=url, values=values, referer=referer, pending=pending)
+        path = keep.with_extension(download.with_extension(path, self.settings), self.saving)
+        return Item(key=key, path=path, url=url, values=values | title, referer=referer, pending=pending)
 
     def fetch(self, item: Item, dest: BinaryIO) -> Item | None:
         driver = self._driver()
         answer: dict[str, str] = {}
-        if item.trigger is not None:
+        if isinstance(item.trigger, keep.Captured):
+            answer["name"] = keep.write(item.trigger, dest, self.settings)
+        elif self.saving:
+            spec = (self.recipe.get("links") or {}) | {"save": self.saving}
+            answer["name"], answer["title"] = driver.keep_page(item.trigger or item.url, dest, self.settings, spec)
+        elif item.trigger is not None:
             answer["name"] = driver.click_download(item.trigger, dest, self.settings)
         else:
 
@@ -922,8 +900,9 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
         if not item.pending:
             return None
         values = item.values | {"disposition": answer.get("name") or "download"}
+        values |= {"title": answer["title"] or item.values.get("title") or "page"} if "title" in answer else {}
         path = download.with_extension(patterns.render_path(str(self.settings["path"]), values), self.settings)
-        return dataclasses.replace(item, path=path, values=values, pending=False)
+        return dataclasses.replace(item, path=keep.with_extension(path, self.saving), values=values, pending=False)
 
     def survey(
         self, files: int = SURVEY_FILES, pages: int = SURVEY_PAGES, begin: Callable[[], None] = lambda: None
@@ -950,6 +929,9 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
 
         self.observe = observe
         self.page_pause = 0.0
+        self.listing_only = True
+        # A page to save, or to capture files of, is listed: the test opens none.
+        kept = {"save": self.saving, "capture": (self.recipe.get("links") or {}).get("capture") or []}
         items = self.items(lambda key: False)
         try:
             begin()
@@ -957,7 +939,8 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
                 problem = str(item.problem) if item.problem else ""
                 # A file link that is clicked is told by its text (its address is the listing's).
                 entry = {"url": item.url, "path": item.path, "problem": problem, "text": item.values.get("text", "")}
-                result["pages"][-1]["files"].append(entry | {"click": item.trigger is not None})
+                entry |= kept | {"click": item.trigger is not None and not isinstance(item.trigger, keep.Opened)}
+                result["pages"][-1]["files"].append(entry)
                 result["files"] += 1
                 if result["files"] >= files:
                     result["ended"] = "files"

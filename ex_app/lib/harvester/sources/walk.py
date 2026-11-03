@@ -13,6 +13,11 @@ A level that is clicked ("click": true) has elements without an address (a butto
 card): each is told apart by its text (the level's pattern is searched in it) and its place,
 known by the listing's address and its text, and its next level is read where its click lands
 (clicks.land), after which the walk returns to the listing (Driver.done: clicks.back).
+
+A recipe that saves its start page ("save" of its own) yields that page alone, open (keep.Opened).
+File links that capture what their pages load ("capture") yield the files of each page instead of
+the page (keep.capture), a page whose files were all placed marked as done (keep.CAPTURED); the
+recipe's test (listing_only) lists the pages without opening them.
 """
 
 import dataclasses
@@ -23,7 +28,7 @@ from playwright.sync_api import Error as PlaywrightError
 
 from .. import jsonlist, patterns
 from ..l10n import said
-from . import near
+from . import keep, near
 from .base import ChallengeError, Item, SourceError, pattern_search
 from .clicks import Target
 
@@ -36,7 +41,7 @@ class StartEmpty(SourceError):
     """The start page has none of the recipe's links: signed out, or the site changed."""
 
 
-class Walk:  # pylint: disable=too-many-instance-attributes
+class Walk:  # pylint: disable=too-many-instance-attributes,too-many-public-methods
     """One walk of the site's listing with its driver, yielding the items seen() does not know."""
 
     def __init__(self, site: Any, driver: Any, seen: Callable[[str], bool]):
@@ -46,7 +51,9 @@ class Walk:  # pylint: disable=too-many-instance-attributes
         self.recipe: dict = site.recipe
         self.follow: list[dict] = self.recipe.get("follow") or []
         self.after: dict = self.recipe.get("next") or {}
-        self.key_template = str(self.recipe["links"].get("key") or "")
+        self.key_template = str((self.recipe.get("links") or {}).get("key") or "")
+        # The types of the files the file links' pages load that are kept (keep.capture).
+        self.capture = bool((self.recipe.get("links") or {}).get("capture")) and not site.listing_only
         self.stop_at_seen = bool(int(site.settings["stop_at_seen"]) and seen(FULL_PASS))
         # The links taken so far (by their stable address), and the listing pages read per level
         # (their address and links: a next page among them is a loop).
@@ -55,8 +62,43 @@ class Walk:  # pylint: disable=too-many-instance-attributes
         self.opened = 0
 
     def items(self) -> Iterator[Item]:
-        """The walk from the recipe's start (None: the page its steps ended on)."""
+        """The walk from the recipe's start (None: the page its steps ended on); a recipe that
+        saves its start page, that page."""
+        if self.recipe.get("save"):
+            yield from self.start_page()
+            return
         yield from self.listing(self.recipe.get("start") or None, 0, {}, {"found": False, "new": False})
+
+    def start_page(self) -> Iterator[Item]:
+        """The start page to save, as the item of its address, open while it is saved."""
+        page = self.paced(self.driver.open, self.recipe.get("start") or None)
+        try:
+            url = self.driver.address(page)
+            event = {"level": 0, "page": 1, "url": url, "selector": "(the page itself)", "kind": "links"}
+            self.site.observe(event | {"found": 1, "matching": 1})
+            made = dataclasses.replace(self.site.item(url, "", 1, {}), trigger=keep.Opened(page))
+            if not self.known(made):
+                yield made
+        finally:
+            self.driver.done(page)
+
+    def captured(self, entry: Item) -> Iterator[Item]:
+        """The files of the wanted types the page of a file link loads (keep.capture), those not
+        known; the page is marked as done once each of them was placed (or skipped)."""
+        if entry.problem is not None:
+            yield entry
+            return
+        found, title, url = self.driver.capture(entry.trigger or entry.url, self.site.settings, self.recipe["links"])
+        if not found:
+            self.site.report("info", f"{url}: none of the files it loads is of the types to capture")
+            return
+        made = [keep.captured_item(entry, file, title, url, str(self.site.settings["path"])) for file in found]
+        for item in made:
+            if not self.seen(item.key):
+                yield item
+        # Back here once the run took each of them (a run that ends before does not come back).
+        if all(self.seen(item.key) for item in made):
+            self.site.remember(entry.key)
 
     def listing(self, url: str | None, level: int, values: dict, outcome: dict) -> Iterator[Item]:
         """The listing at the level: its pages, or the JSON listing that holds the file links."""
@@ -73,7 +115,10 @@ class Walk:  # pylint: disable=too-many-instance-attributes
 
     def known(self, item: Item) -> bool:
         """Whether the item is known; a key recorded before keys were made stable (or before the
-        recipe had a key template) still counts: the link as it was."""
+        recipe had a key template) still counts: the link as it was. A page to capture files of
+        is known once it is done."""
+        if item.key.startswith(keep.CAPTURED):
+            return self.seen(item.key)
         link = item.values["url"]
         return self.seen(item.key) or self.seen(patterns.stable_url(link)) or self.seen(link)
 
@@ -176,7 +221,8 @@ class Walk:  # pylint: disable=too-many-instance-attributes
                 made = dataclasses.replace(made, key="key:" + patterns.render(self.key_template, made.values))
             except (KeyError, ValueError, IndexError):
                 pass  # a value the link lacks: its address tells it, as without a template
-        return made
+        # A page to capture files of is no file: its key marks it as done (captured).
+        return dataclasses.replace(made, key=keep.CAPTURED + made.key) if self.capture else made
 
     def files(self, page: Any, number: int, values: dict, outcome: dict, level: int) -> Generator[Item, None, bool]:
         """The file links of a listing's page; True when the listing ends there (no file links,
@@ -188,7 +234,8 @@ class Walk:  # pylint: disable=too-many-instance-attributes
         new = [entry for entry in made if not self.known(entry)]
         outcome["found"] |= bool(found)
         outcome["new"] |= bool(new)
-        yield from new
+        for entry in new:
+            yield from self.captured(entry) if self.capture else (entry,)
         return not found or bool(self.stop_at_seen and not new)
 
     def known_listing(self, link: str, level: int, values: dict, outcome: dict) -> Generator[Item, None, bool]:

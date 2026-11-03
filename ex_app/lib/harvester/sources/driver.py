@@ -95,6 +95,12 @@ class Driver(abc.ABC):
         """Signs in anew (the session ended in the middle of a run); False without a sign-in."""
         return False
 
+    def keep_page(self, where: Any, dest: BinaryIO, settings: dict, spec: dict) -> tuple[str, str]:
+        """Saves the page a file link leads to (where: its address, the element clicked, or a page
+        open: keep.Opened) as spec's "save" says, into dest; the file's name and the page's title
+        (harvester.sources.keep). Only the browser renders pages."""
+        raise SourceError(f"the pages are saved as {spec.get('save')}, which only the browser can")
+
     def capture(self, where: Any, settings: dict, spec: dict) -> tuple[list, str, str]:
         """The files of the types spec captures that the page a file link leads to loads (keep
         .Captured each), its title and address. Only the browser loads pages."""

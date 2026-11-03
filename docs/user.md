@@ -133,6 +133,9 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   - `podcast`: a podcast's episodes;
   - `video-channel` and `channel-audio`: a channel's newest videos, or their audio;
   - `video-on-demand`: an on-demand job for the videos you send it, into one folder;
+  - `save-page`: an on-demand job that saves the pages you send it (*Fetch a URL…*, *Send to
+    Harvester*) as files named after their titles: PDF, HTML or Markdown (its parameter *Saved
+    as*), for receipts, order confirmations and articles that exist only as a web page;
   - `gallery`: a gallery or album's images;
   - `nextcloud-share`: the folder of another Nextcloud's public link;
   - `app-releases`: an application's release downloads, of its newest release.
@@ -329,6 +332,40 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   no items, or the job's *Pages*. The job asks for it as for a file: the guarded HTTP client,
   with the browser's cookies when it has a browser (not the browser's own `context.request`,
   which passes by its routes); at most 16 MB, 64 levels deep and 1000 items a page.
+- **Pages saved as files** (`harvester/sources/keep.py`): for what exists only as a web page (a
+  receipt, an order's confirmation, a payslip, an article), the file links may have `"save":
+  "pdf"`, `"html"` or `"markdown"`: each page a link leads to (its address, or what an element
+  that is clicked shows) is opened in the job's browser, settled (the network quiet, scrolled to
+  its end so that lazy pictures load: the level's `"scroll"` rounds, else 3) and saved, not
+  downloaded. `pdf` is Chromium's print (A4, with backgrounds); `html` one file with the page's
+  stylesheets, pictures, fonts and frames inside: Chromium's snapshot (MHTML, as *Save page as*
+  makes it: the page as it shows it after its scripts, without them), each resource turned into
+  a `data:` address (`harvester/mhtml.py`), since MHTML opens only in Chromium's browsers and
+  Nextcloud shows none; `markdown` the main content as Readability finds it (paragraphs scored
+  for their containers, menus, sidebars, forms and hidden parts left out) with its headings,
+  lists, tables, links and pictures (`harvester/pagetext.py`, on BeautifulSoup: no other
+  dependency), under the title and the address. The file's name may hold `{title}`, the page's
+  title (a stand-in, the link's text, until it is saved; `{disposition}` is the title with the
+  extension), and gets the extension where it lacks it. Pages are told apart by their address
+  or the recipe's key, as files are. A page that shows a sign-in is a web page instead of the
+  file (*signed out?*), one that answers an error fails alone; a saved page passes the size
+  checks (200 MB at most) and the job's file types, which must take what is saved (`any`, or
+  `pdf`, `html` or `markdown`; else the job is not saved). A recipe's own `"save"`, beside its
+  `start` and without levels or file links (`{"start": "https://…", "save": "pdf"}`), saves the
+  start page itself, where the steps end: the template `save-page` is such an on-demand job,
+  whose start is each page sent to it.
+- **Files a page only shows:** the file links may have `"capture": ["application/pdf"]` (media
+  types, `image/*` for any picture, at most 10; never `text/html`): each page a link leads to is
+  opened and the job keeps the files of those types that it loads (its own requests, its frames'
+  and popups'; a PDF a viewer fetches), those it embeds without loading them (`<embed>`,
+  `<object>`, a frame's address: a headless browser shows no PDF viewer, so they are fetched with
+  the browser's cookies), and its `blob:` addresses (read in the page). At most 20 files a page,
+  each at most 64 MB and the job's largest file, each checked as a download (its types and
+  sizes); `{filename}`, `{stem}`, `{ext}` and `{disposition}` are the file's, `{title}` the
+  page's, the link's other values stay. A file is told apart by the page's key and its address
+  (a blob's by its content); a page whose files were all placed is marked done and not opened
+  again (one that gave none is, next run). `save` and `capture` exclude each other, and both
+  have the job use the browser (without it, a page could not be rendered: the job says so).
 - **Pictures at full size:** file links may be pictures (`img`, `picture`): a picture's address
   is its largest candidate of `srcset` and its `<picture>`'s `<source>`s (by width, else by
   density), before it an attribute that names the full size (`data-full`, `data-zoom-image`,
@@ -390,8 +427,12 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   than the one it was picked on is its entry's (its file links are picked there); a dialog or
   panel on the listing's own address is not, so pick the file links in it, not another level.
   **Test the recipe** clicks such levels as a run does; it lists file links that are clicked by
-  their text (`(clicked: “Get A”)`) without clicking them, and as the job runs it probes none. A
-  picture picked as a file link is taken at its full size, its examples show that address.
+  their text (`(clicked: “Get A”)`) without clicking them, and as the job runs it probes none.
+  **Save the pages as** (the file links' pick: *Files*, *PDF*, *HTML*, *Markdown*) saves the
+  pages they lead to instead of downloading them (`"save"`) and proposes `{title}` as the file
+  name; **Test the recipe** lists those pages (`(the page saved as PDF)`) and a recipe's
+  `capture` (`(its files of the types image/*)`) without opening them, and probes none. A picture
+  picked as a file link is taken at its full size, its examples show that address.
   Picking a number of a numbered pagination as the next page proposes numbered pages, showing
   this page's number and the next one's (**Use the picked link alone** switches back).
   **Add: scroll to load more** (while recording) adds that step and scrolls the page.

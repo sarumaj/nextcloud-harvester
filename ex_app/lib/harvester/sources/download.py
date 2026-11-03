@@ -60,6 +60,7 @@ FILE_TYPES: dict[str, tuple[tuple[bytes, ...], str]] = {
     "audio": ((), ""),
     "video": ((), ""),
     "html": ((), ".html"),
+    "markdown": ((), ".md"),
 }
 DOWNLOAD_OPTIONS = {
     "file_type": Option(
@@ -67,7 +68,7 @@ DOWNLOAD_OPTIONS = {
         "any",
         "One or several (Ctrl or ⌘ and click to pick more, e.g. pdf and zip); any: every type. Anything else is "
         "refused (an error page, say).",
-        choices=("any", "pdf", "zip", "image", "audio", "video", "html"),
+        choices=("any", "pdf", "zip", "image", "audio", "video", "html", "markdown"),
         multiple=True,
     ),
     "min_size": Option(
@@ -149,7 +150,7 @@ def accepts(types: list[str], content_type: str, start: bytes) -> bool:
             return True
         if kind in ("audio", "video") and content_type.startswith((f"{kind}/", "application/octet-stream", "binary/")):
             return True
-        if kind == "html" and content_type.startswith("text/html"):
+        if kind in ("html", "markdown") and content_type.startswith(f"text/{kind}"):
             return True
     return False
 
@@ -291,22 +292,30 @@ def disposition_name(headers: dict[str, str], url: str) -> str:
 def copy_file(path: str, dest: BinaryIO, settings: dict, content_type: str = "") -> None:
     """Copies a file the browser downloaded to dest, with the checks of a download: the job's
     largest file (before anything is copied), its types, its smallest."""
-    types, most = file_types(settings), largest(settings)
     with open(path, "rb") as source:
-        source.seek(0, 2)
-        size = source.tell()
-        if size > most:
-            raise Refused(f"the download is {size // MB} MB, more than the job's largest file")
-        if size < int(settings.get("min_size", 0) or 0):
-            raise SourceError(f"the download gave only {size} bytes")
-        source.seek(0)
-        first = True
-        while chunk := source.read(1 << 20):
-            check_stop()
-            if first and not accepts(types, content_type, chunk):
-                raise Refused(f"the download is not of the job's file types ({', '.join(types)})")
-            first = False
-            dest.write(chunk)
+        copy_checked(source, dest, settings, content_type)
+
+
+def copy_checked(source: BinaryIO, dest: BinaryIO, settings: dict, content_type: str = "", what: str = "") -> None:
+    """Copies a file at hand (one the browser downloaded, a page saved, a file a page loaded) from
+    the start of source to dest, checked as a download: the job's largest file (before anything is
+    copied), its types, its smallest. what names it in the errors (the download)."""
+    types, most = file_types(settings), largest(settings)
+    what = what or "the download"
+    source.seek(0, 2)
+    size = source.tell()
+    if size > most:
+        raise Refused(f"{what} is {size // MB} MB, more than the job's largest file")
+    if size < int(settings.get("min_size", 0) or 0):
+        raise SourceError(f"{what} gave only {size} bytes")
+    source.seek(0)
+    first = True
+    while chunk := source.read(1 << 20):
+        check_stop()
+        if first and not accepts(types, content_type, chunk):
+            raise Refused(f"{what} is not of the job's file types ({', '.join(types)})")
+        first = False
+        dest.write(chunk)
 
 
 def fetch(  # pylint: disable=too-many-arguments

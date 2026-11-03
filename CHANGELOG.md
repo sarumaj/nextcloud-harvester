@@ -17,6 +17,20 @@
   a script opens) as file links or links to follow that are clicked: their pattern proposed on
   their texts, the panel saying the job clicks them, **Click in the browser** to switch it; *Test
   the recipe* walks such levels by clicking and lists clicked file links by their text.
+- Pages saved as files: the file links' `"save": "pdf"`, `"html"` or `"markdown"` opens each page
+  they lead to in the job's browser (also what an element clicked shows), settles and scrolls it,
+  and saves it: Chromium's print (A4), one HTML file with its stylesheets, pictures and frames
+  inside (Chromium's MHTML snapshot, its resources as `data:` addresses), or its main content as
+  Markdown (Readability's way, on BeautifulSoup). Named by `{title}`, with the extension; checked
+  as a download (the job's file types must take it, `markdown` a new one). A recipe's own
+  `"save"` saves its start page; the template **Save a page** does it for the pages sent to an
+  on-demand job (*Fetch a URL…*, *Send to Harvester*). The recorder's file links pick has **Save
+  the pages as**, and *Test the recipe* lists the pages it would save.
+- Files a page only shows: the file links' `"capture": ["application/pdf", "image/*"]` keeps the
+  files of those types each page loads (a viewer's PDF, pictures), embeds (`<embed>`, `<object>`,
+  frames: fetched with the browser's cookies) or holds as `blob:` addresses (read in the page); at
+  most 20 a page and 64 MB each, checked as downloads; a page whose files were all placed is not
+  opened again.
 - Pictures picked as file links (`img`, `picture`) are taken at their full size: the largest
   candidate of `srcset` and `<source>`, an attribute naming the full size, the lazy-loading ones
   (`data-src`, `data-original`, …) over a placeholder `src`; in the browser, over HTTP and in the

@@ -11,6 +11,7 @@ import json
 import pytest
 
 from fake_site import SITE
+from harvester import ondemand
 from harvester.presets import PRESETS, make_job
 from harvester.recipe import check_recipe, dated, key_ok, sign_in_steps, uses_browser
 from harvester.sources import SourceError
@@ -28,7 +29,10 @@ def test_every_preset_and_old_recipe_still_passes():
         if preset["source"] != "site":
             continue
         given = {key: f"{SITE}/page" for key, spec in preset.get("parameters", {}).items() if not spec.get("default")}
-        assert check_recipe(json.loads(make_job(name, given)["options"]["recipe"])) == [], name
+        job = make_job(name, given)
+        # An on-demand job's address comes with each fetch: checked with a stand-in's, as it is saved.
+        options = ondemand.checked_options("site", job["options"]) if not job["schedule"] else job["options"]
+        assert check_recipe(json.loads(options["recipe"])) == [], name
     assert not problems(next={"selector": "a.next", "level": 0})
 
 

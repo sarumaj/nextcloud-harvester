@@ -8,7 +8,9 @@ the picks and shows them.
 A pick whose elements all lack an address becomes one that is clicked ("click": true), its
 pattern proposed on the elements' texts (text_pattern); the page's {type: click, target, level,
 click} switches a pick between the two, its pattern proposed anew from the page. Images (an <img>,
-a <picture>) are picked by their address at full size (harvester.images).
+a <picture>) are picked by their address at full size (harvester.images). The page's {type: save,
+save: pdf, html, markdown or ""} has the file links' pages saved as such files (harvester.sources
+.keep), or downloaded again.
 """
 
 import asyncio
@@ -38,6 +40,8 @@ MATCHES = (
     + """)(e)]
 })"""
 )
+# What the file links' pages may be saved as ("": downloaded as files).
+SAVES = ("", "pdf", "html", "markdown")
 
 
 def _shared(texts: list[str]) -> str:
@@ -132,6 +136,12 @@ class LinkPicks(DataPicks):  # pylint: disable=too-few-public-methods
         proposal.update(error=problem, examples=examples, matching=matching, found=len(found), pattern=pattern.pattern)
         proposal["groups"] = list(pattern.groupindex)
         proposal["click"] = clicked
+        if spec.get("save") and key == "links":
+            # A saved page is named after its title (the files' name kept for when it is not).
+            proposal.setdefault("files_path", proposal.get("path"))
+            proposal["path"] = "{title}"
+        elif "files_path" in proposal:
+            proposal["path"] = proposal.pop("files_path")
         # JavaScript outlines by the pattern where it reads it as Python does, else by Python's
         # matches (a page that changed meanwhile may then be outlined slightly off).
         hits = [bool(match) for match in matches]
@@ -174,3 +184,20 @@ class LinkPicks(DataPicks):  # pylint: disable=too-few-public-methods
             level = self.proposals.get(key, {}).get("level", chosen[1])
             self.proposals[key] = {**proposal, "level": level}
         await self._describe(key)
+
+    async def _set_save(self, message: dict) -> None:
+        """The file links' pages saved as a PDF, HTML or Markdown file ({type: save, save}), or
+        downloaded as files again (save: ""); a saved page named after its title."""
+        kind = message.get("save")
+        if not self.links or self.links.get("kind") == "json" or kind not in SAVES:
+            return
+        if kind == (self.links.get("save") or ""):
+            return
+        self._remember()
+        if kind:
+            self.links["save"] = kind
+            # A page is saved, or its files captured: not both.
+            self.links.pop("capture", None)
+        else:
+            self.links.pop("save", None)
+        await self._describe("links")

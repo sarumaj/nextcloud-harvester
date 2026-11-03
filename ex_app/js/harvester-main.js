@@ -960,6 +960,21 @@
 				? t('These have no address: the job clicks each in the browser and keeps the file it gives (a download, or a tab that shows the file). The pattern is on their texts.')
 				: t('These have no address: the job clicks each in the browser, reads the next level where it lands (a page, a new tab, a dialog) and goes back to this listing. The pattern is on their texts.') }))
 		}
+		// The pages the file links lead to saved as files (a receipt, an article), not downloaded.
+		if (target === 'links') {
+			const save = el('select', {},
+				...[['', t('Files (download them)')], ['pdf', t('PDF')], ['html', t('HTML (one file)')], ['markdown', t('Markdown (the main text)')]]
+					.map(([value, label]) => el('option', { value, text: label })))
+			save.value = spec.save || ''
+			save.addEventListener('change', () => send({ type: 'save', save: save.value }))
+			box.append(field(t('Save the pages as'), save))
+			if (spec.save) {
+				box.append(el('p', { class: 'harvester-muted', text: t('The job opens the page each of these leads to in the browser and saves the page itself as a file, named after its title ({title}).', { title: '{title}' }) }))
+			}
+			if (spec.capture && spec.capture.length) {
+				box.append(el('p', { class: 'harvester-muted', text: t('The job keeps the files of these types that each page loads: {types}', { types: spec.capture.join(', ') }) }))
+			}
+		}
 		const pattern = el('input', { class: 'harvester-pattern', value: spec.pattern || '', spellcheck: 'false' })
 		pattern.addEventListener('change', () => send({ type: 'pattern', target, level, pattern: pattern.value }))
 		box.append(field(spec.click ? t('Pattern on their texts (named groups become values)') : t('Pattern (named groups become values)'), pattern))
@@ -1092,6 +1107,9 @@
 	// What the recipe's test found: the listing pages it read with the links matched, the first
 	// file links with the file names the job would give them, the problems, and the page the
 	// browser showed when a step failed.
+	// What a page is saved as, in words.
+	const SAVED_AS = { pdf: 'PDF', html: 'HTML', markdown: 'Markdown' }
+
 	function renderTest(result) {
 		const ended = {
 			complete: t('It went through the whole site.'),
@@ -1134,9 +1152,14 @@
 			el('code', { text: page.url }),
 			page.files.length ? el('ul', {}, ...page.files.map((file) => el('li', {},
 				file.problem ? el('span', { class: 'harvester-error', text: `${file.url}: ${file.problem}` }) : el('span', { text: file.path, title: file.url }),
-				file.click ? el('small', { class: 'harvester-muted', text: ` ${t('(clicked: “{text}”)', { text: file.text })}` }) : ''))) : ''))))
+				file.click ? el('small', { class: 'harvester-muted', text: ` ${t('(clicked: “{text}”)', { text: file.text })}` }) : '',
+				file.save ? el('small', { class: 'harvester-muted', text: ` ${t('(the page saved as {kind})', { kind: SAVED_AS[file.save] || file.save })}` }) : '',
+				file.capture && file.capture.length ? el('small', { class: 'harvester-muted', text: ` ${t('(its files of the types {types})', { types: file.capture.join(', ') })}` }) : ''))) : ''))))
 		if (result.pages.some((page) => page.files.some((file) => file.click))) {
 			box.append(el('p', { class: 'harvester-muted', text: t('File links that are clicked are listed, not clicked: the test downloads nothing (a run clicks each).') }))
+		}
+		if (result.pages.some((page) => page.files.some((file) => file.save || (file.capture && file.capture.length)))) {
+			box.append(el('p', { class: 'harvester-muted', text: t('Pages to save, or to keep the files of, are listed, not opened: the test saves nothing (a run opens each; a title in the file name comes from the page then).') }))
 		}
 		if (result.shot) {
 			box.append(el('p', { text: `${result.shot.what}: ${result.shot.title || ''} ` }, el('code', { text: result.shot.url })),

@@ -13,7 +13,8 @@ As the job runs (as_job), the context starts empty, at the recipe's window size,
 account (resolved by the app from the saved job, never sent to the page): the sign-in steps are
 replayed with its secrets, as a run replays them, and the first bytes of the first file are
 fetched, to tell a file of the job's types from a sign-in page (probe); file links that are
-clicked are listed, never clicked (a click may download). Levels to follow that are clicked are
+clicked are listed, never clicked (a click may download), as are pages to save or to capture files
+of (never opened). Levels to follow that are clicked are
 clicked as a run clicks them (harvester.sources.clicks: polled, so through Blocking alike).
 """
 
@@ -199,9 +200,13 @@ def survey(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     )
     # A test cut short (stopped, out of time) has no time left for the probe either.
     if as_job and result["ended"] not in ("stopped", "time"):
-        # A file link that is clicked has no address to ask for: the test clicks nothing.
+        # A file link that is clicked has no address to ask for: the test clicks nothing; a page
+        # to save or to capture files of is a web page, as it should be.
         files = [
-            file for page in result["pages"] for file in page["files"] if not file["problem"] and not file["click"]
+            file
+            for page in result["pages"]
+            for file in page["files"]
+            if not (file["problem"] or file["click"] or file["save"] or file["capture"])
         ]
         result["probe"] = probe(driver, files[0]["url"], source.settings) if files else None
     return result
