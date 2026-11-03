@@ -150,6 +150,17 @@ def test_the_api_gives_the_status_to_all_and_the_reasons_to_the_owner(app):
     assert "eve" not in json.dumps([listed, log, stranger]).lower()
 
 
+def test_the_brief_list_has_each_jobs_address_not_its_options_and_a_job_has_them(app):
+    _, _, job = app
+    full = run(main.list_jobs(Nextcloud("anna")))
+    brief = run(main.list_jobs(Nextcloud("anna"), brief=True))
+    assert full[0]["options"] == job.options, "as before, for API clients (Talk AI)"
+    assert "options" not in brief[0] and brief[0]["address"] == job.options["url"]
+    rest = {key: value for key, value in brief[0].items() if key != "address"}
+    assert rest == {key: value for key, value in full[0].items() if key != "options"}
+    assert run(main.get_job(job.id or 0, Nextcloud("anna")))["options"] == job.options
+
+
 def test_the_recorder_refused_says_what_holds_the_browsers(app, monkeypatch):
     _, _, job = app
     monkeypatch.setattr(browser, "SLOTS", browser.Slots(1))
@@ -177,6 +188,7 @@ def test_a_job_is_its_owners_alone(app):
         ),
         main.delete_job(job_id, ben),
         main.get_shot(job_id, ben),
+        main.get_job(job_id, ben),
         main.run_job(job_id, ben),
         main.pause_job(job_id, ben),
         main.resume_job(job_id, ben),

@@ -20,7 +20,10 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   the field, which takes other values too; options with a fixed set of values are lists. Below
   the jobs, a **progress log** of what the runs do (searching, each file downloaded, saved or
   found already there, errors, the outcome), live while one runs, of all jobs or of one; a new
-  run clears its job's last message.
+  run clears its job's last message. The list comes without the jobs' options
+  (`GET /api/jobs?brief=1`, each job's own address instead; without `brief` each job has them,
+  for other clients), and a job's form asks for its own (`GET /api/jobs/<id>`); the log's lines
+  stay when the list is drawn again, and only newer ones are asked for.
 - **On-demand jobs** (`ex_app/lib/harvester/ondemand.py`): a job of a source with an address
   (`site`: its recipe's listing; `feed`, `media`, `gallery`: their page or feed) may be **On
   demand**: no schedule (it is never due; the list says *On demand*), and it runs when you send it

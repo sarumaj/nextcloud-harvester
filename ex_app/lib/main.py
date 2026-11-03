@@ -274,9 +274,11 @@ def explain_schedule(
 
 
 @APP.get("/api/jobs")
-async def list_jobs(nc: NC) -> list[dict]:
+async def list_jobs(nc: NC, brief: bool = False) -> list[dict]:
     """The user's jobs, with how their last run went, which run or wait for their turn, and
-    why they wait."""
+    why they wait. brief: without their options (a recipe may be 100 KB), with the job's own
+    address instead (Source.address_of), as the jobs page lists them; GET /api/jobs/{id} has a
+    job's options. Without brief (API clients, Talk AI) each job has its options as before."""
     executor = STATE["executor"]
     jobs = store().jobs(await nc.user)
     # Queued first: a job taken in between is then running too (and shown so), not neither.
@@ -285,7 +287,7 @@ async def list_jobs(nc: NC) -> list[dict]:
     waits = executor.waits(jobs)
     fetches = fetches_of(jobs)
     return [
-        vars(job)
+        (listed(job) if brief else vars(job))
         | {
             "running": job.id in running,
             "queued": job.id in queued,
@@ -298,6 +300,20 @@ async def list_jobs(nc: NC) -> list[dict]:
         }
         for job in jobs
     ]
+
+
+def listed(job: Job) -> dict:
+    """A job as the jobs page lists it: without its options, with its own address."""
+    source = SOURCES.get(job.source)
+    return {key: value for key, value in vars(job).items() if key != "options"} | {
+        "address": source.address_of(job.options) if source else ""
+    }
+
+
+@APP.get("/api/jobs/{job_id}")
+async def get_job(job_id: int, nc: NC) -> dict:
+    """One of the user's jobs with its options (its form)."""
+    return vars(await own_job(job_id, nc))
 
 
 def fetches_of(jobs: list[Job]) -> dict[int, list[dict]]:

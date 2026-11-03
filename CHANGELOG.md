@@ -43,6 +43,11 @@
 
 ### Changed
 
+- The jobs page asks for less: the list comes without the jobs' options (`GET /api/jobs?brief=1`
+  gives each job's own address instead; a recipe may be 100 KB), a job's form asks for its own
+  (the new `GET /api/jobs/<id>`), and the progress log keeps its lines when the list is drawn
+  again (a run that starts or ends), asking only for newer ones, and the queue's status from its
+  poll. `GET /api/jobs` without `brief` still gives every job's options (Talk AI reads them).
 - The recorder's **Network** panel keeps at most 8 MB of its answers' bodies together (60 MB a
   recording before: 30 answers of up to 2 MB each), dropping the oldest first; their entries
   stay, and the Preview of one dropped says it is no longer kept.

@@ -8,12 +8,11 @@ recipe, Import a recipe, Save as template and the templates' list, against a stu
 
 import asyncio
 import json
-import re
 
 import pytest
 from fastapi import HTTPException
 from test_browser import needs_chromium
-from test_page import JOB, PAGE, RECIPE, SCRIPT, STUBS
+from test_page import JOB, RECIPE, STUBS, served
 from test_runner import FakeNextcloud
 
 import main
@@ -192,6 +191,8 @@ def fixture_page():
         "/sources": main.list_sources(),
         "/presets": main.list_presets(),
         "/jobs": [CHANGED],
+        # Its form asks for the job with its options (the list's are brief in the app).
+        f"/jobs/{CHANGED['id']}": CHANGED,
         "/log": {"lines": [], "running": [], "queued": []},
         "/status": {},
         "/templates": [{"id": 4, "name": "My mag", "file": FILE}],
@@ -219,14 +220,7 @@ def fixture_page():
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(**launch_options(9))
         page = browser.new_page(accept_downloads=True)
-        page.route("**/apps/app_api/proxy/harvester/api/**", api)
-        page.route(
-            "**/main.js",
-            lambda route: route.fulfill(status=200, content_type="text/javascript; charset=utf-8", body=SCRIPT),
-        )
-        page.route(re.compile(r"^https://nc\.example/(\?.*)?$"), document)
-        page.goto(PAGE)
-        page.wait_for_selector("table.harvester-jobs")
+        served(page, api, document)
         yield page
         browser.close()
 
@@ -244,7 +238,7 @@ def test_a_changed_job_says_so_and_offers_its_test(page):
 @needs_chromium
 def test_export_save_as_template_and_import(page, tmp_path):
     page.get_by_role("button", name="Edit").click()
-    assert page.get_by_text("Test the recipe weekly").is_visible(), "the option, in the website job's form"
+    page.get_by_text("Test the recipe weekly").wait_for()  # the option, in the website job's form
     with page.expect_download() as download:
         page.get_by_role("button", name="Export recipe").click()
     assert download.value.suggested_filename == "Mag.harvester.json"

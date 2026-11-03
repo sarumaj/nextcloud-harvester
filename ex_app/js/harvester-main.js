@@ -86,6 +86,8 @@
 		: { [addressOf(source)]: url }
 	// The job's own address, if it has one (an on-demand job's may be empty: each fetch brings one).
 	function ownAddress(job) {
+		// The jobs' list has it from the server, without the options (GET /jobs?brief=1).
+		if (!job.options) return String(job.address || '').trim()
 		const option = addressOf(job.source)
 		if (option !== 'recipe') return String(job.options[option] || '').trim()
 		try {
@@ -262,10 +264,14 @@
 			: t('Runners {busy}/{runners} · Browsers {open}/{browsers} · {queued} queued', values)
 	}
 
-	async function renderJobs(root) {
+	// known: what the caller has already (the progress log's poll: the queue's status).
+	async function renderJobs(root, known = {}) {
 		// Another view opened while the list was asked for (Edit, say) stays: the list is not drawn.
 		const view = root.firstChild
-		const [jobs, status] = await Promise.all([api('GET', '/jobs'), api('GET', '/status').catch(() => null)])
+		const [jobs, status] = await Promise.all([
+			api('GET', '/jobs?brief=1'),
+			known.status ? known.status : api('GET', '/status').catch(() => null),
+		])
 		if (root.firstChild !== view) return
 		// A job's button: off until its answer, which (or its error, beside the job) the list
 		// drawn again shows; a run that ended just before Stop, say, is refused with a reason.
@@ -324,7 +330,7 @@
 								? el('button', { text: t('Run now'), disabled: '', title: t('Queued already: it runs once its turn comes') })
 								: el('button', { text: t('Run now'), onclick: act(job, '/run') })]),
 					onDemand(job) ? el('button', { text: t('Fetch a URL…'), 'aria-expanded': 'false', onclick: (event) => fetchForm(event.currentTarget, job) }) : '',
-					el('button', { text: t('Edit'), onclick: () => renderForm(root, job) }),
+					el('button', { text: t('Edit'), onclick: (event) => editJob(root, job, event.currentTarget) }),
 					el('button', {
 						class: 'error',
 						text: t('Delete'),
@@ -350,6 +356,17 @@
 				el('p', { class: 'harvester-muted', text: t('A job fetches the files of one site: record it in the browser, or start from a template.') })),
 			jobs.length ? progressPanel(root, jobs) : '',
 			sendHelp())
+	}
+
+	// A job's form with its options, which the list does not have: asked for as the form opens.
+	async function editJob(root, job, button) {
+		button.disabled = true
+		try {
+			renderForm(root, await api('GET', `/jobs/${job.id}`))
+		} catch (e) {
+			notices[job.id] = e.message
+			await show(root)
+		}
 	}
 
 	// What a running job asks its person (harvester.needs): the code from their phone, typed here
@@ -455,7 +472,7 @@
 	// The page opened with ?fetch=<address> (the bookmarklet): which on-demand job fetches it, or
 	// a new job of a source with an address, filled with it.
 	async function renderSend(root, url) {
-		const jobs = (await api('GET', '/jobs')).filter((job) => onDemand(job) && addressOf(job.source))
+		const jobs = (await api('GET', '/jobs?brief=1')).filter((job) => onDemand(job) && addressOf(job.source))
 		const error = el('p', { class: 'harvester-error', role: 'alert' })
 		const select = el('select', { 'aria-label': t('On-demand job') },
 			...jobs.map((job) => el('option', { value: String(job.id), text: `${job.name} (${job.target})` })))
@@ -501,6 +518,9 @@
 	// Polled, often while a job runs or waits its turn (every 2 seconds, else 30); a run that is
 	// queued, starts or ends redraws the list (its states and messages change). Not while the
 	// page is hidden (another tab, a minimized window): polled at once when it shows again.
+	// The lines shown so far, kept while the page is open: the list drawn again (a run that starts
+	// or ends) shows them at once and asks only for the newer ones.
+	const logKept = { job: null, after: 0, entries: [] }
 	function progressPanel(root, jobs) {
 		const select = el('select', { 'aria-label': t('Job') },
 			el('option', { value: '', text: t('All jobs') }),
@@ -515,6 +535,11 @@
 		let after = 0
 		let timer = null
 		let busy = false
+		const keep = (entries) => {
+			logKept.job = select.value
+			logKept.entries = [...logKept.entries, ...entries].slice(-300)
+			logKept.after = after
+		}
 		const running = jobs.filter((job) => job.running).map((job) => job.id)
 		const queued = jobs.filter((job) => job.queued && !job.running).map((job) => job.id)
 		// The jobs whose runs wait for their person (a code): the list is drawn again when they change.
@@ -551,10 +576,12 @@
 				const data = await api('GET', `/log?after=${after}${select.value ? `&job=${select.value}` : ''}`)
 				// Another view opened while the log was asked for (a job's form): it is not replaced.
 				if (!document.body.contains(panel)) return
+				if (data.lines.length) after = data.lines[data.lines.length - 1].id
+				keep(data.lines)
 				const waiting = (data.queued || []).filter((id) => !data.running.includes(id))
 				if (String(data.running) !== String(running) || String(waiting) !== String(queued) || sorted(data.fetches || {}) !== fetches
 					|| String(data.asking || []) !== String(asking)) {
-					show(root)
+					show(root, { status: data.status })
 					return
 				}
 				const load = root.querySelector('.harvester-load')
@@ -567,7 +594,6 @@
 				const stick = list.scrollHeight - list.scrollTop - list.clientHeight < 24
 				for (const entry of data.lines) {
 					list.append(line(entry))
-					after = entry.id
 					const message = root.querySelector(`[data-job-message="${entry.job}"]`)
 					if (message && running.includes(entry.job) && !(data.waiting || {})[entry.job]) message.textContent = shown(entry.message, entry.message_l10n)
 				}
@@ -587,9 +613,19 @@
 			try { localStorage.setItem('harvester-log-job', select.value) } catch (e) { /* not kept */ }
 			clearTimeout(timer)
 			after = 0
+			logKept.entries = []
+			logKept.job = select.value
 			list.replaceChildren()
 			poll()
 		})
+		// The lines the list showed before it was drawn again, of the same job (or all).
+		if (logKept.job === select.value) {
+			after = logKept.after
+			list.append(...logKept.entries.map(line))
+			requestAnimationFrame(() => { list.scrollTop = list.scrollHeight })
+		} else {
+			logKept.entries = []
+		}
 		// The first poll once the panel is on the page (it is returned before it is added).
 		setTimeout(poll, 0)
 		return panel
@@ -2535,7 +2571,7 @@
 					const select = el('select', { 'data-option': key }, el('option', { value: '0', text: t('None') }))
 					// Until the list is there, the job keeps what it had.
 					let listed = false
-					api('GET', '/jobs').then((jobs) => {
+					api('GET', '/jobs?brief=1').then((jobs) => {
 						select.append(...jobs.filter((other) => onDemand(other) && other.source === 'site')
 							.map((other) => el('option', { value: String(other.id), text: `${other.name} (${other.target})` })))
 						select.value = String(current || 0)
@@ -2709,9 +2745,9 @@
 		renderCredentials(credentials, job, chosen)
 	}
 
-	async function show(root) {
+	async function show(root, known = {}) {
 		try {
-			await renderJobs(root)
+			await renderJobs(root, known)
 		} catch (e) {
 			root.replaceChildren(el('p', { class: 'harvester-error', text: `Harvester: ${e.message}` }))
 		}

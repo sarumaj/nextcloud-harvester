@@ -140,6 +140,12 @@ SHOT = {
 }
 
 
+def briefly(job: dict) -> dict:
+    """A job as GET /api/jobs?brief=1 lists it (main.listed): its own address, no options."""
+    rest = {key: value for key, value in job.items() if key != "options"}
+    return rest | {"address": main.SOURCES[job["source"]].address_of(job["options"])}
+
+
 # The API's requests the page made: (method, path with its query, body).
 CALLS: list[tuple[str, str, dict | None]] = []
 
@@ -183,6 +189,11 @@ def fixture_page(request):
         path = full.split("?")[0]
         CALLS.append((method, full, json.loads(route.request.post_data) if route.request.post_data else None))
         answer = answers.get(f"{method} {path}", answers.get(path, {}))
+        # As the app answers: the list without the jobs' options (brief), each job with them.
+        if method == "GET" and path == "/jobs" and "brief=1" in full:
+            answer = [briefly(job) for job in jobs]
+        elif method == "GET" and (asked := re.fullmatch(r"/jobs/(\d+)", path)):
+            answer = next(job for job in jobs if job["id"] == int(asked[1]))
         route.fulfill(status=200, content_type="application/json", body=json.dumps(answer))
 
     def document(route) -> None:
@@ -199,16 +210,22 @@ def fixture_page(request):
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(**launch_options(9))  # a port nobody listens on: all fulfilled
         page = browser.new_page()
-        page.route("**/apps/app_api/proxy/harvester/api/**", api)
-        page.route(
-            "**/main.js",
-            lambda route: route.fulfill(status=200, content_type="text/javascript; charset=utf-8", body=SCRIPT),
-        )
-        page.route(re.compile(r"^https://nc\.example/(\?.*)?$"), document)
-        page.goto(PAGE)
-        page.wait_for_selector("table.harvester-jobs")
+        served(page, api, document)
         yield page
         browser.close()
+
+
+def served(page, api, document) -> None:
+    """Opens the jobs page with its routes: the app's API (api), the page's script, and
+    Nextcloud's document around it (document)."""
+    page.route("**/apps/app_api/proxy/harvester/api/**", api)
+    page.route(
+        "**/main.js",
+        lambda route: route.fulfill(status=200, content_type="text/javascript; charset=utf-8", body=SCRIPT),
+    )
+    page.route(re.compile(r"^https://nc\.example/(\?.*)?$"), document)
+    page.goto(PAGE)
+    page.wait_for_selector("table.harvester-jobs")
 
 
 def sent(page, socket: int = 0) -> list[dict]:
@@ -367,6 +384,24 @@ def test_the_queues_status_and_why_a_job_waits(page):
     assert "2. in the queue: waits for a runner, all 2 busy (1 job ahead)" in row.inner_text()
     assert row.locator("button").all_inner_texts() == ["Run now", "Edit", "Delete"]
     assert row.get_by_role("button", name="Run now").is_disabled(), "queued already"
+
+
+@needs_chromium
+def test_the_list_comes_without_options_the_form_asks_for_them_and_the_log_goes_on_where_it_was(page):
+    page.wait_for_selector(".harvester-log li time")
+    assert ("GET", "/jobs?brief=1", None) in CALLS and not [call for call in CALLS if call[1] == "/jobs"]
+    assert [path for _, path, _ in CALLS if path.startswith("/log")] == ["/log?after=0"]
+    # The list drawn again (Run now's answer): the log's line at once, only newer ones asked for.
+    CALLS.clear()
+    page.get_by_role("button", name="Run now").click()
+    page.wait_for_function("[...document.querySelectorAll('.harvester-log li time')].length === 1")
+    page.wait_for_timeout(200)
+    assert [path for _, path, _ in CALLS if path.startswith("/log")] == ["/log?after=1"]
+    page.get_by_role("button", name="Edit").click()
+    recipe = page.locator("textarea.harvester-recipe").first
+    recipe.wait_for()
+    assert ("GET", "/jobs/1", None) in CALLS
+    assert json.loads(recipe.input_value()) == json.loads(JOB["options"]["recipe"])
 
 
 @needs_chromium
