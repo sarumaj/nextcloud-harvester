@@ -229,6 +229,7 @@
 			const of = [step.from ? t('from {sender}', { sender: step.from }) : '', step.subject ? t('subject {subject}', { subject: step.subject }) : ''].filter(Boolean).join(', ')
 			return of ? t('Type the code from e-mail ({of}) into {selector}', { of, selector }) : t('Type the code from e-mail into {selector}', { selector })
 		}
+		if (step.action === 'ask-code') return t('Ask you for the code from {label} and type it into {selector}', { label: step.label, selector })
 		if (step.credential === 'totp') return t('Fill in the current one-time code ({selector})', { selector })
 		if (step.credential) return t('Fill in the account’s {credential} ({selector})', { credential: credentialName(step.credential), selector })
 		return t('Fill in “{value}” ({selector})', { value: step.value, selector })
@@ -279,8 +280,8 @@
 			el('thead', {}, el('tr', {}, ...[t('Job'), t('Folder'), t('Schedule'), t('Tags'), t('Last run'), ''].map((h) => el('th', { text: h })))))
 		const body = el('tbody', {})
 		for (const job of jobs) {
-			const state = job.running ? (job.paused ? 'held' : 'running') : job.queued ? 'queued' : job.last_status || 'never'
-			const label = { running: t('Running'), held: t('Paused'), queued: t('Queued'), ok: t('OK'), failed: t('Failed'), auth: t('Sign-in refused'), challenge: t('Needs you'), changed: t('Changed'), never: t('Not run yet') }[state] || state
+			const state = job.running && job.asking ? 'asking' : job.running ? (job.paused ? 'held' : 'running') : job.queued ? 'queued' : job.last_status || 'never'
+			const label = { asking: t('Needs you'), running: t('Running'), held: t('Paused'), queued: t('Queued'), ok: t('OK'), failed: t('Failed'), auth: t('Sign-in refused'), challenge: t('Needs you'), changed: t('Changed'), never: t('Not run yet') }[state] || state
 			body.append(el('tr', {},
 				el('td', { class: 'harvester-with-icon', title: said((sources.find((x) => x.name === job.source) || {}).title) || job.source },
 					icon(job.source), el('strong', { text: job.name }),
@@ -302,6 +303,7 @@
 								: job.last_run ? `${when(job.last_run)} · ${shown(job.last_message, job.last_message_l10n)}` : '',
 					}),
 					notices[job.id] ? el('div', { class: 'harvester-error harvester-message', role: 'alert', text: notices[job.id] }) : '',
+					state === 'asking' ? askingBox(root, job) : '',
 					fetchList(job, act)),
 				el('td', { class: 'harvester-actions' },
 					state === 'challenge' ? el('button', { class: 'primary', text: t('Continue in the browser'), onclick: () => openSession(root, job) }) : '',
@@ -346,6 +348,33 @@
 				el('p', { class: 'harvester-muted', text: t('A job fetches the files of one site: record it in the browser, or start from a template.') })),
 			jobs.length ? progressPanel(root, jobs) : '',
 			sendHelp())
+	}
+
+	// What a running job asks its person (harvester.needs): the code from their phone, typed here
+	// and sent to the run (never kept), before the time shown.
+	function askingBox(root, job) {
+		const asking = job.asking
+		const until = new Date(asking.until * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+		const input = el('input', { class: 'harvester-code', autocomplete: 'one-time-code', spellcheck: 'false', maxlength: '64', 'aria-label': t('Enter the code from {label}', { label: asking.label }) })
+		const note = el('small', { class: 'harvester-muted', text: t('The job waits for it until {time}.', { time: until }) })
+		const form = el('form', {
+			class: 'harvester-asking',
+			onsubmit: async (event) => {
+				event.preventDefault()
+				if (!input.value.trim()) return
+				form.querySelector('button').disabled = true
+				try {
+					await api('POST', `/jobs/${job.id}/code`, { code: input.value.trim() })
+					input.value = ''
+					note.textContent = t('Sent: the job goes on.')
+				} catch (e) {
+					note.textContent = e.message
+					form.querySelector('button').disabled = false
+				}
+			},
+		}, el('label', {}, el('span', { text: t('Enter the code from {label}', { label: asking.label }) }), input),
+		el('button', { class: 'primary', type: 'submit', text: t('Send') }), note)
+		return form
 	}
 
 	// An on-demand job's waiting addresses below its message, oldest first: the one being fetched
@@ -481,6 +510,8 @@
 		let timer = null
 		const running = jobs.filter((job) => job.running).map((job) => job.id)
 		const queued = jobs.filter((job) => job.queued && !job.running).map((job) => job.id)
+		// The jobs whose runs wait for their person (a code): the list is drawn again when they change.
+		const asking = jobs.filter((job) => job.running && job.asking).map((job) => job.id)
 		// The on-demand jobs' waiting addresses, as the log's polls give them (by job, in order).
 		const sorted = (fetches) => JSON.stringify(Object.keys(fetches).sort().map((id) => [id, fetches[id]]))
 		const fetches = sorted(Object.fromEntries(jobs.filter((job) => (job.fetches || []).length).map((job) => [String(job.id), job.fetches.map((fetch) => fetch.id)])))
@@ -507,7 +538,8 @@
 				// Another view opened while the log was asked for (a job's form): it is not replaced.
 				if (!document.body.contains(panel)) return
 				const waiting = (data.queued || []).filter((id) => !data.running.includes(id))
-				if (String(data.running) !== String(running) || String(waiting) !== String(queued) || sorted(data.fetches || {}) !== fetches) {
+				if (String(data.running) !== String(running) || String(waiting) !== String(queued) || sorted(data.fetches || {}) !== fetches
+					|| String(data.asking || []) !== String(asking)) {
 					show(root)
 					return
 				}
@@ -1903,6 +1935,7 @@
 				mark ? stepMark(mark) : '',
 				el('span', { text: `${describe(step)} ` }),
 				mailCode(step, index),
+				phoneCode(step, index),
 				el('label', { title: t('Best effort: when it fails (not there, not visible), the job waits a few seconds at most and goes on without it') }, box, ` ${t('optional')}`),
 				!step.optional && looksLikeConsent(step)
 					? el('button', { type: 'button', class: 'harvester-link harvester-hint', text: t('make optional?'), title: t('A consent banner often shows only on the first visit'), onclick: () => toggle(true) })
@@ -2044,6 +2077,51 @@
 				code ? el('button', { type: 'button', text: t('Back to a one-time code'), onclick: () => use(false) }) : '')
 		}
 
+		// A code typed into a field (a one-time code's, or digits) may come to the phone instead (an
+		// SMS, an app the job has no secret of): the job then asks you for it on the jobs page.
+		function phoneCode(step, index) {
+			const code = step.action === 'ask-code'
+			if (!code && !(step.action === 'fill' && (step.credential === 'totp' || /^\d{4,8}$/.test(String(step.value || ''))))) return ''
+			const label = el('input', { class: 'harvester-step-value', value: step.label || '', placeholder: t('SMS code'), maxlength: '100', 'aria-label': t('Where the code comes from') })
+			const use = (on) => {
+				if (on) {
+					Object.assign(step, { action: 'ask-code', label: label.value.trim() || t('SMS code') })
+					delete step.credential
+					delete step.value
+				} else {
+					step.action = 'fill'
+					step.credential = 'totp'
+					delete step.label
+				}
+				send(on ? { type: 'ask-code', step: index, label: step.label } : { type: 'ask-code', step: index, off: true })
+				renderPanel()
+			}
+			return el('details', code ? { class: 'harvester-mail-code', open: '' } : { class: 'harvester-mail-code' },
+				el('summary', { text: code ? t('code from the phone') : t('code from the phone?') }),
+				el('small', { class: 'harvester-muted', text: t('When the job comes to this step, it shows a field for the code on the jobs page and notifies you, then waits up to 10 minutes for you to type the code you got (an SMS, a call, an app).') }),
+				field(t('Where the code comes from'), label),
+				el('button', { type: 'button', text: code ? t('Change') : t('Ask me for the code'), onclick: () => use(true) }),
+				code ? el('button', { type: 'button', text: t('Back to a one-time code'), onclick: () => use(false) }) : '')
+		}
+
+		// What a step of the test asks you now (a code from the phone), until its next step event.
+		let asking = null
+		function askingLine() {
+			if (!testing || !asking) return ''
+			const input = el('input', { class: 'harvester-code', autocomplete: 'one-time-code', spellcheck: 'false', maxlength: '64', 'aria-label': t('Enter the code from {label}', { label: asking.label }) })
+			return el('form', {
+				class: 'harvester-asking',
+				onsubmit: (event) => {
+					event.preventDefault()
+					if (!input.value.trim()) return
+					send({ type: 'test-code', code: input.value.trim() })
+					asking = null
+					renderPanel()
+				},
+			}, el('label', {}, el('span', { text: t('Enter the code from {label}', { label: asking.label }) }), input),
+			el('button', { class: 'primary', type: 'submit', text: t('Send') }))
+		}
+
 		function renderPanel() {
 			test.textContent = testing ? t('Stop the test') : t('Test the recipe')
 			testJob.hidden = testing
@@ -2065,6 +2143,7 @@
 					: el('p', { text: t('Next page: none.') }),
 				el('div', { class: 'harvester-level-head' }, test, testJob),
 				testing ? el('p', { class: 'harvester-muted', 'aria-live': 'polite', text: t('Testing: the browser shows the job’s way through the site…') }) : '',
+				askingLine(),
 				tested && !testing ? renderTest(tested) : '')
 		}
 
@@ -2093,7 +2172,8 @@
 			else if (data.type === 'viewport') screen.resized(data)
 			else if (data.type === 'network') network.show(data)
 			else if (data.type === 'test-started') { testing = true; tested = null; played = {}; editing = null; playedShape = shape(); renderPanel() }
-			else if (data.type === 'test-step') stepEvent(data)
+			else if (data.type === 'test-step') { asking = null; stepEvent(data) }
+			else if (data.type === 'test-asking') { asking = data; renderPanel() }
 			else if (data.type === 'test') {
 				testing = false
 				tested = data.result
@@ -2582,7 +2662,10 @@
 		#harvester .harvester-status-running { background: var(--color-primary-element); color: var(--color-primary-element-text); }
 		#harvester .harvester-status-queued { background: var(--color-primary-element-light); color: var(--color-primary-element-light-text, var(--color-main-text)); }
 		#harvester .harvester-status-held { background: var(--color-warning); color: var(--color-warning-text, #000); }
-		#harvester .harvester-status-challenge { background: var(--color-warning); color: var(--color-warning-text, #000); }
+		#harvester .harvester-status-challenge, #harvester .harvester-status-asking { background: var(--color-warning); color: var(--color-warning-text, #000); }
+		#harvester .harvester-asking { display: flex; flex-wrap: wrap; align-items: end; gap: 6px; margin-top: 4px; }
+		#harvester .harvester-asking label { display: flex; flex-direction: column; }
+		#harvester .harvester-asking small { flex-basis: 100%; }
 		#harvester .harvester-field { display: flex; flex-direction: column; gap: 2px; margin: 12px 0; max-width: 700px; }
 		#harvester .harvester-field > span { font-weight: bold; }
 		#harvester .harvester-check { display: flex; align-items: center; gap: 8px; margin: 12px 0; }

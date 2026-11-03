@@ -4,6 +4,14 @@
 
 ### Added
 
+- Codes from the phone: the step `{"action": "ask-code", "selector", "label", "wait"}` pauses
+  the run at a code Harvester cannot read itself (an SMS, a call, an authenticator it has no
+  secret of): the job shows **Needs you** with a field **Enter the code from …** on the jobs page
+  and notifies its person, types the code sent from there into the field and goes on; after the
+  wait (10 minutes by default, 30 s to 30 minutes) the run fails cleanly, and Stop ends the wait.
+  The code goes only to the job's own run while it asks (`POST /api/jobs/<id>/code`) and is never
+  logged or kept. The recorder's Steps list offers **code from the phone?** on a typed code, and
+  *Test the recipe* asks for the code below the steps.
 - Exports a site prepares first: a level's or the file links' `"wait_for": {"selector",
   "timeout", "reload"}` looks for the element of the ready file on each page (reloading it every
   `reload` seconds if asked) for up to 30 minutes, then reads and downloads its links as before,

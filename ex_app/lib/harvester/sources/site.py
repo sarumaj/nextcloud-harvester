@@ -40,7 +40,7 @@ from ..l10n import said
 from ..browser import engine
 from ..browser.guard import Guard
 from ..schedule import zone
-from . import base, choose, clicks, download, keep, near, survey
+from . import attend, base, choose, clicks, download, keep, near, survey
 from .base import AuthError, ChallengeError, IMPERSONATE, Item, Option, Source, SourceError, Stopped, nap
 from .base import pattern_search
 from .download import Response
@@ -235,8 +235,11 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes,too
                     tabs.opening()
                 play = functools.partial(self._play, tabs, dated_step(step, today), secrets, number)
                 with_tries(play, number, step, self.nap, self._tell)
-            except Stopped:
-                # The run or the recipe's test was stopped during the step: no failure of it.
+            except (Stopped, ChallengeError, attend.Unanswered) as error:
+                # Stopped during the step, the page asks for a person, nobody answered in time: no
+                # failure of the step's (no retry, no sign-in anew).
+                if not isinstance(error, Stopped):
+                    self._tell(step_event(number, step, "failed", why=short_error(error)))
                 raise
             except (PlaywrightError, FrameMissing, PopupMissing) as error:
                 if not step.get("optional"):
@@ -575,6 +578,9 @@ def replay(page, step: dict, secrets: dict[str, str], repaired: Callable[[str, s
         # The message first, then the field: the page may show the field only once it is due.
         code = near.mail_code(page, step, secrets, began)
         target.fill(selector, code, **wait)
+        return
+    elif action in attend.needs.ACTIONS:
+        attend.play(page, target, selector, step, wait)
         return
     elif action == "scroll":
         scroll_to_load(page, int(step.get("rounds") or recipes.SCROLL_ROUNDS))

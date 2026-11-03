@@ -97,6 +97,10 @@ keeps the files of those types that each page loads or shows (a PDF in a viewer 
 images, blob: addresses) (harvester.sources.keep). A recipe's own "save" (beside start, without
 file links) saves the start page itself, where the steps end (a page sent to an on-demand job).
 
+A step {"action": "ask-code", "selector": <the code's field>, "label": "SMS code", "wait": <seconds>}
+waits for a code the job's person reads on their phone and types on Harvester's page
+(harvester.needs).
+
 A step {"action": "each", "selector": "select#account", "values": "options"} goes through choices
 (harvester.choices): the steps after it and the walk are done once per option of a <select> or a
 custom dropdown, or per value of a list, the choice's text {choice} in the file names and tags.
@@ -113,12 +117,13 @@ import re
 import string
 from urllib.parse import urlsplit
 
-from . import choices, jsonrequest, patterns
+from . import choices, jsonrequest, needs, patterns
 from .browser import VIEWPORT_MAX, VIEWPORT_MIN, allowed_url
 from .l10n import Said, listed, said
 from .patterns import token_parameters
 
 ACTIONS = {"goto", "click", "fill", "press", "scroll", "select", "hover", "popup", "opener", "mail-code", "each"}
+ACTIONS |= set(needs.ACTIONS)
 # A scroll step's rounds: by default, and at most.
 SCROLL_ROUNDS = 20
 SCROLL_ROUNDS_MAX = 100
@@ -131,7 +136,7 @@ WAIT_FOR_MAX = 1800
 WAIT_FOR_RELOAD = 5
 NEXT_KINDS = ("link", "number")
 # The actions that act on an element, and so may do it inside a frame.
-ON_ELEMENTS = ("click", "fill", "press", "mail-code", "select", "hover", "each")
+ON_ELEMENTS = ("click", "fill", "press", "mail-code", "select", "hover", "each", "ask-code")
 # The actions that switch the tab the steps act in, and so have no element.
 SWITCHES = ("popup", "opener")
 # What a fill step may fill in instead of a value of its own: the job's account's.
@@ -207,6 +212,7 @@ def step_label(step: dict) -> str:
     """A step in a few words, for a log line: what it opens, clicks (its text, else its element),
     fills, presses or types from e-mail, and the frame it does it in."""
     action = f"type the code from e-mail ({step.get('selector', '')})" if step.get("action") == "mail-code" else ""
+    action = action or needs.step_label(step)
     return (action or _action_label(step)) + (
         f" in frame {frame_host(step) or '(no address)'}" if step.get("frame") else ""
     )
@@ -369,11 +375,12 @@ def steps_from_events(
 
 
 def sign_in_steps(steps: list[dict]) -> int:
-    """How many of the steps sign in: those up to the last fill of a credential and the first
-    click or key after it (which sends the form), and the return from a sign-in's popup; 0
-    without a credential (no sign-in, only the way to the listing). The steps after them lead
-    to the listing and are always replayed."""
-    last = max((index for index, step in enumerate(steps) if step.get("credential")), default=-1)
+    """How many of the steps sign in: those up to the last fill of a credential (or of a code
+    the person types, ask-code) and the first click or key after it (which sends the form), and
+    the return from a sign-in's popup; 0 without a credential (no sign-in, only the way to the
+    listing). The steps after them lead to the listing and are always replayed."""
+    signing = [step.get("credential") or step.get("action") == "ask-code" for step in steps]
+    last = max((index for index, sign in enumerate(signing) if sign), default=-1)
     if last < 0:
         return 0
     end = next(
@@ -611,9 +618,11 @@ def _mail_code_problem(step: dict) -> str:
 
 
 def _action_problem(step: dict) -> str:
-    """What is wrong with a step "mail-code" or "each" in particular, or ""."""
+    """What is wrong with a step "mail-code", "each" or of a person in particular, or ""."""
     if step["action"] == "mail-code":
         return _mail_code_problem(step)
+    if step["action"] in needs.ACTIONS:
+        return needs.step_problem(step)
     return choices.step_problem(step) if step["action"] == "each" else ""
 
 
@@ -672,7 +681,7 @@ def _check_steps(steps: list) -> list[str]:
             problems.append(f"step {number}: rounds of scrolling from 1 to {SCROLL_ROUNDS_MAX}")
         elif step["action"] not in ("goto", "scroll", "each", *SWITCHES) and not step.get("selector"):
             problems.append(f"step {number}: no element")
-        elif step["action"] != "mail-code" and "wait" in step and not _wait_ok(step["wait"]):
+        elif step["action"] not in ("mail-code", *needs.ACTIONS) and "wait" in step and not _wait_ok(step["wait"]):
             problems.append(f"step {number}: wait is an address's pattern (url) and an element (selector)")
         elif not _alternatives_ok(step):
             problems.append(f"step {number}: the alternatives are a list of selectors")

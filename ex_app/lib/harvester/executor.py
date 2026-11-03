@@ -20,7 +20,7 @@ import httpx
 from croniter import croniter
 from nc_py_api import AsyncNextcloudApp
 
-from . import browser, ondemand, runner, settings
+from . import browser, needs, ondemand, runner, settings
 from .l10n import Said, said, said_n
 from .schedule import zone
 from .watch import Watch, test_due
@@ -213,6 +213,8 @@ class Executor:
         self._lock = threading.Lock()
         self._events: asyncio.AbstractEventLoop | None = None
         self._events_lock = threading.Lock()
+        # What the running jobs ask their people (a code from the phone), and their answers.
+        self.desk = needs.Desk()
 
     @property
     def running(self) -> list[int]:
@@ -531,6 +533,8 @@ class Executor:
         source = None
         watch = None
         message = ""
+        needs.serve(self.desk, job_id, needs.teller(job.name, lambda level, text: self.store.log(job_id, level, text),
+                                                    self.notify, nc))  # fmt: skip
         try:
             self.call(nc.set_user(job.user))
             source_class = SOURCES[job.source]
@@ -573,6 +577,7 @@ class Executor:
                 self._failed(job, nc, error, not wanted, getattr(source, "shot", None))
         finally:
             watch_stop(None)
+            needs.serve(None)
             if fetch is not None:
                 self.store.drop_fetch(fetch["id"])
             with self._lock:

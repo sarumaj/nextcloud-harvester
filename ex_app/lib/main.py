@@ -18,7 +18,7 @@ from nc_py_api import AsyncNextcloudApp
 from nc_py_api.ex_app import AppAPIAuthMiddleware, anc_app, persistent_storage, run_app, set_handlers
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
-from harvester import browser, l10n, ondemand, recipe_file, schedule, settings, watch
+from harvester import browser, l10n, needs, ondemand, recipe_file, schedule, settings, watch
 from harvester.rclone_wizard import AUTHORIZE_ORIGIN, Authorization, WizardError, Wizards, remote_types
 from harvester.browser.recorder import Recorder
 from harvester.executor import (
@@ -290,6 +290,8 @@ async def list_jobs(nc: NC) -> list[dict]:
             "running": job.id in running,
             "queued": job.id in queued,
             "paused": executor.paused(job.id or 0),
+            # What its run asks its person now (a code from the phone), or None.
+            "asking": executor.desk.asking(job.id or 0),
             "waiting": waits.get(job.id or 0, ""),
             "waiting_l10n": l10n.template_of(waits.get(job.id or 0)),
             "fetches": fetches.get(job.id or 0, []),
@@ -335,6 +337,7 @@ async def progress_log(nc: NC, job: int | None = None, after: int = 0) -> dict:
         "lines": store().log_lines(user, job, max(after, 0)),
         "running": [job_id for job_id in executor.running if job_id in mine],
         "queued": [job_id for job_id in queued if job_id in mine],
+        "asking": [job_id for job_id in executor.desk.waiting() if job_id in mine],
         "waiting": {str(job_id): reason for job_id, reason in waits.items()},
         # The reasons' templates, which the page translates (harvester.l10n).
         "waiting_l10n": {str(job_id): l10n.template_of(reason) for job_id, reason in waits.items()},
@@ -566,6 +569,25 @@ async def cancel_fetch(job_id: int, fetch_id: int, nc: NC) -> dict:
         raise HTTPException(409, "The address is being fetched: Stop ends that.")
     if not any(fetch["id"] == fetch_id for fetch in store().fetches([job.id or 0])) or not store().drop_fetch(fetch_id):
         raise HTTPException(404, "The address is not waiting (fetched already?).")
+    return {}
+
+
+class CodeIn(BaseModel):
+    """A code the person read on their phone, for their job's step "ask-code"."""
+
+    code: str = Field(min_length=1, max_length=needs.CODE_MAX)
+
+
+@APP.post("/api/jobs/{job_id}/code")
+async def enter_code(job_id: int, body: CodeIn, nc: NC) -> dict:
+    """Hands the code to the user's job, while its run waits for one (harvester.needs): to the
+    step's field, and nowhere else (never logged nor kept)."""
+    job = await own_job(job_id, nc)
+    code = body.code.strip()
+    if not code or not code.isprintable():
+        raise HTTPException(422, "A code is letters, digits and signs on one line.")
+    if not STATE["executor"].desk.answer(job.id or 0, code):
+        raise HTTPException(409, "The job is not waiting for a code.")
     return {}
 
 

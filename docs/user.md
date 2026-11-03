@@ -431,6 +431,18 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   `regex` (its group `code`, else its first group), else the first number of 6 to 8 digits, in
   the subject, the text or the HTML's text. Read-only (the folder selected read-only,
   `BODY.PEEK`): nothing is marked; the code is never logged.
+- **Codes from the phone:** a step `{"action": "ask-code", "selector": "#sms", "label": "the
+  bank's SMS"}` asks you for a code Harvester cannot read itself (an SMS, a code read out by a
+  call, an authenticator app whose secret the job does not have). The run waits for the field,
+  then the job shows **Needs you** with a field **Enter the code from the bank's SMS** on the jobs
+  page, and you get a notification; the code you type there (**Send**) goes into the field, and
+  the run goes on. It waits `"wait"` seconds (600 by default, 30 to 1800): then the run fails
+  with `nobody entered the code from the bank's SMS within 10 min`, and **Stop** ends the wait
+  at once. Only the job's own person can send it (`POST /api/jobs/<id>/code`, while the run
+  asks); the code goes from that request to the field and is never logged or kept. Like a
+  one-time code's fill it belongs to the sign-in, which a kept session skips. An optional one
+  asks only when its field shows within 5 seconds (a site that trusts the browser since the last
+  time). A weekly recipe test has nobody to ask: it ends there as on a page asking for a person.
 
 ## The recorder
 
@@ -497,7 +509,9 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   change: a POST's body (editable), a page counter in the body or a cursor the answer gives, and
   the headers with where each token is read from (the cookie or `<meta>` whose value it is); a
   token found nowhere is named, and left out. In the Steps list a code typed into a field offers
-  **code from e-mail?** (its sender and subject), which makes it the step above, and a choice in
+  **code from e-mail?** (its sender and subject), which makes it the step above, and **code
+  from the phone?** (where it comes from, *SMS code* without), which makes it the step
+  `ask-code`; the recipe's test then asks for the code below the Steps. A choice in
   a list (a step `select`) offers **Repeat for each option**, which makes it the step `each`:
   its **Values** (empty: every option, else a list separated by commas) and **Only options
   matching** (a pattern on their texts) can be changed there. The window's
@@ -588,7 +602,8 @@ recorder that makes them, and what a run does. Installing and the admin's settin
 - **Sessions and challenges:** a job keeps its browser session (cookies, local storage; encrypted in
   Nextcloud, like its account) and replays the sign-in only when the listing shows a sign-in (a
   password or user name field, or a sign-in's address). The sign-in is the steps up to the last fill
-  of a credential and the click or key that sends it; the steps after it (a tab, *Show all*, a
+  of a credential or a code from the phone and the click or key that sends it; the steps after it
+  (a tab, *Show all*, a
   filter, scrolling) lead to the listing and run every time. When the kept session does not reach
   the listing (a step after the sign-in fails, or the start page has none of the recipe's links: a
   username-first or single sign-on page taken for the listing), the run signs in once anew from no

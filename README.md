@@ -25,7 +25,8 @@ the app's browser or taken from a template, not by code.
 - **Templates** for known sites (heise's magazines, podcasts, channels, galleries, releases, a
   page saved on demand), and recipes to export and import as files.
 - **Sign-ins:** passwords, one-time codes, codes by e-mail, cookies, OAuth2 for mail; kept
-  sessions; when a site asks for a person, the job waits for you in its browser.
+  sessions; a code from your phone (an SMS), typed on the jobs page while the run waits; when a
+  site asks for a person, the job waits for you in its browser.
 - **Languages:** English, German and Polish: the page (also the progress log and the schedule
   in words), the admin's settings and the notifications follow each person's language in
   Nextcloud (others are English).

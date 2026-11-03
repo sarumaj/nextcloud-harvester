@@ -16,6 +16,10 @@ fetched, to tell a file of the job's types from a sign-in page (probe); file lin
 clicked are listed, never clicked (a click may download), as are pages to save or to capture files
 of (never opened). Levels to follow that are clicked are
 clicked as a run clicks them (harvester.sources.clicks: polled, so through Blocking alike).
+
+A step that needs the person (a code from the phone, harvester.needs) asks on the test's own desk:
+the page is told ({type: test-asking, kind, label, seconds}) and answers ({type: test-code}), within
+the test's time.
 """
 
 import asyncio
@@ -26,6 +30,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from .. import cookies as cookie_jar
+from .. import needs
 from ..sources import download, site
 from ..sources.base import Stopped
 
@@ -139,6 +144,20 @@ def teller(send: Callable[[dict], Awaitable[None]], loop: asyncio.AbstractEventL
     return tell
 
 
+def asker(send: Callable[[dict], Awaitable[None]], loop: asyncio.AbstractEventLoop) -> Callable[[needs.Asked], None]:
+    """Tells the recorder's page what a step of the test asks the person (needs.Asked: never an
+    answer), from the test's worker thread."""
+
+    def tell(asked: needs.Asked) -> None:
+        message = {"type": "test-asking", "kind": asked.kind, "label": asked.label, "seconds": asked.seconds}
+        try:
+            asyncio.run_coroutine_threadsafe(send(message), loop).result(SEND_SECONDS)
+        except Exception:  # pylint: disable=broad-exception-caught
+            pass  # the page is gone: the step waits until the test ends
+
+    return tell
+
+
 def probe(driver: site.Driver, url: str, settings: dict) -> dict:
     """The first PROBE_BYTES of the file at url, checked as a download checks it: the answer's
     status, type and address (a redirect to a sign-in shows there), and whether it is a file of
@@ -182,11 +201,12 @@ def survey(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     user_agent: str = "",
     proxy: str = "",
     send: Callable[[dict], Awaitable[None]] | None = None,
+    desk: needs.Desk | None = None,
 ) -> dict:
     """The test, in a worker thread: the steps (skipped while the session reaches the listing, as
     for a job with a kept session), each told to send as it is played (teller), then the walk
     (Site.survey). As the job runs: the account's cookies in the context and its secrets for the
-    steps, and the first file probed."""
+    steps, and the first file probed. A step that needs the person asks on desk, told to send."""
     driver = TrialDriver(context, user_agent, proxy, teller(send, context.loop) if send else None)
     source.driver = driver
     secrets = source.secrets if as_job else {}
@@ -195,9 +215,14 @@ def survey(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         found = cookie_jar.to_playwright(source.account_cookies(recipe.get("start") or ""))
         if found:
             context.add_cookies(found)
-    result = source.survey(
-        begin=lambda: driver.sign_in(recipe.get("steps") or [], secrets, session, recipe.get("start") or "")
-    )
+    if desk is not None and send is not None:
+        needs.serve(desk, 0, asker(send, context.loop))
+    try:
+        result = source.survey(
+            begin=lambda: driver.sign_in(recipe.get("steps") or [], secrets, session, recipe.get("start") or "")
+        )
+    finally:
+        needs.serve(None)
     # A test cut short (stopped, out of time) has no time left for the probe either.
     if as_job and result["ended"] not in ("stopped", "time"):
         # A file link that is clicked has no address to ask for: the test clicks nothing; a page

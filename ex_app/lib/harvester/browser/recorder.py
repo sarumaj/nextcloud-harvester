@@ -22,8 +22,9 @@ The messages are JSON over the page's WebSocket:
   target, level}, {type: next-kind, kind (link, number)}, {type: undo} (the last step), {type:
   undo-pick} (the last change of the picks), {type: scroll} (a step: scroll to load more),
   the Steps list's edits (steps.EDITS: optional, step-delete, step-move, step-edit, record-at,
-  mail-code, each), {type: test, recipe, settings, as_job, job} (as_job: the app adds the saved job's
-  account, main.py), {type: test-stop}, {type: clear}, and the cookies panel's (jar.py);
+  mail-code, ask-code, each), {type: test, recipe, settings, as_job, job} (as_job: the app adds the
+  saved job's account, main.py), {type: test-stop}, {type: test-code, code} (what a step of the
+  test asks, {type: test-asking}, trial.py), {type: clear}, and the cookies panel's (jar.py);
 - values from the page: {type: mode, mode: value, target, level} (pick a value near the level's
   links), {type: value, target, level, index, changes (name, regex, type, attribute, closest,
   selector, field)} (one changed), {type: value-add, target, level, field} (a JSON item's field as one),
@@ -82,7 +83,7 @@ from playwright.async_api import (
     WebSocketRoute,
 )
 
-from .. import browser, images, pagination, patterns
+from .. import browser, images, needs, pagination, patterns
 from ..recipe import SCROLL_ROUNDS, frame_address, in_this_recipe, leaked_passwords, token_warnings, uses_browser
 from ..sources import site
 from ..sources.base import SourceError
@@ -240,6 +241,8 @@ class Recorder(LinkPicks, Popups):  # pylint: disable=too-many-instance-attribut
         self._trial_stop: threading.Event | None = None
         self._trial: asyncio.Task | None = None
         self._trial_context: BrowserContext | None = None
+        # Where the test's steps ask the person (a code from the phone) and get the answer.
+        self._desk = needs.Desk()
         # The test's window (as the job runs: the recipe's), and whether the browser goes through
         # the home connection (the test's requests over HTTP take it too).
         self._trial_size: dict | None = None
@@ -802,8 +805,9 @@ class Recorder(LinkPicks, Popups):  # pylint: disable=too-many-instance-attribut
             blocking = trial.Blocking(context, asyncio.get_running_loop(), stop, time.monotonic() + trial.TRIAL_SECONDS)
             await self.send({"type": "test-started", "as_job": as_job})
             # The test's requests over HTTP as the browser's (user agent, connection); its steps told.
-            via = (browser.user_agent(self._browser.version), browser.PROXY if self._home else "")
-            result = await asyncio.to_thread(trial.survey, source, blocking, recipe, session, as_job, *via, self.send)  # type: ignore[arg-type]
+            # The test's steps that ask the person, on the test's desk.
+            via = (browser.user_agent(self._browser.version), browser.PROXY if self._home else "", self.send)
+            result = await asyncio.to_thread(trial.survey, source, blocking, recipe, session, as_job, *via, self._desk)  # type: ignore[arg-type]
             result["as_job"] = as_job
             # Stopped by the person: what the stop cut short is no failure of the recipe.
             if stop.is_set() and result.get("ended") == "failed":
@@ -945,11 +949,8 @@ class Recorder(LinkPicks, Popups):  # pylint: disable=too-many-instance-attribut
             # The page's own test: the recorder's session (as the job runs only with the account
             # the app adds, test()).
             await self.test(message)
-        elif kind == "test-stop" and self._trial_stop:
-            # The call under way ends with its pages (it may wait for a step's whole time else).
-            self._trial_stop.set()
-            if self._trial_context:
-                await self._trial_context.close()
+        elif kind in ("test-stop", "test-code"):
+            await self._trial_message(kind, message)
         elif kind == "viewport":
             await self.resize(message.get("width"), message.get("height"))
         elif kind == "clear":
@@ -957,6 +958,16 @@ class Recorder(LinkPicks, Popups):  # pylint: disable=too-many-instance-attribut
             self.start_url, self.follow, self.links, self.next, self.proposals = "", [], {}, {}, {}
             await page.evaluate(HIGHLIGHT, ["", None, None], **main_world(page))
             await self._update()
+
+    async def _trial_message(self, kind: object, message: dict) -> None:
+        """The test's stop, or the code one of its steps asks the person for."""
+        if kind == "test-code":
+            self._desk.answer(0, str(message.get("code") or "").strip()[: needs.CODE_MAX])
+        elif self._trial_stop:
+            # The call under way ends with its pages (it may wait for a step's whole time else).
+            self._trial_stop.set()
+            if self._trial_context:
+                await self._trial_context.close()
 
     async def _edit_pattern(self, message: dict) -> None:
         """Takes the person's pattern for a level and shows what it matches."""

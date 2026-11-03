@@ -9,10 +9,13 @@ import copy
 import time
 
 from ..choices import CHOICES_MAX
+from ..needs import LABEL_MAX
 from ..recipe import edit_step, steps_from_events
 
 # The page's messages that change the steps.
-EDITS = frozenset({"undo", "optional", "step-delete", "step-move", "step-edit", "record-at", "mail-code", "each"})
+EDITS = frozenset(
+    {"undo", "optional", "step-delete", "step-move", "step-edit", "record-at", "mail-code", "ask-code", "each"}
+)
 # How long after a click or a press a navigation of the page counts as its (s): a page that
 # reloads itself much later is none of the step's doing.
 NAVIGATION_SECONDS = 5
@@ -61,8 +64,9 @@ class StepList:
     def edit(self, kind: str, message: dict) -> bool:
         """Undo (the last event, else the last step before the new ones), and the Steps list's
         edits: a step removed, moved, changed (optional, what a fill fills in, its value, its wait),
-        where new steps go (record-at), a filled code that comes by e-mail (mail-code), and a list's
-        choice repeated for each of its options (each); whether the steps changed."""
+        where new steps go (record-at), a filled code that comes by e-mail (mail-code) or that the
+        person reads on their phone (ask-code), and a list's choice repeated for each of its options
+        (each); whether the steps changed."""
         if kind == "undo":
             if self.events:
                 self.events.pop()
@@ -79,10 +83,8 @@ class StepList:
         index = message.get("step")
         if not isinstance(index, int) or isinstance(index, bool) or not 0 <= index < len(steps):
             return False
-        if kind == "mail-code":
-            steps[index] = mail_code(steps[index], message)
-        elif kind == "each":
-            steps[index] = each(steps[index], message)
+        if kind in CHANGES:
+            steps[index] = CHANGES[kind](steps[index], message)
         elif kind == "step-delete":
             del steps[index]
             point -= 1 if index < point else 0
@@ -109,6 +111,19 @@ def mail_code(step: dict, message: dict) -> dict:
     return {"action": "mail-code", **kept, **code} | ({"regex": str(message["regex"])} if message.get("regex") else {})
 
 
+def ask_code(step: dict, message: dict) -> dict:
+    """A filled code's step (or one from e-mail) as "the code from the phone" of a label, which
+    the job asks its person for when it runs (harvester.needs); with off back to the current
+    one-time code; another step as it is."""
+    kept = {key: step[key] for key in ("selector", "alternatives", "frame", "optional") if key in step}
+    if message.get("off") and step.get("action") == "ask-code":
+        return {"action": "fill", **kept, "credential": "totp"}
+    if message.get("off") or step.get("action") not in ("fill", "mail-code", "ask-code"):
+        return step
+    text = str(message.get("label") or "").strip()[:LABEL_MAX] or "SMS code"
+    return {"action": "ask-code", **kept, "label": text}
+
+
 def each(step: dict, message: dict) -> dict:
     """A list's choice (a step "select") as the step "each" that goes through every option
     (harvester.choices); a step "each" with the message's values (a list of texts, or "options")
@@ -129,3 +144,7 @@ def each(step: dict, message: dict) -> dict:
         if not changed["pattern"]:
             changed.pop("pattern")
     return changed
+
+
+# The edits that make a step another: a code from e-mail or the phone, choices.
+CHANGES = {"mail-code": mail_code, "ask-code": ask_code, "each": each}

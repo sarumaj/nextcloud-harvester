@@ -120,6 +120,8 @@ CLIPS = JOB | {
         {"id": 7, "url": "https://v.example/watch?v=2", "at": 2, "running": False},
     ],
 }
+# A running job whose sign-in asks its person for the code from their phone.
+ASKING = JOB | {"running": True, "asking": {"kind": "code", "label": "the bank's SMS", "until": 4102444800}}
 SENT = "https://v.example/watch?v=3"
 STATUS = {"runners": {"busy": 2, "total": 2}, "browsers": {"jobs": 2, "recordings": 1, "total": 3}, "queued": 3}
 LOG = {
@@ -160,6 +162,7 @@ def fixture_page(request):
         | {
             "running": [job["id"] for job in jobs if job["running"]],
             "queued": [job["id"] for job in jobs if job["queued"] and not job["running"]],
+            "asking": [job["id"] for job in jobs if job["running"] and job.get("asking")],
             "fetches": {
                 str(job["id"]): [fetch["id"] for fetch in job["fetches"]] for job in jobs if job.get("fetches")
             },
@@ -779,3 +782,45 @@ def test_the_servers_texts_in_the_persons_language(page):
     hint = page.locator(".harvester-schedule strong")
     hint.wait_for()
     assert hint.inner_text() == german["every day at {times}"].replace("{times}", "06:00")
+
+
+@needs_chromium
+@pytest.mark.parametrize("page", [[ASKING]], indirect=True)
+def test_a_job_that_asks_for_a_code_takes_it_on_the_page(page):
+    row = page.locator("tbody tr").first
+    assert row.locator(".harvester-status").inner_text() == "Needs you"
+    assert row.get_by_role("button", name="Stop").count() == 1, "a stop ends the wait"
+    field = row.get_by_role("textbox", name="Enter the code from the bank's SMS")
+    field.fill(" 482913 ")
+    row.get_by_role("button", name="Send").click()
+    page.wait_for_function("document.querySelector('.harvester-asking small').textContent.startsWith('Sent')")
+    assert ("POST", "/jobs/1/code", {"code": "482913"}) in CALLS
+    assert field.input_value() == "", "not kept on the page either"
+
+
+@needs_chromium
+def test_the_recorder_offers_a_code_from_the_phone_and_its_test_asks_for_it(page):
+    page.get_by_role("button", name="Edit").click()
+    page.get_by_role("button", name="Record in the browser").click()
+    page.wait_for_function("window.__sockets.length && window.__sockets[0].sent.length")
+    steps = [
+        {"action": "goto", "url": "https://bank.example/login"},
+        {"action": "fill", "selector": "#otp", "credential": "totp"},
+    ]
+    receive(page, {"type": "recipe", "recipe": {**RECIPE, "steps": steps}, "proposals": {}})
+    item = page.locator(".harvester-steps ol > li").nth(1)
+    item.get_by_text("code from the phone?").click()
+    item.get_by_role("textbox", name="Where the code comes from").fill("the bank's SMS")
+    item.get_by_role("button", name="Ask me for the code").click()
+    assert sent(page)[-1] == {"type": "ask-code", "step": 1, "label": "the bank's SMS"}
+    item = page.locator(".harvester-steps ol > li").nth(1)
+    assert "Ask you for the code from the bank's SMS and type it into #otp" in item.inner_text()
+    item.get_by_role("button", name="Back to a one-time code").click()
+    assert sent(page)[-1] == {"type": "ask-code", "step": 1, "off": True}
+
+    receive(page, {"type": "test-started", "as_job": False})
+    receive(page, {"type": "test-asking", "kind": "code", "label": "the bank's SMS", "seconds": 600})
+    page.get_by_role("textbox", name="Enter the code from the bank's SMS").fill("135790")
+    page.locator(".harvester-steps .harvester-asking").get_by_role("button", name="Send").click()
+    assert sent(page)[-1] == {"type": "test-code", "code": "135790"}
+    assert page.locator(".harvester-steps .harvester-asking").count() == 0
