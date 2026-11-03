@@ -174,13 +174,16 @@ def test_a_saved_job_with_a_broken_flag_never_keeps_a_browsers_slot(tmp_path, mo
 
 
 class Context:  # pylint: disable=too-few-public-methods
-    """The browser's context as BrowserDriver.download reads it: its session's cookies."""
+    """The browser's context as BrowserDriver.download reads it: its session's cookies, each
+    request's asked for by its address (all here: cookies.session_cookies picks those it sends)."""
 
     def __init__(self, cookies: list[dict]):
-        self.cookies = cookies
+        self.session = cookies
+        self.asked: list[str] = []
 
-    def storage_state(self):
-        return {"cookies": self.cookies, "origins": []}
+    def cookies(self, url: str) -> list[dict]:
+        self.asked.append(url)
+        return self.session
 
 
 def browser_driver(cookies: list[dict] | None = None, proxy: str = "") -> site_module.BrowserDriver:
