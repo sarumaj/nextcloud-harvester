@@ -468,18 +468,40 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes,too
         # context's own requests (context.request), which pass by its routes: the guarded client
         # checks every request and redirect on the addresses the names resolve to, and the file
         # comes in chunks, never whole into memory.
-        hooks = {"request": [cookie_jar.session_cookies(self.context.storage_state()["cookies"])]}
+        client = self._client()
+        # Each download starts from the browser's cookies alone, as with a client of its own: what
+        # an answer set before stays out (a client's jar would send it to subdomains too).
+        client.cookies.clear()
+        sent = ({"Referer": self.referer} if self.referer else {}) | (headers or {})
+        with download.http(client, sent or None, method, content)(url) as response:
+            yield response
+
+    def _client(self) -> Any:
+        """The guarded client of the driver's downloads, made at the first and kept for the others
+        (its connections too), anew when the impersonation changes; each request gets the
+        browser's cookies for its address as it is sent (cookies.browser_cookies)."""
+        made = self.__dict__.get("_downloads")
+        if made is not None and made[0] == self.impersonate:
+            return made[1]
+        self.close_client()
+        hooks = {"request": [cookie_jar.browser_cookies(self.context.cookies)]}
         options = {"proxy": self.proxy} if self.proxy else {}
         own = {"User-Agent": self.user_agent, "Accept-Language": accept_language(browser.LOCALE)}
-        with download.guarded_client(
+        client = download.guarded_client(
             **download.impersonation(self.impersonate), event_hooks=hooks, headers=own, **options
-        ) as client:
-            sent = ({"Referer": self.referer} if self.referer else {}) | (headers or {})
-            with download.http(client, sent or None, method, content)(url) as response:
-                yield response
+        )
+        self.__dict__["_downloads"] = (self.impersonate, client)
+        return client
+
+    def close_client(self) -> None:
+        """Closes the downloads' client, if one was made."""
+        made = self.__dict__.pop("_downloads", None)
+        if made is not None:
+            made[1].close()
 
     def close(self) -> None:
         try:
+            self.close_client()
             if self._browser:
                 self._browser.close()
             if self._playwright:

@@ -129,3 +129,14 @@ def session_cookies(cookies: list[dict]) -> Callable[[httpx.Request], None]:
             request.headers["Cookie"] = "; ".join(filter(None, [request.headers.get("Cookie", ""), *pairs]))
 
     return add
+
+
+def browser_cookies(read: Callable[[str], list[dict]]) -> Callable[[httpx.Request], None]:
+    """session_cookies with the browser's cookies for each request's address as they are when it
+    is sent (read: a context's cookies(url)), so that one client serves a run's downloads while
+    the browser's session changes."""
+
+    def add(request: httpx.Request) -> None:
+        session_cookies(read(str(request.url)))(request)
+
+    return add

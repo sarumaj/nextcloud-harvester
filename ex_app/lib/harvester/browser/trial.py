@@ -144,7 +144,9 @@ class TrialDriver(site.BrowserDriver):
         self.main = self.context.new_page()
 
     def close(self) -> None:
-        """Nothing: the recorder closes the test's context, and the browser is the recorder's."""
+        """The downloads' client alone: the recorder closes the test's context, and the browser is
+        the recorder's."""
+        self.close_client()
 
 
 def teller(send: Callable[[dict], Awaitable[None]], loop: asyncio.AbstractEventLoop) -> Callable[[dict], None]:

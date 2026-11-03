@@ -38,6 +38,11 @@
 
 ### Changed
 
+- A website job with the browser downloads its files through one checked HTTP client for the
+  run (its connections kept), instead of a new one for each file (some 30 ms, a new TLS
+  handshake, and a copy of the browser's whole session each): each request still gets the
+  browser's cookies for its address as they are when it is sent, and every address and redirect
+  is checked as before.
 - Listing pages in the browser are read once their level's links are there (a next page once
   they changed), then after two seconds at most for what a script still loads, instead of half a
   second and up to 15 seconds more for the network to go quiet, which a page with analytics or
