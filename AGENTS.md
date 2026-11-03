@@ -25,7 +25,7 @@ Run what CI runs for what you changed, and look at each exit code:
 .venv/bin/python -m pytest -q          # the browser's tests need `.venv/bin/playwright install chromium`
 .venv/bin/black --check ex_app tests
 .venv/bin/pylint ex_app/lib tests
-node --check ex_app/js/harvester-main.js && node --check ex_app/lib/harvester/browser/recorder.js
+node --check ex_app/js/harvester-main.js && node --check ex_app/lib/harvester/browser/recorder.js && node --check ex_app/lib/harvester/browser/consent.js
 shellcheck start.sh healthcheck.sh
 npx --yes markdownlint-cli2 "*.md" "docs/**/*.md"
 ```

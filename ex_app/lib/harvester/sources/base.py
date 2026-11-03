@@ -241,6 +241,9 @@ class Option:
     minimum: int | None = None
     maximum: int | None = None
     placeholder: str = ""
+    # What a job saved before the option existed has instead of default (None: the default), so
+    # that a new option on by default leaves the jobs as they ran; the form shows it too.
+    before: str | int | None = None
 
 
 # A job's choice to have its HTTP clients present themselves as a browser does (headers and TLS
@@ -270,6 +273,20 @@ STEALTH = Option(
 )
 
 
+# A job's choice to have the cookie banners its browser meets answered on their own (browser/
+# consent.py), "Reject all" else "Only necessary": on for new jobs, off for those saved before.
+CONSENT = Option(
+    "Dismiss cookie banners",
+    1,
+    "The browser answers the common cookie banners (OneTrust, Cookiebot, Usercentrics, Didomi, Quantcast, "
+    "TrustArc, Borlabs, Klaro, and banners with a button “Reject all”, “Only necessary”, …) with “Reject all”, "
+    "else “Only necessary”, as they show: in the job's steps and pages, and in the recorder. It clicks nothing "
+    "else.",
+    kind="flag",
+    before=0,
+)
+
+
 class Source(abc.ABC):
     """A site files are fetched from."""
 
@@ -296,7 +313,10 @@ class Source(abc.ABC):
     address_option: ClassVar[str] = ""
 
     def __init__(self, options: dict, credentials: dict[str, str], client: httpx.Client | None):
-        self.settings = {key: options.get(key, option.default) for key, option in self.options.items()}
+        self.settings = {
+            key: options.get(key, option.default if option.before is None else option.before)
+            for key, option in self.options.items()
+        }
         self.secrets = credentials
         self.client = client
         # Through the home connection (the job's option "home", when the app has one): the

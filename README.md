@@ -18,6 +18,8 @@ the app's browser or taken from a template, not by code.
   file) or Markdown (the main text), such as receipts and articles, also a page you send it; the
   PDFs and pictures a page only shows (a viewer, an `<embed>`, a `blob:`); pictures at their
   full size.
+- **Cookie banners** answered on their own, "Reject all" else "Only necessary": the common consent
+  managers' and banners of such buttons in German, English and Polish, nothing else.
 - **Recorder:** a browser in the app, shown on the page: sign in and pick the links (or the
   buttons, rows and cards without an address, which the job clicks, or a listing the page asks
   for as JSON, also with POST and GraphQL), and the app proposes their patterns, the files' names

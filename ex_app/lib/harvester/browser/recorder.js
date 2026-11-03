@@ -708,6 +708,8 @@
 	}
 
 	document.addEventListener('click', (event) => {
+		// A cookie banner answered on its own (consent.js) is neither a step nor a pick.
+		if (document.documentElement.hasAttribute('data-harvester-consent')) return
 		if (state.mode === 'record') {
 			recordClick(event)
 			return

@@ -87,7 +87,7 @@ from .. import browser, images, needs, pagination, patterns
 from ..recipe import SCROLL_ROUNDS, frame_address, in_this_recipe, leaked_passwords, token_warnings, uses_browser
 from ..sources import site
 from ..sources.base import SourceError
-from . import jar, trial
+from . import consent as banners, jar, trial
 from .datapicks import DATA_MESSAGES
 from .linkpicks import HIGHLIGHT, LinkPicks, link_proposal
 from .engine import disguised, guard_routes_async, main_world, start_async
@@ -251,6 +251,8 @@ class Recorder(LinkPicks, Popups):  # pylint: disable=too-many-instance-attribut
         self._gate: Guard | None = None
         self._proxy: dict | None = None
         self._loopback = ""
+        # Whether cookie banners are dismissed on their own (consent.py), as the job's are.
+        self._consent = False
 
     @property
     def loopback(self) -> str:
@@ -293,13 +295,19 @@ class Recorder(LinkPicks, Popups):  # pylint: disable=too-many-instance-attribut
         return recipe
 
     async def start(  # pylint: disable=too-many-arguments,too-many-positional-arguments
-        self, session: dict | None = None, url: str = "", http1: bool = False, home: bool = False, stealth: bool = False
+        self,
+        session: dict | None = None,
+        url: str = "",
+        http1: bool = False,
+        home: bool = False,
+        stealth: bool = False,
+        consent: bool = False,
     ) -> None:
         """Starts the browser with an empty page, or with a job's session at a page of it (the one
         that asked for a person); http1 for the sites that cut HTTP/2 connections, home through
         the home connection, stealth disguised (engine.py: as the job's runs, so that a challenge
-        answered here holds for them)."""
-        self._home = home
+        answered here holds for them), consent with the cookie banners dismissed."""
+        self._home, self._consent = home, consent
         # The guard (unless the admin switched it off) with the home connection, if chosen, and
         # this browser's local exception; without one, the routes alone let that address through.
         port = 0
@@ -334,6 +342,8 @@ class Recorder(LinkPicks, Popups):  # pylint: disable=too-many-instance-attribut
             storage_state=session or None,  # type: ignore[arg-type]
         )
         await guard_routes_async(context, self._guard, self._socket_guard)
+        if self._consent:
+            await context.add_init_script(banners.SCRIPT)
         return context
 
     async def _tell_address(self, proxied: bool) -> None:

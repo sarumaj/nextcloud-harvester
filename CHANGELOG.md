@@ -4,6 +4,13 @@
 
 ### Added
 
+- Cookie banners dismissed on their own: a website job's **Dismiss cookie banners** (on for new
+  jobs, off for those saved before) has its browser answer OneTrust, Cookiebot, Usercentrics,
+  Didomi, Quantcast (TCF), TrustArc, Borlabs and Klaro with "Reject all", else "Only necessary",
+  and a button of exactly such a text (German, English, Polish) in a dialog or a floating banner
+  that speaks of cookies; in the steps and the walk, in frames and shadow roots, and in the
+  recorder's browser, which records no step of it. Nothing else is clicked; a recorded click on a
+  banner is optional then.
 - Approvals in an app: the step `{"action": "approve", "until": {"url", "selector"}, "label",
   "wait"}` shows **Needs you** with its label and notifies the job's person, then waits until the
   page shows `until` (an address's pattern, an element, or both) that the approval went through,

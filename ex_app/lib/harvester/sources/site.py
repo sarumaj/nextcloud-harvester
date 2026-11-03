@@ -37,7 +37,7 @@ from .. import cookies as cookie_jar
 from .. import choices, images, jsonlist, otp, pagination, patterns, selectors
 from .. import recipe as recipes
 from ..l10n import said
-from ..browser import engine
+from ..browser import consent as banners, engine
 from ..browser.guard import Guard
 from ..schedule import zone
 from . import attend, base, choose, clicks, download, keep, near, survey
@@ -115,6 +115,8 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes,too
     # Told of each step as it is played (tabs.step_event): the recorder's test shows it on its
     # Steps, a job's run logs its pauses and retries.
     told: Callable[[dict], None] | None = None
+    # Whether cookie banners are dismissed on their own (consent.py): a step's banner may be gone.
+    consent = False
 
     def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
         self,
@@ -132,9 +134,11 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes,too
         downloads: bool = False,
         stealth: bool = False,
         told: Callable[[dict], None] | None = None,
+        consent: bool = False,
     ):
         self.saw = saw
         self.told = told
+        self.consent = consent
         self.timezone = timezone
         if not browser.SLOTS.acquire(timeout=LOCK_TIMEOUT, kind="job"):  # pylint: disable=consider-using-with
             raise SourceError("no browser came free (recordings use them all)")
@@ -171,6 +175,8 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes,too
             if cookies:
                 self.context.add_cookies(cookies)  # type: ignore[arg-type]
             self.context.set_default_timeout(STEP_TIMEOUT)
+            if consent:
+                self.context.add_init_script(banners.SCRIPT)
             self.main = self.context.new_page()
             self.sign_in(steps, secrets, session, start)
         except BaseException as error:
@@ -233,6 +239,7 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes,too
         today = self.today()
         tabs = Tabs(page)
         for index, (number, step) in enumerate(todo):
+            step = banners.relaxed(step) if self.consent else step
             try:
                 # A popup comes from the step before the one that goes on in it: the tabs open then.
                 if index + 1 < len(todo) and todo[index + 1][1].get("action") == "popup":
@@ -646,6 +653,7 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
             kind="flag",
         ),
         "stealth": base.STEALTH,
+        "consent": base.CONSENT,
         "download_url": Option(
             "Download URL",
             "{url}",
@@ -794,6 +802,7 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
                     downloads=bool(links.get("click")),
                     stealth=bool(int(self.settings["stealth"])),
                     told=self._step_told,
+                    consent=bool(int(self.settings["consent"])),
                 )
             except attend.HandedOver as error:
                 self.handed = error.session

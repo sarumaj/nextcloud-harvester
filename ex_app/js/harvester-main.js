@@ -1716,9 +1716,9 @@
 		let placed = !(recipe.steps || []).length
 		// A password the recipe holds (the recorder's warning on load).
 		const leaks = el('div', { class: 'harvester-warning', 'aria-live': 'polite' })
-		// The form's "HTTP/1.1 only", "Through the proxy" and "Disguise the browser", known before
-		// the browser starts (a saved job's own options win for its recordings).
-		const flags = ['http1', 'home', 'stealth'].map((name) => page.querySelector(`[data-option="${name}"]`))
+		// The form's "HTTP/1.1 only", "Through the proxy", "Disguise the browser" and "Dismiss cookie
+		// banners", known before the browser starts (a saved job's own options win for its recordings).
+		const flags = ['http1', 'home', 'stealth', 'consent'].map((name) => page.querySelector(`[data-option="${name}"]`))
 		const query = flags.filter((box) => box && box.checked).map((box) => `${box.dataset.option}=1`).join('&')
 		const socket = new WebSocket(query ? `${RECORDER}?${query}` : RECORDER)
 		const send = (message) => socket.readyState === WebSocket.OPEN && socket.send(JSON.stringify(message))
@@ -2394,7 +2394,8 @@
 
 		options.append(el('legend', { text: t('How the files are fetched') }))
 		for (const [key, option] of Object.entries(chosen.options)) {
-			const current = key in value.options ? value.options[key] : option.default
+			// A saved job without the option (saved before it existed) has its value from before.
+			const current = key in value.options ? value.options[key] : value.id && option.before != null ? option.before : option.default
 			if (option.kind === 'recipe') {
 				const textarea = el('textarea', { rows: '10', class: 'harvester-recipe' })
 				textarea.value = current

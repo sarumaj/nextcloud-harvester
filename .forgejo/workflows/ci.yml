@@ -61,7 +61,7 @@ jobs:
         run: pylint ex_app/lib tests
 
       - name: Check the page's scripts parse
-        run: node --check ex_app/js/harvester-main.js && node --check ex_app/lib/harvester/browser/recorder.js
+        run: node --check ex_app/js/harvester-main.js && node --check ex_app/lib/harvester/browser/recorder.js && node --check ex_app/lib/harvester/browser/consent.js
 
       - name: Check the shell scripts
         run: shellcheck start.sh healthcheck.sh
