@@ -287,6 +287,21 @@ CONSENT = Option(
 )
 
 
+# A job's choice to ask the addresses of the files it saved again (versions.py): a file that
+# changed there is saved over its own, which Nextcloud keeps as a version. On for new jobs, off
+# for those saved before (they ran without it: each run lists the whole site with it).
+RECHECK = Option(
+    "Check known files for changes",
+    1,
+    "Each run asks the addresses of the files the job saved again (each at most once a day): only whether "
+    "they changed where the site tells (ETag, Last-Modified), else by downloading and comparing. A file that "
+    "changed is saved over its own: Nextcloud keeps the one before among its versions. The run lists the whole "
+    "site then, not only up to known files. Not for pages the job saves.",
+    kind="flag",
+    before=0,
+)
+
+
 class Source(abc.ABC):
     """A site files are fetched from."""
 
@@ -334,6 +349,14 @@ class Source(abc.ABC):
         # The kept session was given up (it no longer signed in): forgotten unless the run keeps
         # a new one.
         self.stale = False
+        # The job's record of what its files hold (versions.Contents; the executor's): None, no
+        # duplicates or changes are looked for.
+        self.contents: Any = None
+
+    def rechecks(self) -> bool:
+        """Whether a run asks the addresses of the files the job saved again (RECHECK); never for
+        pages it keeps (saved anew, a page differs each time)."""
+        return bool(int(self.settings.get("recheck", 0) or 0)) and not getattr(self, "keeps", False)
 
     @classmethod
     def address_of(cls, options: dict) -> str:

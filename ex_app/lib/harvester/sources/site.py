@@ -654,6 +654,7 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
         ),
         "stealth": base.STEALTH,
         "consent": base.CONSENT,
+        "recheck": base.RECHECK,
         "download_url": Option(
             "Download URL",
             "{url}",

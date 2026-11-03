@@ -568,6 +568,8 @@
         "Disguises the browser as a person's, for sites whose bot check refuses it otherwise (the job's browser, its test in the recorder and Continue in the browser alike). It answers no challenge: you still do, in the browser. From a server's address a site may refuse it all the same.": "Maskuje przeglądarkę jako przeglądarkę człowieka, dla stron, których kontrola botów inaczej ją odrzuca (przeglądarka zadania, jej test w rejestratorze i „Kontynuuj w przeglądarce” tak samo). Nie rozwiązuje żadnego wyzwania: nadal robisz to Ty, w przeglądarce. Z adresu serwera strona może ją i tak odrzucić.",
         "Dismiss cookie banners": "Zamykaj banery cookie",
         "The browser answers the common cookie banners (OneTrust, Cookiebot, Usercentrics, Didomi, Quantcast, TrustArc, Borlabs, Klaro, and banners with a button “Reject all”, “Only necessary”, …) with “Reject all”, else “Only necessary”, as they show: in the job's steps and pages, and in the recorder. It clicks nothing else.": "Przeglądarka odpowiada na typowe banery cookie (OneTrust, Cookiebot, Usercentrics, Didomi, Quantcast, TrustArc, Borlabs, Klaro oraz banery z przyciskiem „Odrzuć wszystkie”, „Tylko niezbędne”, …) wyborem „Odrzuć wszystkie”, a w przeciwnym razie „Tylko niezbędne”, gdy tylko się pojawią: w krokach i na stronach zadania oraz w rejestratorze. Nie klika niczego innego.",
+        "Check known files for changes": "Sprawdzaj znane pliki pod kątem zmian",
+        "Each run asks the addresses of the files the job saved again (each at most once a day): only whether they changed where the site tells (ETag, Last-Modified), else by downloading and comparing. A file that changed is saved over its own: Nextcloud keeps the one before among its versions. The run lists the whole site then, not only up to known files. Not for pages the job saves.": "Każde uruchomienie ponownie odpytuje adresy plików zapisanych przez zadanie (każdy najwyżej raz dziennie): tylko o to, czy się zmieniły, gdzie strona to podaje (ETag, Last-Modified), w przeciwnym razie przez pobranie i porównanie. Zmieniony plik jest zapisywany w miejsce swojego: Nextcloud zachowuje poprzedni wśród jego wersji. Uruchomienie przechodzi wtedy całą stronę, a nie tylko do znanych plików. Nie dla stron zapisywanych przez zadanie.",
         "Download URL": "Adres URL pobierania",
         "The file's address from the link's values, e.g. {url}/download.": "Adres pliku z wartości linku, np. {url}/download.",
         "File name": "Nazwa pliku",
@@ -765,12 +767,6 @@
         ],
         "Harvester: {job} done": "Harvester: zadanie {job} zakończone",
         "{result}. The one-time job is deleted; its files stay.": "{result}. Zadanie jednorazowe zostało usunięte; jego pliki zostają.",
-        "_Tags brought up to date on %n file; stopped, the others get them at the job's next turn_::_Tags brought up to date on %n files; stopped, the others get them at the job's next turn_": [
-            "Zaktualizowano tagi %n pliku; zatrzymano, pozostałe dostaną je przy następnej kolejce zadania",
-            "Zaktualizowano tagi %n plików; zatrzymano, pozostałe dostaną je przy następnej kolejce zadania",
-            "Zaktualizowano tagi %n plików; zatrzymano, pozostałe dostaną je przy następnej kolejce zadania",
-            "Zaktualizowano tagi %n pliku; zatrzymano, pozostałe dostaną je przy następnej kolejce zadania"
-        ],
         "Through {proxy}: the check of the address failed ({error})": "Przez {proxy}: sprawdzenie adresu nie powiodło się ({error})",
         "The site seems to have changed: {detail}": "Strona chyba się zmieniła: {detail}",
         "Harvester: {job} — the site seems to have changed: {reason}": "Harvester: zadanie {job} — strona chyba się zmieniła: {reason}",
@@ -804,12 +800,6 @@
             "%n z plików pod {address} pobrano już wcześniej: nie ponownie",
             "%n z plików pod {address} pobrano już wcześniej: nie ponownie"
         ],
-        "_Looking for %n file saved before its tags were kept (nothing is downloaded)_::_Looking for %n files saved before their tags were kept (nothing is downloaded)_": [
-            "Szukanie %n pliku zapisanego, zanim zapamiętywano jego tagi (nic nie jest pobierane)",
-            "Szukanie %n plików zapisanych, zanim zapamiętywano ich tagi (nic nie jest pobierane)",
-            "Szukanie %n plików zapisanych, zanim zapamiętywano ich tagi (nic nie jest pobierane)",
-            "Szukanie %n pliku zapisanego, zanim zapamiętywano jego tagi (nic nie jest pobierane)"
-        ],
         "The job's tags changed: bringing them to its files": "Tagi zadania się zmieniły: przenoszenie ich na jego pliki",
         "Fetching {address}": "Pobieranie {address}",
         "Resumed": "Wznowiono",
@@ -834,11 +824,25 @@
         "step {number} opens an address with {names}: a token of this visit, likely spent when the job runs. Record the clicks that lead there instead (undo the step).": "krok {number} otwiera adres z {names}: to token tej wizyty, prawdopodobnie zużyty, gdy zadanie się uruchomi. Nagraj zamiast tego kliknięcia, które tam prowadzą (cofnij krok).",
         "next run": "przy następnym przebiegu",
         "when the address is sent again": "gdy adres zostanie wysłany ponownie",
+        "_Tags brought up to date on %n file; stopped, the others get them at the job's next turn_::_Tags brought up to date on %n files; stopped, the others get them at the job's next turn_": [
+            "Zaktualizowano tagi %n pliku; zatrzymano, pozostałe dostaną je przy następnej kolejce zadania",
+            "Zaktualizowano tagi %n plików; zatrzymano, pozostałe dostaną je przy następnej kolejce zadania",
+            "Zaktualizowano tagi %n plików; zatrzymano, pozostałe dostaną je przy następnej kolejce zadania",
+            "Zaktualizowano tagi %n pliku; zatrzymano, pozostałe dostaną je przy następnej kolejce zadania"
+        ],
+        "Downloading {file}": "Pobieranie {file}",
         "A web page came instead of a file ({error}): signed in anew": "Zamiast pliku przyszła strona internetowa ({error}): zalogowano ponownie",
         "Looking for new files": "Szukanie nowych plików",
         "{outcome}; stopped, the rest comes {later}": "{outcome}; zatrzymano, reszta {later}",
-        "Downloading {file}": "Pobieranie {file}",
         "Already in the folder, tagged: {path}": "Już w folderze, otagowano: {path}",
+        "Saved {path} ({size})": "Zapisano {path} ({size})",
+        "Changed: {path} saved over as its new version ({size})": "Zmieniony: {path} zapisany jako nowa wersja ({size})",
+        "_Looking for %n file saved before its tags were kept (nothing is downloaded)_::_Looking for %n files saved before their tags were kept (nothing is downloaded)_": [
+            "Szukanie %n pliku zapisanego, zanim zapamiętywano jego tagi (nic nie jest pobierane)",
+            "Szukanie %n plików zapisanych, zanim zapamiętywano ich tagi (nic nie jest pobierane)",
+            "Szukanie %n plików zapisanych, zanim zapamiętywano ich tagi (nic nie jest pobierane)",
+            "Szukanie %n pliku zapisanego, zanim zapamiętywano jego tagi (nic nie jest pobierane)"
+        ],
         "_%n downloaded_::_%n downloaded_": [
             "%n pobrany",
             "%n pobrane",
@@ -851,13 +855,32 @@
             "%n stron listy nic nie dało: przebieg nie liczy się jako pełny",
             "%n strony listy nic nie dało: przebieg nie liczy się jako pełny"
         ],
+        "A duplicate of {path}, not saved again: {file}": "Duplikat {path}, nie zapisano ponownie: {file}",
         "Tagged: {path}": "Otagowano: {path}",
         "Signing in anew failed: {error}": "Ponowne logowanie nie powiodło się: {error}",
+        "_%n changed (a new version)_::_%n changed (new versions)_": [
+            "%n zmieniony (nowa wersja)",
+            "%n zmienione (nowe wersje)",
+            "%n zmienionych (nowe wersje)",
+            "%n zmienionego (nowe wersje)"
+        ],
         "_%n already there_::_%n already there_": [
             "%n już był",
             "%n już były",
             "%n już było",
             "%n już były"
+        ],
+        "_%n duplicate (not saved again)_::_%n duplicates (not saved again)_": [
+            "%n duplikat (nie zapisano ponownie)",
+            "%n duplikaty (nie zapisano ponownie)",
+            "%n duplikatów (nie zapisano ponownie)",
+            "%n duplikatu (nie zapisano ponownie)"
+        ],
+        "_%n known file unchanged_::_%n known files unchanged_": [
+            "%n znany plik bez zmian",
+            "%n znane pliki bez zmian",
+            "%n znanych plików bez zmian",
+            "%n znanego pliku bez zmian"
         ],
         "_%n skipped (not of the job's file types, or too large)_::_%n skipped (not of the job's file types, or too large)_": [
             "%n pominięty (nie jest z typów plików zadania albo za duży)",
@@ -872,7 +895,6 @@
             "%n nieudanego (ponowna próba {later}): {error}"
         ],
         "Stopped: the rest comes {later}": "Zatrzymano: reszta {later}",
-        "Saved {path} ({size})": "Zapisano {path} ({size})",
         "_%n file this run (Files per run): the rest comes {later}_::_%n files this run (Files per run): the rest comes {later}_": [
             "%n plik w tym przebiegu (Plików na przebieg): reszta {later}",
             "%n pliki w tym przebiegu (Plików na przebieg): reszta {later}",
@@ -881,6 +903,7 @@
         ],
         "The run's time is up: the rest comes {later}": "Czas przebiegu minął: reszta {later}",
         "Skipped {file}: {error}": "Pominięto {file}: {error}",
+        "{file} could not be checked for changes: {error}": "Nie udało się sprawdzić zmian w {file}: {error}",
         "_%n file in a row failed: the rest comes {later}_::_%n files in a row failed: the rest comes {later}_": [
             "%n plik z rzędu się nie powiódł: reszta {later}",
             "%n pliki z rzędu się nie powiodły: reszta {later}",

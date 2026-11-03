@@ -18,6 +18,9 @@ the app's browser or taken from a template, not by code.
   file) or Markdown (the main text), such as receipts and articles, also a page you send it; the
   PDFs and pictures a page only shows (a viewer, an `<embed>`, a `blob:`); pictures at their
   full size.
+- **Versions and duplicates:** a file whose content the job saved already from another address
+  is not saved again; a known file that changed (asked cheaply with `ETag` and `Last-Modified`) is
+  saved over its own, and Nextcloud keeps the one before as a version.
 - **Cookie banners** answered on their own, "Reject all" else "Only necessary": the common consent
   managers' and banners of such buttons in German, English and Polish, nothing else.
 - **Recorder:** a browser in the app, shown on the page: sign in and pick the links (or the

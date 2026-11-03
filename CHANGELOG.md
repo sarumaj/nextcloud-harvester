@@ -4,6 +4,14 @@
 
 ### Added
 
+- Duplicates by content: a job keeps the SHA-256 of each file it saves; a file whose content one
+  of its files from another address has is not saved again, and the log and the run's outcome
+  say so (*A duplicate of …*, *1 duplicate (not saved again)*).
+- Versions: **Check known files for changes** (website and feed jobs; on for new jobs, off for
+  those saved before) asks the addresses of the files a job saved again, each at most once in 20
+  hours: over HTTP with `If-None-Match` and `If-Modified-Since` (304: no download), else by the
+  downloaded file's hash. A changed file is saved over its own, so that Nextcloud keeps the one
+  before among its versions; a deleted file is not brought back, a failed check fails nothing.
 - Cookie banners dismissed on their own: a website job's **Dismiss cookie banners** (on for new
   jobs, off for those saved before) has its browser answer OneTrust, Cookiebot, Usercentrics,
   Didomi, Quantcast (TCF), TrustArc, Borlabs and Klaro with "Reject all", else "Only necessary",

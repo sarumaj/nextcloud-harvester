@@ -700,6 +700,28 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   first page is its oldest, turn the option off. Only a change of what is listed (the source, a
   recipe, an address, a folder, patterns, the pages or entries read) starts over with a complete
   pass; files per run, file names, tags or the schedule do not.
+- **Duplicates:** a job keeps the SHA-256 of each file it saves (`versions.py`, in its
+  database), from this version on. A file whose content is that of a file the job saved from
+  another address (the same PDF behind two links, a placeholder image) is not saved again: the log
+  says *A duplicate of …, not saved again*, the run's outcome counts the duplicates, and its
+  address counts as fetched.
+- **Versions** (*Check known files for changes*, website and feed jobs; on for new jobs, off for
+  jobs saved before it existed, until switched on): each run asks the addresses of the files the
+  job saved again, each at most once in 20 hours. Over HTTP (the guarded client, also the
+  browser's file links that have an address) only whether the file changed: with the `ETag` and
+  `Last-Modified` it came with (`If-None-Match`, `If-Modified-Since`), a `304 Not Modified` costs
+  no download. A site that gives neither, and a file a click downloads, is downloaded and its
+  hash compared. A file that changed is saved over its own, at the same path: Nextcloud keeps
+  the one before among the file's **versions** (*Versions* in the file's details, as its versions
+  app keeps them, and expires them as it does any), so the folder holds no second name for it;
+  the log says *Changed: … saved over as its new version*, the outcome counts the changed and
+  the unchanged ones. A file its person deleted or moved is not brought back; one saved before
+  this version takes what its address gives at its first check as the measure (no change found
+  then). A known file that fails its check (gone from the site) fails nothing, a line in the log
+  says so. With the option a run goes through the whole site (known files do not end it), and
+  the known files' checks do not count against *Files per run*. Pages a job saves (as PDF, HTML or
+  Markdown) and files it captures from pages are never checked: a page saved anew differs each
+  time.
 - **Runs that meet trouble:** a link's address is known without what changes from visit to
   visit (`patterns.VOLATILE`: a session in the path or query, `;jsessionid=`, `sid`, `PHPSESSID`;
   a presigned address's signature and expiry, S3's `X-Amz-*`, Google's `X-Goog-*`, CloudFront's

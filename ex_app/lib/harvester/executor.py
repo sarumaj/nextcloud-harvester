@@ -20,7 +20,7 @@ import httpx
 from croniter import croniter
 from nc_py_api import AsyncNextcloudApp
 
-from . import browser, needs, ondemand, runner, settings
+from . import browser, needs, ondemand, runner, settings, versions
 from .l10n import Said, said, said_n
 from .schedule import zone
 from .watch import Watch, test_due
@@ -548,6 +548,7 @@ class Executor:
                 source = source_class(job.options, credentials, client)
                 source.home = home
                 source.timezone = job.timezone
+                source.contents = versions.Contents(self.store, job_id)
                 # Every wait of the source ends at once when the run is stopped.
                 if hasattr(source, "sleep"):
                     source.sleep = control.nap

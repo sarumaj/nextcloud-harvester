@@ -551,6 +551,8 @@ OC.L10N.register(
         "Disguises the browser as a person's, for sites whose bot check refuses it otherwise (the job's browser, its test in the recorder and Continue in the browser alike). It answers no challenge: you still do, in the browser. From a server's address a site may refuse it all the same.": "Tarnt den Browser als den eines Menschen, für Websites, deren Bot-Prüfung ihn sonst abweist (der Browser des Jobs, sein Test im Rekorder und „Im Browser fortfahren“ gleichermaßen). Er beantwortet keine Abfrage: Das tun weiterhin Sie, im Browser. Von der Adresse eines Servers aus weist eine Website ihn vielleicht trotzdem ab.",
         "Dismiss cookie banners": "Cookie-Banner wegklicken",
         "The browser answers the common cookie banners (OneTrust, Cookiebot, Usercentrics, Didomi, Quantcast, TrustArc, Borlabs, Klaro, and banners with a button “Reject all”, “Only necessary”, …) with “Reject all”, else “Only necessary”, as they show: in the job's steps and pages, and in the recorder. It clicks nothing else.": "Der Browser beantwortet die üblichen Cookie-Banner (OneTrust, Cookiebot, Usercentrics, Didomi, Quantcast, TrustArc, Borlabs, Klaro und Banner mit einem Knopf „Alle ablehnen“, „Nur notwendige“, …) mit „Alle ablehnen“, sonst „Nur notwendige“, sobald sie erscheinen: in den Schritten und Seiten des Jobs und im Rekorder. Sonst klickt er nichts.",
+        "Check known files for changes": "Bekannte Dateien auf Änderungen prüfen",
+        "Each run asks the addresses of the files the job saved again (each at most once a day): only whether they changed where the site tells (ETag, Last-Modified), else by downloading and comparing. A file that changed is saved over its own: Nextcloud keeps the one before among its versions. The run lists the whole site then, not only up to known files. Not for pages the job saves.": "Jeder Lauf fragt die Adressen der Dateien, die der Job gespeichert hat, erneut ab (jede höchstens einmal am Tag): nur, ob sie sich geändert haben, wo die Website es sagt (ETag, Last-Modified), sonst durch Herunterladen und Vergleichen. Eine geänderte Datei wird über die eigene gespeichert: Nextcloud behält die vorige unter ihren Versionen. Der Lauf geht dann die ganze Website durch, nicht nur bis zu bekannten Dateien. Nicht für Seiten, die der Job speichert.",
         "Download URL": "Download-URL",
         "The file's address from the link's values, e.g. {url}/download.": "Die Adresse der Datei aus den Werten des Links, z. B. {url}/download.",
         "File name": "Dateiname",
@@ -746,10 +748,6 @@ OC.L10N.register(
         ],
         "Harvester: {job} done": "Harvester: {job} fertig",
         "{result}. The one-time job is deleted; its files stay.": "{result}. Der einmalige Job ist gelöscht; seine Dateien bleiben.",
-        "_Tags brought up to date on %n file; stopped, the others get them at the job's next turn_::_Tags brought up to date on %n files; stopped, the others get them at the job's next turn_": [
-            "Tags von %n Datei aktualisiert; gestoppt, die anderen bekommen sie beim nächsten Durchgang des Jobs",
-            "Tags von %n Dateien aktualisiert; gestoppt, die anderen bekommen sie beim nächsten Durchgang des Jobs"
-        ],
         "Through {proxy}: the check of the address failed ({error})": "Über {proxy}: Die Prüfung der Adresse ist fehlgeschlagen ({error})",
         "The site seems to have changed: {detail}": "Die Website scheint sich geändert zu haben: {detail}",
         "Harvester: {job} — the site seems to have changed: {reason}": "Harvester: {job} – die Website scheint sich geändert zu haben: {reason}",
@@ -777,10 +775,6 @@ OC.L10N.register(
             "%n der Dateien unter {address} wurde schon früher abgerufen: nicht noch einmal",
             "%n der Dateien unter {address} wurden schon früher abgerufen: nicht noch einmal"
         ],
-        "_Looking for %n file saved before its tags were kept (nothing is downloaded)_::_Looking for %n files saved before their tags were kept (nothing is downloaded)_": [
-            "Suche nach %n Datei, die gespeichert wurde, bevor ihre Tags festgehalten wurden (nichts wird heruntergeladen)",
-            "Suche nach %n Dateien, die gespeichert wurden, bevor ihre Tags festgehalten wurden (nichts wird heruntergeladen)"
-        ],
         "The job's tags changed: bringing them to its files": "Die Tags des Jobs haben sich geändert: Seine Dateien bekommen sie jetzt",
         "Fetching {address}": "Rufe {address} ab",
         "Resumed": "Fortgesetzt",
@@ -803,11 +797,21 @@ OC.L10N.register(
         "step {number} opens an address with {names}: a token of this visit, likely spent when the job runs. Record the clicks that lead there instead (undo the step).": "Schritt {number} öffnet eine Adresse mit {names}: ein Token dieses Besuchs, der beim Durchlauf des Jobs wahrscheinlich verbraucht ist. Nehmen Sie stattdessen die Klicks auf, die dorthin führen (machen Sie den Schritt rückgängig).",
         "next run": "beim nächsten Durchlauf",
         "when the address is sent again": "wenn die Adresse wieder gesendet wird",
+        "_Tags brought up to date on %n file; stopped, the others get them at the job's next turn_::_Tags brought up to date on %n files; stopped, the others get them at the job's next turn_": [
+            "Tags von %n Datei aktualisiert; gestoppt, die anderen bekommen sie beim nächsten Durchgang des Jobs",
+            "Tags von %n Dateien aktualisiert; gestoppt, die anderen bekommen sie beim nächsten Durchgang des Jobs"
+        ],
+        "Downloading {file}": "Lade {file} herunter",
         "A web page came instead of a file ({error}): signed in anew": "Statt einer Datei kam eine Webseite ({error}): neu angemeldet",
         "Looking for new files": "Suche nach neuen Dateien",
         "{outcome}; stopped, the rest comes {later}": "{outcome}; gestoppt, der Rest kommt {later}",
-        "Downloading {file}": "Lade {file} herunter",
         "Already in the folder, tagged: {path}": "Schon im Ordner, mit Tags versehen: {path}",
+        "Saved {path} ({size})": "{path} gespeichert ({size})",
+        "Changed: {path} saved over as its new version ({size})": "Geändert: {path} als neue Version darüber gespeichert ({size})",
+        "_Looking for %n file saved before its tags were kept (nothing is downloaded)_::_Looking for %n files saved before their tags were kept (nothing is downloaded)_": [
+            "Suche nach %n Datei, die gespeichert wurde, bevor ihre Tags festgehalten wurden (nichts wird heruntergeladen)",
+            "Suche nach %n Dateien, die gespeichert wurden, bevor ihre Tags festgehalten wurden (nichts wird heruntergeladen)"
+        ],
         "_%n downloaded_::_%n downloaded_": [
             "%n heruntergeladen",
             "%n heruntergeladen"
@@ -816,11 +820,24 @@ OC.L10N.register(
             "%n Übersichtsseite lieferte nichts: Der Durchlauf zählt nicht als vollständig",
             "%n Übersichtsseiten lieferten nichts: Der Durchlauf zählt nicht als vollständig"
         ],
+        "A duplicate of {path}, not saved again: {file}": "Ein Duplikat von {path}, nicht noch einmal gespeichert: {file}",
         "Tagged: {path}": "Mit Tags versehen: {path}",
         "Signing in anew failed: {error}": "Die erneute Anmeldung ist fehlgeschlagen: {error}",
+        "_%n changed (a new version)_::_%n changed (new versions)_": [
+            "%n geändert (eine neue Version)",
+            "%n geändert (neue Versionen)"
+        ],
         "_%n already there_::_%n already there_": [
             "%n schon vorhanden",
             "%n schon vorhanden"
+        ],
+        "_%n duplicate (not saved again)_::_%n duplicates (not saved again)_": [
+            "%n Duplikat (nicht noch einmal gespeichert)",
+            "%n Duplikate (nicht noch einmal gespeichert)"
+        ],
+        "_%n known file unchanged_::_%n known files unchanged_": [
+            "%n bekannte Datei unverändert",
+            "%n bekannte Dateien unverändert"
         ],
         "_%n skipped (not of the job's file types, or too large)_::_%n skipped (not of the job's file types, or too large)_": [
             "%n übersprungen (nicht von den Dateitypen des Jobs oder zu groß)",
@@ -831,13 +848,13 @@ OC.L10N.register(
             "%n fehlgeschlagen (werden {later} erneut versucht): {error}"
         ],
         "Stopped: the rest comes {later}": "Gestoppt: Der Rest kommt {later}",
-        "Saved {path} ({size})": "{path} gespeichert ({size})",
         "_%n file this run (Files per run): the rest comes {later}_::_%n files this run (Files per run): the rest comes {later}_": [
             "%n Datei in diesem Durchlauf (Dateien pro Durchlauf): Der Rest kommt {later}",
             "%n Dateien in diesem Durchlauf (Dateien pro Durchlauf): Der Rest kommt {later}"
         ],
         "The run's time is up: the rest comes {later}": "Die Zeit des Durchlaufs ist um: Der Rest kommt {later}",
         "Skipped {file}: {error}": "{file} übersprungen: {error}",
+        "{file} could not be checked for changes: {error}": "{file} ließ sich nicht auf Änderungen prüfen: {error}",
         "_%n file in a row failed: the rest comes {later}_::_%n files in a row failed: the rest comes {later}_": [
             "%n Datei in Folge fehlgeschlagen: Der Rest kommt {later}",
             "%n Dateien in Folge fehlgeschlagen: Der Rest kommt {later}"

@@ -10,6 +10,7 @@ import contextlib
 import email.message
 import posixpath
 import re
+import threading
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import BinaryIO
@@ -111,6 +112,56 @@ class Response:
 Opener = Callable[[str], contextlib.AbstractContextManager[Response]]
 
 
+class Unchanged(Exception):
+    """The file asked for only if it changed (a Check's ETag or Last-Modified) did not: 304 Not
+    Modified, nothing written."""
+
+
+@dataclass
+class Check:
+    """A known file's address asked for only if it changed since (runner.place's recheck): the
+    ETag and Last-Modified it answered with last time (sent as If-None-Match and
+    If-Modified-Since), and those of this answer once the file came (etag_now, modified_now)."""
+
+    url: str
+    etag: str = ""
+    modified: str = ""
+    etag_now: str = ""
+    modified_now: str = ""
+
+
+# The check of the download this thread makes now (checking), for http's openers and fetch.
+_CHECK = threading.local()
+
+
+@contextlib.contextmanager
+def checking(check: Check) -> Iterator[Check]:
+    """This thread's downloads of check.url ask for it only if it changed (Unchanged when it did
+    not), and check learns the validators of the answer: for the downloads over HTTP (http); the
+    browser's own downloads and saved pages ask unconditionally."""
+    _CHECK.current = check
+    try:
+        yield check
+    finally:
+        _CHECK.current = None
+
+
+def _check_of(url: str) -> Check | None:
+    """This thread's check, when it is of url (a stand-in page's file is asked for as it is)."""
+    check = getattr(_CHECK, "current", None)
+    return check if check is not None and check.url == url else None
+
+
+def conditions(url: str) -> dict[str, str]:
+    """The headers asking for url only if it changed (this thread's check of it), else none."""
+    check = _check_of(url)
+    if check is None:
+        return {}
+    return ({"If-None-Match": check.etag} if check.etag else {}) | (
+        {"If-Modified-Since": check.modified} if check.modified else {}
+    )
+
+
 def file_types(settings: dict) -> list[str]:
     """The job's file types: one or several, comma-separated ("pdf,zip"); none or "any": any."""
     types = [kind.strip().lower() for kind in str(settings.get("file_type", "any") or "any").split(",") if kind.strip()]
@@ -199,7 +250,8 @@ def http(
     @contextlib.contextmanager
     def open_url(url: str) -> Iterator[Response]:
         # Without headers, as it always was (a client of a source's own may take no more).
-        more = ({"headers": headers} if headers else {}) | ({"content": content} if content is not None else {})
+        sent = (headers or {}) | (conditions(url) if method == "GET" else {})
+        more = ({"headers": sent} if sent else {}) | ({"content": content} if content is not None else {})
         with client.stream(method, url, **more) as response:
             yield Response(
                 response.status_code,
@@ -406,6 +458,9 @@ def _attempt(  # pylint: disable=too-many-arguments,too-many-positional-argument
             raise Denied(f"{url} answered {response.status}: the account may not download it")
         if response.status >= 400:
             raise SourceError(f"{url} answered {response.status}")
+        check = _check_of(url)
+        if response.status == 304 and check is not None and (check.etag or check.modified):
+            raise Unchanged(url)
         content_type = response.headers.get("content-type", "")
         if content_type.startswith("text/html") and "html" not in types:
             return _stand_in(response, url)
@@ -425,5 +480,8 @@ def _attempt(  # pylint: disable=too-many-arguments,too-many-positional-argument
             dest.write(chunk)
         if size < int(settings.get("min_size", 0) or 0):
             raise SourceError(f"{url} gave only {size} bytes")
+        if check is not None:
+            check.etag_now = response.headers.get("etag", "")
+            check.modified_now = response.headers.get("last-modified", "")
         told(response)
         return True

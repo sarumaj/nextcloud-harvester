@@ -90,6 +90,21 @@ CREATE TABLE IF NOT EXISTS summaries (
     summary TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS summaries_job ON summaries (job, good, id);
+-- What the files a job saved hold (versions.py), by their item's key: their content's hash (a
+-- file of the same hash at another address is a duplicate), the ETag and Last-Modified their
+-- address answered with (a recheck asks it only if it changed since), where the file is, and
+-- when the address was last asked.
+CREATE TABLE IF NOT EXISTS contents (
+    job INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    key TEXT NOT NULL,
+    hash TEXT NOT NULL,
+    etag TEXT NOT NULL,
+    modified TEXT NOT NULL,
+    path TEXT NOT NULL,
+    at REAL NOT NULL,
+    PRIMARY KEY (job, key)
+);
+CREATE INDEX IF NOT EXISTS contents_hash ON contents (job, hash);
 -- A person's own templates: recipe files (recipe_file.py) saved from a job's form, theirs alone.
 CREATE TABLE IF NOT EXISTS templates (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -478,6 +493,40 @@ class Store:  # pylint: disable=too-many-public-methods
                 self._db.execute(
                     "INSERT OR REPLACE INTO placed VALUES (?, ?, ?, ?, ?)",
                     (job_id, key, file_id, json.dumps(values, default=str), json.dumps(tags)),
+                )
+
+    def content(self, job_id: int, key: str) -> dict | None:
+        """What the job's file of the item holds (hash, etag, modified, path, at), or None."""
+        with self._lock:
+            row = self._db.execute("SELECT * FROM contents WHERE job = ? AND key = ?", (job_id, key)).fetchone()
+        return dict(row) if row else None
+
+    def same_content(self, job_id: int, digest: str, key: str) -> dict | None:
+        """The job's first file of that hash that another item gave, or None."""
+        with self._lock:
+            row = self._db.execute(
+                "SELECT * FROM contents WHERE job = ? AND hash = ? AND key != ? ORDER BY at LIMIT 1",
+                (job_id, digest, key),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def checked_since(self, job_id: int, since: float) -> set[str]:
+        """The keys of the items whose address the job asked at since (epoch s) or later."""
+        with self._lock:
+            rows = self._db.execute("SELECT key FROM contents WHERE job = ? AND at >= ?", (job_id, since)).fetchall()
+        return {row["key"] for row in rows}
+
+    def keep_content(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self, job_id: int, key: str, digest: str, path: str, etag: str = "", modified: str = ""
+    ) -> None:
+        """Records what the job's file of the item holds now, asked for now. Nothing for a job
+        deleted meanwhile."""
+        with self._lock, self._db:
+            if self._db.execute("SELECT 1 FROM jobs WHERE id = ?", (job_id,)).fetchone():
+                self._db.execute(
+                    "INSERT OR REPLACE INTO contents (job, key, hash, etag, modified, path, at)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (job_id, key, digest, etag, modified, path, time.time()),
                 )
 
     def forget(self, job_id: int, key: str) -> None:

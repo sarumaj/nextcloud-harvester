@@ -9,8 +9,10 @@ import time
 from collections.abc import Callable
 from typing import BinaryIO
 
+from . import versions
 from .l10n import Said, listed, said, said_n
 from .patterns import render_tags, stable_url
+from .sources import download
 from .sources import (
     FULL_PASS,
     REFUSED,
@@ -139,7 +141,22 @@ def free_path(job: Job, library: Library, item, owners: dict[int, str]) -> tuple
     return path, file_id
 
 
-def place(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+# What place did with an item (the run's Tally counts each by its name): downloaded, found in the
+# folder already (adopted), a duplicate of another of the job's files (not saved), and for a known
+# file asked again (recheck): saved over its own as a new version (updated), or unchanged.
+DOWNLOADED, ADOPTED, DUPLICATE, UPDATED, UNCHANGED = "downloaded", "adopted", "duplicates", "updated", "unchanged"
+
+
+def _tagged(job: Job, library: Library, item, file_id: int, record: Callable[[Placed], None]) -> None:
+    """Gives the item's file the job's tags (templates of the link's values: {year} is the
+    link's year) and records it."""
+    tags = render_tags(job.tags, item.values)
+    if tags:
+        library.tag(file_id, tags)
+    record(Placed(item.key, file_id, dict(item.values), tags))
+
+
+def place(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     job: Job,
     source: Source,
     library: Library,
@@ -148,45 +165,97 @@ def place(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     report: Report,
     record: Callable[[Placed], None] = lambda placed: None,
     owners: dict[int, str] | None = None,
-) -> bool:
-    """Puts the item's file into the job's folder (after the pause) and tags it; False when it
-    was there already (downloaded by hand or by an earlier job: kept, tagged and not downloaded
-    again). record keeps which file it is and its tags, for a later change of the job's tags;
-    owners are the files the job saved, by ID, with their items' keys (free_path). An item whose
-    name comes with its file (pending) is downloaded first, and then put where that name says."""
+    recheck: bool = False,
+) -> str:
+    """Puts the item's file into the job's folder (after the pause) and tags it; returns what it
+    did (DOWNLOADED, ADOPTED: it was there already, downloaded by hand or by an earlier job, kept,
+    tagged and not downloaded again; DUPLICATE: its content is another of the job's files', with
+    the job's record of contents, source.contents). record keeps which file it is and its tags,
+    for a later change of the job's tags; owners are the files the job saved, by ID, with their
+    items' keys (free_path). An item whose name comes with its file (pending) is downloaded
+    first, and then put where that name says. recheck: the item's file is known, its address is
+    asked again (_recheck)."""
     if item.problem is not None:
         raise item.problem
     if not item.path.strip("/"):
         raise SourceError(f"the file name for {item.url} came out empty (check the job's File name)")
     owners = owners or {}
+    if recheck and source.contents is not None:
+        return _recheck(job, source, library, item, pause, report, record, owners)
     path, file_id = (
         (posixpath.join(job.target, item.path), None) if item.pending else free_path(job, library, item, owners)
     )
-    fetched = file_id is None
-    if file_id is None:
-        pause()
-        report("info", said("Downloading {file}", file=item.url if item.pending else path))
-        with tempfile.TemporaryFile() as content:
-            named = source.fetch(item, content)
-            if item.pending:
-                item = named or item
-                path, file_id = free_path(job, library, item, owners)
-            size = content.tell()
-            content.seek(0)
-            if file_id is None:
-                file_id = library.put(path, content)
-                report("info", said("Saved {path} ({size})", path=path, size=size_text(size)))
-            else:
-                fetched = False
-                report("info", said("Already in the folder, tagged: {path}", path=path))
-    else:
+    if file_id is not None:
         report("info", said("Already in the folder, tagged: {path}", path=path))
-    # The job's tags are templates of the link's values: {year} is the link's year.
-    tags = render_tags(job.tags, item.values)
-    if tags:
-        library.tag(file_id, tags)
-    record(Placed(item.key, file_id, dict(item.values), tags))
-    return fetched
+        _tagged(job, library, item, file_id, record)
+        return ADOPTED
+    pause()
+    report("info", said("Downloading {file}", file=item.url if item.pending else path))
+    with tempfile.TemporaryFile() as content:
+        with download.checking(download.Check(item.url)) as check:
+            named = source.fetch(item, content)
+        if item.pending:
+            item = named or item
+            path, file_id = free_path(job, library, item, owners)
+        if file_id is not None:
+            report("info", said("Already in the folder, tagged: {path}", path=path))
+            _tagged(job, library, item, file_id, record)
+            return ADOPTED
+        size = content.tell()
+        value = versions.digest(content)
+        twin = source.contents.same(value, item.key) if source.contents is not None else None
+        if twin is not None:
+            report("info", said("A duplicate of {path}, not saved again: {file}", path=twin["path"], file=item.url))
+            source.contents.keep(item.key, value, twin["path"], check)
+            return DUPLICATE
+        file_id = library.put(path, content)
+        report("info", said("Saved {path} ({size})", path=path, size=size_text(size)))
+        if source.contents is not None:
+            source.contents.keep(item.key, value, path, check)
+    _tagged(job, library, item, file_id, record)
+    return DOWNLOADED
+
+
+def _recheck(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    job: Job,
+    source: Source,
+    library: Library,
+    item,
+    pause: Callable[[], None],
+    report: Report,
+    record: Callable[[Placed], None],
+    owners: dict[int, str],
+) -> str:
+    """A known file's address asked again: only if it changed since (its ETag, Last-Modified),
+    else downloaded and compared by its hash. A file that changed is saved over its own (UPDATED:
+    Nextcloud keeps the one before as a version); one without a record (saved before the job
+    kept them) is the measure from now on (UNCHANGED); one its person deleted or moved stays
+    away."""
+    contents = source.contents
+    known = contents.known(item.key)
+    pause()
+    with tempfile.TemporaryFile() as content:
+        check = download.Check(item.url, known["etag"], known["modified"]) if known else download.Check(item.url)
+        try:
+            with download.checking(check):
+                named = source.fetch(item, content)
+        except download.Unchanged:
+            contents.checked(item.key, known)
+            return UNCHANGED
+        item = (named or item) if item.pending else item
+        path = known["path"] if known else free_path(job, library, item, owners)[0]
+        size = content.tell()
+        value = versions.digest(content)
+        file_id = library.find(path)
+        if file_id is None or known is None or known["hash"] == value:
+            # Gone (deleted or moved by its person): not brought back; asked again all the same.
+            contents.keep(item.key, value if file_id is not None or known is None else known["hash"], path, check)
+            return UNCHANGED
+        file_id = library.put(path, content)
+        report("info", said("Changed: {path} saved over as its new version ({size})", path=path, size=size_text(size)))
+        contents.keep(item.key, value, path, check)
+    _tagged(job, library, item, file_id, record)
+    return UPDATED
 
 
 def retag_placed(job: Job, placed: list[Placed], library: Library, record: Callable[[Placed], None]) -> int:
@@ -317,11 +386,16 @@ def signed_in_again(source: Source, error: WebPage, report: Report) -> bool:
 @dataclasses.dataclass
 class Tally:
     """What a run did: files downloaded, found already there, skipped (refused by type or size),
-    and the errors of those that failed (denied: how many of them the site refused, 401 or 403)."""
+    duplicates of the job's other files, known files saved over as a new version (updated) or
+    asked again and found unchanged, and the errors of those that failed (denied: how many of them
+    the site refused, 401 or 403)."""
 
     downloaded: int = 0
     adopted: int = 0
     skipped: int = 0
+    duplicates: int = 0
+    updated: int = 0
+    unchanged: int = 0
     failures: list[str] = dataclasses.field(default_factory=list)
     denied: int = 0
     # When what is left is tried again: the next run, or (a fetch's) the address sent again.
@@ -330,8 +404,14 @@ class Tally:
     def sentence(self) -> Said:
         """The run's outcome, as the jobs' list shows it: its figures, each a whole phrase."""
         figures = [said_n("%n downloaded", "%n downloaded", self.downloaded)]
+        if self.updated:
+            figures.append(said_n("%n changed (a new version)", "%n changed (new versions)", self.updated))
         if self.adopted:
             figures.append(said_n("%n already there", "%n already there", self.adopted))
+        if self.duplicates:
+            figures.append(said_n("%n duplicate (not saved again)", "%n duplicates (not saved again)", self.duplicates))
+        if self.unchanged:
+            figures.append(said_n("%n known file unchanged", "%n known files unchanged", self.unchanged))
         if self.skipped:
             figures.append(
                 said_n(
@@ -391,16 +471,20 @@ def run(  # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
     in_a_row = 0
     source.report = report
     source.remember = mark_seen
+    # The files the job saved whose addresses are asked again (Check known files for changes):
+    # the listing gives them as if new, place asks whether they changed.
+    again = source.contents.due(set(owners.values())) if source.contents is not None and source.rechecks() else set()
+    listed_seen = (lambda key: key not in again and seen(key)) if again else seen
     report("info", said("Looking for new files"))
     try:
-        for item in source.items(seen):
+        for item in source.items(listed_seen):
             if stopped():
                 report("info", said("Stopped: the rest comes {later}", later=later))
                 halted = True
                 complete = False
                 break
             # -1: no limit of files (the time limit still holds).
-            if 0 <= limit <= tally.downloaded:
+            if 0 <= limit <= tally.downloaded + tally.updated:
                 report(
                     "info",
                     said_n(
@@ -416,20 +500,21 @@ def run(  # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
                 report("info", said("The run's time is up: the rest comes {later}", later=later))
                 complete = False
                 break
-            # A pause between two downloads, not before the first.
-            pause = (lambda: sleep(source.pause)) if tally.downloaded else (lambda: None)
+            # A pause between two downloads (or asks of a known file), not before the first.
+            asked = tally.downloaded + tally.updated + tally.unchanged + tally.duplicates
+            pause = (lambda: sleep(source.pause)) if asked else (lambda: None)
+            rechecked = item.key in again
             try:
                 try:
-                    fetched = place(job, source, library, item, pause, report, keep, owners)
+                    done = place(job, source, library, item, pause, report, keep, owners, rechecked)
                 except WebPage as error:
                     # The session ended in the middle of the run (files came before): signed in
                     # anew once, and the file asked for again.
-                    if resigned or not tally.downloaded or not signed_in_again(source, error, report):
+                    if resigned or not asked or not signed_in_again(source, error, report):
                         raise
                     resigned = True
-                    fetched = place(job, source, library, item, pause, report, keep, owners)
-                tally.downloaded += fetched
-                tally.adopted += not fetched
+                    done = place(job, source, library, item, pause, report, keep, owners, rechecked)
+                setattr(tally, done, getattr(tally, done) + 1)
                 in_a_row = 0
             except (AuthError, ChallengeError):
                 raise  # the whole site refuses: no point in the next files
@@ -442,6 +527,14 @@ def run(  # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
                 mark_seen(REFUSED + item.key)
                 continue
             except SourceError as error:
+                if rechecked:
+                    # A known file that could not be asked again (gone from the site, a failure):
+                    # it stays as it is, asked again next time; no failure of the run.
+                    report(
+                        "info",
+                        said("{file} could not be checked for changes: {error}", file=item.path, error=str(error)),
+                    )
+                    continue
                 # One file the site will not give (an error page, a network failure, a name that
                 # cannot be made): the others go on, and it is tried again next run, not marked
                 # as seen.
@@ -471,7 +564,7 @@ def run(  # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
         report("info", said("Stopped: the rest comes {later}", later=later))
         halted = True
         complete = False
-    if tally.failures and not (tally.downloaded or tally.adopted or tally.skipped):
+    if tally.failures and not (tally.downloaded or tally.adopted or tally.skipped or tally.duplicates or tally.updated):
         more = f" (and {len(tally.failures) - 1} more)" if len(tally.failures) > 1 else ""
         # Every file refused (two at least: one alone may be a file taken away): the account's
         # sign-in, not the files.
