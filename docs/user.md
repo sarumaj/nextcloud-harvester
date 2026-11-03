@@ -193,6 +193,15 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   its switch **optional**; a click whose text reads like a consent button (*Accept*, *OK*,
   *Alle akzeptieren*, *Zgadzam się*, …) gets the hint **make optional?**, never more.
   **Test the recipe** lists the steps it went on without apart from the problems.
+- **Pauses and retries:** a step with `"pause": 5` waits that many seconds (above 0, at most 60)
+  before it, for a page that needs a moment after the step before. A step with `"retry":
+  {"times": 3, "delay": 2}` is tried again up to 3 more times (1 to 10), 2 seconds apart (0 to
+  60, 2 without), when it fails as a step fails: its element or frame not there in time, its
+  popup not opened, its wait not met. After its last try it fails as before (an optional step is
+  skipped). A stop ends a pause or a delay at once and is never tried again. The run's log says
+  `step 3 (click “Search”): pausing 5 s before it` and `step 3 (click “Search”) failed, trying
+  again in 2 s (attempt 2 of 4): <why>`. Recipe files keep both; the recorder's Steps list edits
+  them (**pause, retry**).
 - **Selectors with alternatives** (`harvester/selectors.py`): recorder.js finds a step's element
   by every selector that matched it alone when it was recorded, ranked as Playwright's codegen
   ranks them: a test id (`data-testid`, `data-test`, `data-qa`, `data-cy`), an id that does not
@@ -319,7 +328,8 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   atomic groups). Passwords are never recorded: the job fills in its account. The **Steps**
   list edits the steps: **↑** and **↓** move one, **✕** removes one, a fill fills in a value of
   its own (edited there), the account's user name, password or the current one-time code, a
-  list's choice can be edited, and a step's wait dropped (**wait for the network instead**). A
+  list's choice can be edited, a step's wait dropped (**wait for the network instead**), and its
+  pause and retries set under **pause, retry** (while recording too, the last step's). A
   recipe with steps opens in **Browse**; **Record steps** then asks where the new ones go: after
   a step (the last, unless chosen), keeping the later ones (**Append**), instead of them
   (**Replace from there**), or instead of all (**Replace all**). A fill with a value of its own
@@ -354,6 +364,10 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   links with the names the job's *File name* gives them, and the problems: a step that failed
   (with the page it was on), a selector that matched nothing, a pattern none matched. It reads
   at most 30 listing pages and three minutes; **Stop the test** ends it, and its context closes.
+  Meanwhile the Steps list follows it: the step playing is outlined (`▶ playing`, `attempt 2 of
+  3`, `⏸ pausing 4 s` counting down), each step done marked `✓ passed`, `– skipped (optional)`,
+  `✗ failed` or `↷ not played (signed in)` (the recorder's session skips the sign-in). A failed
+  step stays outlined; a click on it opens its **pause, retry** to give it time or tries.
   **Test as the job runs** (a saved job) is the honest one: a new browser context at the
   recipe's window, without the recorder's session, signed in by the steps with the job's stored
   account (its one-time code, its mailbox for codes, its cookies; the app reads it, the page never

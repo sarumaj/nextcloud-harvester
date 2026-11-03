@@ -25,7 +25,6 @@ import datetime
 import functools
 import json
 import mimetypes
-import re
 import string
 import time
 from collections.abc import Callable, Iterator
@@ -42,19 +41,29 @@ from ..browser import engine
 from ..browser.guard import Guard
 from ..schedule import zone
 from . import base, download, near
-from .base import AuthError, ChallengeError, IMPERSONATE, Item, Option, Source, SourceError, Stopped, pattern_search
+from .base import AuthError, ChallengeError, IMPERSONATE, Item, Option, Source, SourceError, Stopped, nap
+from .base import pattern_search
 from .download import Response
 from .driver import Driver, HttpDriver, accept_language, moved
 from .walk import StartEmpty, Walk
-from .tabs import PopupMissing, Tabs, arrived, settle
+from .tabs import (
+    FrameMissing,
+    PopupMissing,
+    Tabs,
+    arrived,
+    in_frame,
+    settle,
+    short_error,
+    step_event,
+    step_line,
+    with_tries,
+)
 
 # How long a browser step may take (ms), and how long a job waits for the browser (s).
 STEP_TIMEOUT = 30_000
 # How long an optional step waits for its frame and element together (ms): a banner that shows
 # comes at once with its page, and the run should not wait half a minute for one that does not.
 OPTIONAL_TIMEOUT = 5_000
-# How often a step looks again for the frame it acts in while the page builds it (ms).
-FRAME_POLL = 250
 LOCK_TIMEOUT = 1800
 # What the browser showed when a step failed or a page asked for a person: a JPEG of the window
 # at this quality, again at the lower one when larger than SHOT_BYTES (else none is kept).
@@ -109,8 +118,14 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes
     timezone = "UTC"
     # Whether its downloads (by the guarded client) impersonate a browser (base.IMPERSONATE).
     impersonate = False
+    # A step's pause and its retries' delays: waits that a stop ends at once (base.nap: the run's
+    # stop; the recipe's test's own in the recorder).
+    nap: Callable[[float], None] = staticmethod(nap)
+    # Told of each step as it is played (tabs.step_event): the recorder's test shows it on its
+    # Steps, a job's run logs its pauses and retries.
+    told: Callable[[dict], None] | None = None
 
-    def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
         self,
         steps: list[dict],
         secrets: dict[str, str],
@@ -125,8 +140,10 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes
         timezone: str = "UTC",
         downloads: bool = False,
         stealth: bool = False,
+        told: Callable[[dict], None] | None = None,
     ):
         self.saw = saw
+        self.told = told
         self.timezone = timezone
         if not browser.SLOTS.acquire(timeout=LOCK_TIMEOUT, kind="job"):  # pylint: disable=consider-using-with
             raise SourceError("no browser came free (recordings use them all)")
@@ -194,12 +211,20 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes
             self.main.goto(start, wait_until="domcontentloaded")
             settle(self.main)
             if not self.signed_out(self.main):
+                for number, step in todo[:signing]:
+                    self._tell(step_event(number, step, "session"))
                 todo = todo[signing:]
         self._replay(self.main, todo, secrets)
 
+    def _tell(self, event: dict) -> None:
+        tell = self.told
+        if tell is not None:
+            tell(event)  # pylint: disable=not-callable
+
     def _replay(self, page: Any, todo: list[tuple[int, dict]], secrets: dict[str, str]) -> None:
-        """Does the numbered steps from the page (in the tabs they open: a sign-in's popup): an
-        optional one that fails is skipped (and noted), a required one fails the sign-in."""
+        """Does the numbered steps from the page (in the tabs they open: a sign-in's popup), each
+        after its pause and tried again as its retry says: an optional one that fails is skipped
+        (and noted), a required one fails the sign-in."""
         today = self.today()
         tabs = Tabs(page)
         for index, (number, step) in enumerate(todo):
@@ -207,18 +232,28 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes
                 # A popup comes from the step before the one that goes on in it: the tabs open then.
                 if index + 1 < len(todo) and todo[index + 1][1].get("action") == "popup":
                     tabs.opening()
-                if not tabs.switch(step, OPTIONAL_TIMEOUT if step.get("optional") else STEP_TIMEOUT):
-                    replay(tabs.page, dated_step(step, today), secrets, functools.partial(self._repaired, number))
+                play = functools.partial(self._play, tabs, dated_step(step, today), secrets, number)
+                with_tries(play, number, step, self.nap, self._tell)
             except Stopped:
                 # The run or the recipe's test was stopped during the step: no failure of it.
                 raise
             except (PlaywrightError, FrameMissing, PopupMissing) as error:
                 if not step.get("optional"):
+                    self._tell(step_event(number, step, "failed", why=short_error(error)))
                     self._failed(number, step, error, page)
                 # Best effort: no picture, no failure; the run says what it went on without.
                 self.skipped.append({"number": number, "label": recipes.step_label(step), "why": short_error(error)})
+                self._tell(step_event(number, step, "skipped", why=short_error(error)))
             except Exception as error:  # pylint: disable=broad-exception-caught
+                self._tell(step_event(number, step, "failed", why=short_error(error)))
                 self._failed(number, step, error, page)
+            else:
+                self._tell(step_event(number, step, "passed"))
+
+    def _play(self, tabs: Tabs, step: dict, secrets: dict[str, str], number: int) -> None:
+        """One try of the step (with its dates filled in), in the tab it acts in."""
+        if not tabs.switch(step, OPTIONAL_TIMEOUT if step.get("optional") else STEP_TIMEOUT):
+            replay(tabs.page, step, secrets, functools.partial(self._repaired, number))
 
     def _repaired(self, number: int, old: str, new: str) -> None:
         self.repaired.append(selectors.repair_line(f"step {number}", old, new))
@@ -508,10 +543,6 @@ def filled(step: dict, secrets: dict[str, str]) -> str:
     return str(step.get("value", ""))
 
 
-class FrameMissing(SourceError):
-    """The frame a step acts in is not on the page."""
-
-
 class StepFailed(SourceError):
     """A required step of the steps failed (not on a page asking for a person)."""
 
@@ -522,48 +553,6 @@ def names_in(template: str) -> set[str]:
         return {name.split(".")[0].split("[")[0] for _, name, _, _ in string.Formatter().parse(template) if name}
     except ValueError:
         return set()
-
-
-def short_error(error: Exception) -> str:
-    """An error's first line without Playwright's call ("Locator.click: "), for a log line."""
-    text = (str(error) or type(error).__name__).splitlines()[0]
-    return re.sub(r"^[A-Za-z]\w*\.\w+: ", "", text)
-
-
-def _child_frame(parent, entry: dict):
-    """The frame of the path's entry inside parent: by its element's selector, else by its address
-    (without the query), else by its name; None while there is none."""
-    if entry.get("selector"):
-        try:
-            owner = parent.query_selector(entry["selector"])
-        except PlaywrightError:
-            owner = None  # a selector the page cannot read: the address may still find it
-        found = owner.content_frame() if owner else None
-        if found is not None:
-            return found
-    children = parent.child_frames
-    for key, value in (("url", entry.get("url")), ("name", entry.get("name"))):
-        if not value:
-            continue
-        for child in children:
-            if (recipes.frame_address(child.url) if key == "url" else child.name) == value:
-                return child
-    return None
-
-
-def in_frame(page, frames: list[dict], timeout: float):
-    """The frame the step's path leads to (recipe: "frame"), waiting up to timeout (ms) for the
-    page to build it; FrameMissing when it does not."""
-    deadline = time.monotonic() + timeout / 1000
-    target = page.main_frame
-    for depth, entry in enumerate(frames, 1):
-        while (found := _child_frame(target, entry)) is None:
-            if time.monotonic() >= deadline:
-                where = entry.get("url") or entry.get("name") or entry.get("selector")
-                raise FrameMissing(f"the frame {where} (level {depth}) is not on the page")
-            page.wait_for_timeout(FRAME_POLL)
-        target = found
-    return target
 
 
 def replay(page, step: dict, secrets: dict[str, str], repaired: Callable[[str, str], None] | None = None) -> None:
@@ -747,6 +736,12 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
     def _saw(self, shot: dict) -> None:
         self._shot = shot
 
+    def _step_told(self, event: dict) -> None:
+        """A step's pause or retry in the run's log (step_line)."""
+        line = step_line(event)
+        if line:
+            self.report("info", line)
+
     @property
     def shot(self) -> dict | None:
         """What the browser showed when a step failed or a page asked for a person, if it did."""
@@ -794,6 +789,7 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
                 timezone=self.timezone,
                 downloads=bool(links.get("click")),
                 stealth=bool(int(self.settings["stealth"])),
+                told=self._step_told,
             )
             # Its own downloads (the guarded client's) as the job asks; the browser is a browser.
             driver.impersonate = download.impersonates(self.settings)

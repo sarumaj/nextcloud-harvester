@@ -19,6 +19,7 @@ import asyncio
 import inspect
 import threading
 import time
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from .. import cookies as cookie_jar
@@ -29,6 +30,8 @@ from ..sources.base import Stopped
 # some to spare for the loop).
 TRIAL_SECONDS = 180
 CALL_SECONDS = site.STEP_TIMEOUT / 1000 + 30
+# How long the test waits for the page to be sent a step's progress (s).
+SEND_SECONDS = 5
 # What the test as the job runs reads of the first file: enough to tell its type, or a web page.
 PROBE_BYTES = 64 * 1024
 
@@ -61,6 +64,18 @@ class Blocking:  # pylint: disable=too-few-public-methods
         if time.monotonic() > self._deadline:
             raise Stopped("time")
 
+    @property
+    def loop(self) -> asyncio.AbstractEventLoop:
+        """The event loop the calls run on."""
+        return self._loop
+
+    def nap(self, seconds: float) -> None:
+        """A wait of the test (a step's pause, a retry's delay), in the worker thread: ended at
+        once by the stop, and at the deadline (Stopped, as the next call would raise)."""
+        self._check()
+        self._stop.wait(max(0.0, min(seconds, self._deadline - time.monotonic())))
+        self._check()
+
     def __getattr__(self, name: str) -> Any:
         value = getattr(self._target, name)
         if not callable(value):
@@ -89,16 +104,36 @@ class TrialDriver(site.BrowserDriver):
     job's: the context's cookies, the browser's user agent, its proxy."""
 
     def __init__(
-        self, context: Blocking, user_agent: str = "", proxy: str = ""
+        self, context: Blocking, user_agent: str = "", proxy: str = "", told: Callable[[dict], None] | None = None
     ):  # pylint: disable=super-init-not-called
         self.context = context
         self.user_agent = user_agent
         self.proxy = proxy
+        # The steps' pauses and retries end with the test (its stop, its deadline); each step's
+        # progress goes to the recorder's page (told).
+        self.nap = context.nap
+        self.told = told
         self.context.set_default_timeout(site.STEP_TIMEOUT)
         self.main = self.context.new_page()
 
     def close(self) -> None:
         """Nothing: the recorder closes the test's context, and the browser is the recorder's."""
+
+
+def teller(send: Callable[[dict], Awaitable[None]], loop: asyncio.AbstractEventLoop) -> Callable[[dict], None]:
+    """Tells the recorder's page of each step the test plays (tabs.step_event, as "test-step"),
+    from the test's worker thread (send on the loop): its Steps show which one plays, its pause
+    and attempts, how it ended."""
+
+    def tell(event: dict) -> None:
+        # Sent before the step goes on, so the page hears of the steps in their order and before
+        # the test's result.
+        try:
+            asyncio.run_coroutine_threadsafe(send({"type": "test-step", **event}), loop).result(SEND_SECONDS)
+        except Exception:  # pylint: disable=broad-exception-caught
+            pass  # the page is gone: the test goes on (and is stopped with the recording)
+
+    return tell
 
 
 def probe(driver: site.Driver, url: str, settings: dict) -> dict:
@@ -143,11 +178,13 @@ def survey(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     as_job: bool = False,
     user_agent: str = "",
     proxy: str = "",
+    send: Callable[[dict], Awaitable[None]] | None = None,
 ) -> dict:
     """The test, in a worker thread: the steps (skipped while the session reaches the listing, as
-    for a job with a kept session), then the walk (Site.survey). As the job runs: the account's
-    cookies in the context and its secrets for the steps, and the first file probed."""
-    driver = TrialDriver(context, user_agent, proxy)
+    for a job with a kept session), each told to send as it is played (teller), then the walk
+    (Site.survey). As the job runs: the account's cookies in the context and its secrets for the
+    steps, and the first file probed."""
+    driver = TrialDriver(context, user_agent, proxy, teller(send, context.loop) if send else None)
     source.driver = driver
     secrets = source.secrets if as_job else {}
     if as_job:

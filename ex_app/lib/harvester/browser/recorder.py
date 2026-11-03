@@ -9,8 +9,8 @@ leaves out (dashed), and shows examples with their values; the person may edit t
 
 The messages are JSON over the page's WebSocket:
 
-- to the page: {type: frame, data}, {type: url, url}, {type: error, message},
-  {type: recipe, recipe, proposals}, {type: test, result} (the recipe's test, trial.py),
+- to the page: {type: frame, data}, {type: url, url}, {type: error, message}, {type: recipe, recipe,
+  proposals}, {type: test, result} (the recipe's test, trial.py), {type: test-step, ...} (its steps),
   {type: where, frame (null: the page; else {host, url, level})} (where the person acts);
 - from the page: {type: load, recipe} (the picks of the recipe the form holds), {type: goto,
   url}, {type: back}, {type: forward}, {type: reload}, {type: mouse, event (move, down, up), x,
@@ -791,9 +791,9 @@ class Recorder(DataPicks, Popups):  # pylint: disable=too-many-instance-attribut
             context.on("page", lambda page: asyncio.ensure_future(self._show_trial(page, context, home)))
             blocking = trial.Blocking(context, asyncio.get_running_loop(), stop, time.monotonic() + trial.TRIAL_SECONDS)
             await self.send({"type": "test-started", "as_job": as_job})
-            # The test's requests over HTTP as the browser's: its user agent, its connection.
+            # The test's requests over HTTP as the browser's (user agent, connection); its steps told.
             via = (browser.user_agent(self._browser.version), browser.PROXY if self._home else "")
-            result = await asyncio.to_thread(trial.survey, source, blocking, recipe, session, as_job, *via)  # type: ignore[arg-type]
+            result = await asyncio.to_thread(trial.survey, source, blocking, recipe, session, as_job, *via, self.send)  # type: ignore[arg-type]
             result["as_job"] = as_job
             # Stopped by the person: what the stop cut short is no failure of the recipe.
             if stop.is_set() and result.get("ended") == "failed":

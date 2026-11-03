@@ -11,6 +11,12 @@
   sources.
 - CI: `appinfo/info.xml` against the app store's schema (without AppAPI's routes), markdownlint,
   and the AI review of a pull request on request.
+- Recipes: a step's `"pause"` (seconds before it) and `"retry"` (`{"times", "delay"}`: tried
+  again when it fails), both ended at once by a stop and edited in the recorder's Steps list
+  (**pause, retry**); a run logs its pauses and tries.
+- **Test the recipe** shows its progress on the recorder's Steps: the step playing, its attempt
+  or pause, and each step passed, skipped or failed; a click on the failed one opens its pause
+  and retry.
 
 ### Changed
 

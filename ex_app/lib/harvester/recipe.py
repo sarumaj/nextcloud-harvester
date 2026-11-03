@@ -35,6 +35,12 @@ the file links and the next page's link may have them too, matching the same lin
 A step with "optional": true is best effort (a banner that shows only on the first visit): the
 job waits for its element a short time only and goes on without it (harvester.sources.site).
 
+A step may have "pause": seconds (above 0, at most PAUSE_MAX) the replay waits before it (a page
+that needs a moment after the step before), and "retry": {"times": 1 to RETRY_TIMES_MAX, "delay":
+seconds from 0 to RETRY_DELAY_MAX (RETRY_DELAY without)}: when the step fails (its element not
+found in time, its wait not met) it is tried again that many more times, after the delay each
+time; then it fails as before (an optional one is skipped). Both waits end at once on a stop.
+
 A fill step's value may hold dates (dated()): {today}, {today-30d:%d.%m.%Y}, {year}, {month:02d},
 filled in at each replay in the job's time zone; other braces are typed as they are.
 
@@ -82,6 +88,7 @@ at, which the job's browser takes too (pages lay out for it); without one, 1280 
 import calendar
 import datetime
 import copy
+import math
 import re
 import string
 from urllib.parse import urlsplit
@@ -130,6 +137,12 @@ DATED_LIKE = re.compile(r"\{(?:today|year|month|day)\b[^{}]*\}")
 # How long a step "mail-code" waits for its message by default, and at most (s).
 MAIL_CODE_WAIT = 180
 MAIL_CODE_WAIT_MAX = 600
+# A step's pause before it (s, at most), and its retries: how many more tries at most, the delay
+# between them by default and at most (s).
+PAUSE_MAX = 60
+RETRY_TIMES_MAX = 10
+RETRY_DELAY = 2
+RETRY_DELAY_MAX = 60
 # What names an element's attribute a value is read from.
 ATTRIBUTE = re.compile(r"[A-Za-z_:][\w:.-]{0,60}$")
 
@@ -531,6 +544,41 @@ def _mail_code_problem(step: dict) -> str:
     return ""
 
 
+def _seconds(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _timing_problem(step: dict) -> str:
+    """What is wrong with a step's pause or retry, or ""."""
+    if "pause" in step and not (_seconds(step["pause"]) and 0 < step["pause"] <= PAUSE_MAX):
+        return f"the pause is a number of seconds above 0, at most {PAUSE_MAX}"
+    if "retry" in step:
+        retry = step["retry"]
+        times = retry.get("times") if isinstance(retry, dict) else None
+        delay = retry.get("delay", RETRY_DELAY) if isinstance(retry, dict) else None
+        if (
+            not isinstance(retry, dict)
+            or set(retry) - {"times", "delay"}
+            or not (isinstance(times, int) and not isinstance(times, bool) and 1 <= times <= RETRY_TIMES_MAX)
+            or not (_seconds(delay) and 0 <= delay <= RETRY_DELAY_MAX)  # type: ignore[operator]
+        ):
+            return f'retry is {{"times": 1 to {RETRY_TIMES_MAX}, "delay": seconds from 0 to {RETRY_DELAY_MAX}}}'
+    return ""
+
+
+def step_pause(step: dict) -> float:
+    """How long the replay waits before the step (s; 0: not at all)."""
+    pause = step.get("pause")
+    return float(pause) if _seconds(pause) and 0 < pause <= PAUSE_MAX else 0.0  # type: ignore[operator]
+
+
+def step_retry(step: dict) -> tuple[int, float]:
+    """How many more times the replay tries a step that failed, and the delay before each (s)."""
+    if "retry" not in step or _timing_problem({"retry": step["retry"]}):
+        return 0, 0.0
+    return int(step["retry"]["times"]), float(step["retry"].get("delay", RETRY_DELAY))
+
+
 def _alternatives_ok(spec: dict) -> bool:
     alternatives = spec.get("alternatives", [])
     return isinstance(alternatives, list) and all(isinstance(value, str) and value for value in alternatives)
@@ -556,6 +604,8 @@ def _check_steps(steps: list) -> list[str]:
         elif not _alternatives_ok(step):
             problems.append(f"step {number}: the alternatives are a list of selectors")
         elif step["action"] == "mail-code" and (problem := _mail_code_problem(step)):
+            problems.append(f"step {number}: {problem}")
+        elif problem := _timing_problem(step):
             problems.append(f"step {number}: {problem}")
         else:
             problems += _check_fields(number, step)
@@ -715,7 +765,7 @@ def edit_step(step: dict, message: dict) -> None:
     """The step as the recorder's Steps list changes it (a message of the page): optional or not;
     a fill's account's username, password or one-time code, or a value of its own ("" credential);
     a value of its own (a fill's or a list's choice); no wait for the address it led to (wait:
-    null)."""
+    null); a pause before it and its retries (_edit_timing)."""
     if "optional" in message:
         if message["optional"] is True:
             step["optional"] = True
@@ -735,3 +785,19 @@ def edit_step(step: dict, message: dict) -> None:
             step.pop("label", None)
     if "wait" in message and message["wait"] is None:
         step.pop("wait", None)
+    _edit_timing(step, message)
+
+
+def _edit_timing(step: dict, message: dict) -> None:
+    """The step's pause and retry as the message sets them (null: none); a value out of bounds
+    changes nothing."""
+    if "pause" in message:
+        if message["pause"] is None:
+            step.pop("pause", None)
+        elif not _timing_problem({"pause": message["pause"]}):
+            step["pause"] = message["pause"]
+    if "retry" in message:
+        if message["retry"] is None:
+            step.pop("retry", None)
+        elif not _timing_problem({"retry": message["retry"]}):
+            step["retry"] = dict(message["retry"])

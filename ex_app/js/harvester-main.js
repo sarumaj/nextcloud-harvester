@@ -1523,6 +1523,15 @@
 		let warnings = []
 		let testing = false
 		let tested = null
+		// What the test did with each step (by index): its last event from the app ({state, attempt,
+		// of, seconds, why}, site.step_event), a pause's end (ends); the step whose editor is open.
+		let played = {}
+		let editing = null
+		let focusEditor = false
+		// The steps as the test played them: an edit that moves, adds or removes steps forgets the
+		// marks (they would fall on other steps).
+		let playedShape = ''
+		const shape = () => JSON.stringify((recipe.steps || []).map((step) => [step.action, step.selector || step.url || '']))
 		// The page's answers in JSON (the Network panel).
 		let requests = []
 		const suggestions = {}
@@ -1674,6 +1683,7 @@
 		// goes to it, and its recipe comes back (the switch shows at once).
 		function renderStep(step, index, count) {
 			const edit = (change) => send({ type: 'step-edit', step: index, ...change })
+			const mark = played[index]
 			const toggle = (optional) => {
 				if (optional) step.optional = true
 				else delete step.optional
@@ -1711,7 +1721,14 @@
 				details.push(el('small', { class: 'harvester-muted', text: `then waits for ${what} ` }),
 					el('button', { type: 'button', class: 'harvester-link', text: 'wait for the network instead', onclick: () => edit({ wait: null }) }))
 			}
-			return el('li', { class: step.frame && step.frame.length ? 'harvester-framed' : '' },
+			details.push(timing(step, index, edit))
+			const classes = [step.frame && step.frame.length ? 'harvester-framed' : '', mark ? `harvester-step-${mark.state}` : '']
+			// The step the test plays now, or the one it failed at (until the next test or edit):
+			// clicking that one opens its editor.
+			const current = mark && (['playing', 'pausing', 'retrying'].includes(mark.state) || (mark.state === 'failed' && !testing))
+			if (current) classes.push('harvester-step-current')
+			const item = el('li', { class: classes.filter(Boolean).join(' '), 'data-step': String(index) },
+				mark ? stepMark(mark) : '',
 				el('span', { text: `${describe(step)} ` }),
 				mailCode(step, index),
 				el('label', { title: 'Best effort: when it fails (not there, not visible), the job waits a few seconds at most and goes on without it' }, box, ' optional'),
@@ -1720,7 +1737,101 @@
 					: '',
 				tools,
 				details.length ? el('div', { class: 'harvester-step-details' }, ...details) : '')
+			if (mark && mark.state === 'failed' && !testing) {
+				item.title = 'The test failed here: click to change its pause or retries'
+				item.addEventListener('click', (event) => {
+					if (event.target.closest('button, input, select, summary, label, details')) return
+					editing = index
+					focusEditor = true
+					renderPanel()
+				})
+			}
+			return item
 		}
+
+		// What the test did with a step: playing (its attempt, when it has more), pausing (a
+		// countdown), trying again, passed, skipped (optional), failed, not played (the session).
+		function stepMark(mark) {
+			const attempt = mark.of > 1 ? ` (attempt ${mark.attempt} of ${mark.of})` : ''
+			const left = mark.ends ? Math.max(0, Math.ceil((mark.ends - Date.now()) / 1000)) : 0
+			const text = {
+				playing: `▶ playing${attempt}`,
+				pausing: `⏸ pausing ${left} s`,
+				retrying: `↻ attempt ${mark.attempt} of ${mark.of} in ${left} s`,
+				passed: '✓ passed',
+				skipped: '– skipped (optional)',
+				failed: '✗ failed',
+				session: '↷ not played (signed in)',
+				stopped: '■ stopped',
+			}[mark.state] || ''
+			return el('span', { class: 'harvester-step-mark', title: mark.why || '', text: `${text} ` })
+		}
+
+		// A step's pause before it and its retries: the editor of its timing (closed unless set,
+		// or opened from the failed step of a test).
+		function timing(step, index, edit) {
+			const retry = step.retry || null
+			const number = (value, label, max, stepping) => el('input', {
+				type: 'number', min: '0', max: String(max), step: stepping, value, class: 'harvester-step-number', 'aria-label': `${label} of step ${index + 1}`,
+			})
+			const pause = number(step.pause ? String(step.pause) : '', 'The pause before (seconds)', 60, '0.5')
+			pause.placeholder = 'none'
+			pause.addEventListener('change', () => {
+				const seconds = Number(pause.value)
+				if (!pause.value || seconds === 0) {
+					delete step.pause
+					edit({ pause: null })
+				} else if (seconds > 0 && seconds <= 60) {
+					step.pause = seconds
+					edit({ pause: seconds })
+				} else pause.value = step.pause ? String(step.pause) : ''
+			})
+			const times = number(retry ? String(retry.times) : '0', 'Tries again', 10, '1')
+			const delay = number(String(retry && retry.delay !== undefined ? retry.delay : 2), 'The delay between tries (seconds)', 60, '0.5')
+			const setRetry = () => {
+				const count = Number(times.value || 0)
+				const seconds = Number(delay.value === '' ? 2 : delay.value)
+				if (count === 0) {
+					delete step.retry
+					edit({ retry: null })
+				} else if (Number.isInteger(count) && count >= 1 && count <= 10 && seconds >= 0 && seconds <= 60) {
+					step.retry = { times: count, delay: seconds }
+					edit({ retry: step.retry })
+				} else {
+					times.value = retry ? String(retry.times) : '0'
+					delay.value = String(retry && retry.delay !== undefined ? retry.delay : 2)
+				}
+			}
+			times.addEventListener('change', setRetry)
+			delay.addEventListener('change', setRetry)
+			const set = [step.pause ? `pause ${step.pause} s` : '', retry ? `retry ${retry.times}×` : ''].filter(Boolean).join(', ')
+			const box = el('details', { class: 'harvester-step-timing' },
+				el('summary', { text: set || 'pause, retry', title: 'Wait before this step, or try it again when it fails' }),
+				el('label', {}, 'Pause before it ', pause, ' s'),
+				el('label', { title: 'When the step fails (its element not there in time, its wait not met), try it again this many times' }, ' Try again ', times, ' times'),
+				el('label', {}, ', every ', delay, ' s'))
+			box.open = editing === index
+			if (editing === index && focusEditor) {
+				focusEditor = false
+				setTimeout(() => { box.scrollIntoView({ block: 'nearest' }); pause.focus() })
+			}
+			return box
+		}
+
+		// A test's step event: the step's mark (a pause's and a retry's end counted down here).
+		function stepEvent(data) {
+			if (!testing) return
+			played[data.number - 1] = { ...data, ends: data.seconds !== undefined && ['pausing', 'retrying'].includes(data.state) ? Date.now() + data.seconds * 1000 : 0 }
+			renderPanel()
+		}
+		const countdown = setInterval(() => {
+			if (!document.body.contains(panel)) clearInterval(countdown)
+			for (const node of panel.querySelectorAll('li.harvester-step-pausing, li.harvester-step-retrying')) {
+				const mark = played[Number(node.dataset.step)]
+				const shown = node.querySelector('.harvester-step-mark')
+				if (mark && shown) shown.replaceWith(stepMark(mark))
+			}
+		}, 500)
 
 		// A code typed into a field (a one-time code's, or digits) may come by e-mail instead: the
 		// job then waits for the message in the account's mailbox for codes and types its code.
@@ -1798,8 +1909,19 @@
 			else if (data.type === 'error') { message.textContent = data.message; screen.say(data.message) }
 			else if (data.type === 'viewport') screen.resized(data)
 			else if (data.type === 'network') network.show(data)
-			else if (data.type === 'test-started') { testing = true; tested = null; renderPanel() }
-			else if (data.type === 'test') { testing = false; tested = data.result; renderPanel() }
+			else if (data.type === 'test-started') { testing = true; tested = null; played = {}; editing = null; playedShape = shape(); renderPanel() }
+			else if (data.type === 'test-step') stepEvent(data)
+			else if (data.type === 'test') {
+				testing = false
+				tested = data.result
+				// A step still under way when the test ended was cut short by the stop, or by the end.
+				for (const [index, mark] of Object.entries(played)) {
+					if (!['playing', 'pausing', 'retrying'].includes(mark.state)) continue
+					if (data.result.ended === 'stopped') mark.state = 'stopped'
+					else delete played[index]
+				}
+				renderPanel()
+			}
 			else if (data.type === 'where') showWhere(data.frame)
 			else if (data.type === 'warning') leaks.append(el('p', { text: data.message }))
 			else if (data.type === 'requests') { requests = data.items; if (!networkBox.hidden) renderRequests() }
@@ -1807,6 +1929,7 @@
 				// The steps and picks are the recorder's (it started with the form's).
 				recipe = { ...recipe, ...data.recipe }
 				if (!data.recipe.next) delete recipe.next
+				if (shape() !== playedShape) { played = {}; editing = null }
 				proposals = data.proposals
 				warnings = data.warnings || []
 				message.textContent = ''
@@ -2216,6 +2339,15 @@
 		#harvester .harvester-steps .harvester-step-tools button { min-height: 0; padding: 0 4px; }
 		#harvester .harvester-steps .harvester-step-details { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; margin: 2px 0 6px; }
 		#harvester .harvester-steps .harvester-step-details select, #harvester .harvester-steps .harvester-step-value { min-height: 0; margin: 0; }
+		#harvester .harvester-steps .harvester-step-number { width: 5em; min-height: 0; margin: 0 2px; }
+		#harvester .harvester-steps .harvester-step-timing summary { cursor: pointer; color: var(--color-text-maxcontrast); }
+		#harvester .harvester-steps .harvester-step-timing label { white-space: nowrap; }
+		#harvester .harvester-steps li.harvester-step-current { outline: 2px solid var(--color-primary-element); outline-offset: 2px; border-radius: var(--border-radius); background: var(--color-primary-element-light, var(--color-background-hover)); }
+		#harvester .harvester-steps li.harvester-step-failed.harvester-step-current { outline-color: var(--color-error); cursor: pointer; }
+		#harvester .harvester-steps .harvester-step-mark { font-weight: bold; white-space: nowrap; }
+		#harvester .harvester-steps .harvester-step-passed .harvester-step-mark { color: var(--color-success-text, var(--color-success)); }
+		#harvester .harvester-steps .harvester-step-failed .harvester-step-mark { color: var(--color-error-text, var(--color-error)); }
+		#harvester .harvester-steps .harvester-step-skipped .harvester-step-mark, #harvester .harvester-steps .harvester-step-session .harvester-step-mark { color: var(--color-text-maxcontrast); }
 		#harvester .harvester-placing:not(:empty) { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 4px 0; }
 		#harvester .harvester-warning p { margin: 4px 0; padding: 4px 8px; border-inline-start: 3px solid var(--color-warning); color: var(--color-warning-text, var(--color-main-text)); }
 		#harvester .harvester-where { display: block; color: var(--color-text-maxcontrast); }

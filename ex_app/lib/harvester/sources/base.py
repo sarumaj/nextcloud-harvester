@@ -51,6 +51,16 @@ def check_stop() -> None:
         raise Stopped("stopped")
 
 
+def nap(seconds: float) -> None:
+    """A wait of this thread's job (a step's pause, its retry's delay), ended at once by its stop
+    (then Stopped)."""
+    event = getattr(_RUN, "stopped", None)
+    if event is None:
+        event = threading.Event()
+    if event.wait(max(0.0, seconds)):
+        raise Stopped("stopped")
+
+
 @contextlib.contextmanager
 def killed_on_stop(process: subprocess.Popen) -> Iterator[None]:
     """Kills the helper program as soon as the job is stopped (its pipe may stall, so the
