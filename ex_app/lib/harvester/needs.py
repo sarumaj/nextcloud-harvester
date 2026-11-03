@@ -1,16 +1,25 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Steps of a recipe that need the job's person while its run waits: a code from the phone (an
 SMS, an authenticator Harvester was not given, a code read out by a call), typed on Harvester's
-page into the step's field (the step "ask-code").
+page into the step's field (the step "ask-code"); an approval in an app (a bank's), which the
+page shows it got (the step "approve"); and what the person does in the page itself (a passkey,
+a sign-in only a person gets through: the step "handover").
 
     {"action": "ask-code", "selector": "#sms", "label": "the bank's SMS", "wait": 600}
+    {"action": "approve", "until": {"selector": "#accounts"}, "label": "Confirm in the bank's app"}
+    {"action": "handover", "label": "Sign in with your passkey", "until": {"url": "/dashboard"}}
 
-A run that comes to such a step asks its person on the desk (Desk): the job shows Needs you on
-the page, the person is told (a notification), and the run waits up to the step's wait (WAIT by
-default, from WAIT_MIN to WAIT_MAX seconds) for the code, the page polled meanwhile; a stop ends
+A run that comes to a code or an approval asks its person on the desk (Desk): the job shows
+Needs you on the page, the person is told (a notification), and the run waits up to the step's
+wait (WAIT by default, from WAIT_MIN to WAIT_MAX seconds) for the code, or until the page shows
+"until" (an address's pattern, an element shown, or both), the page polled meanwhile; a stop ends
 the wait at once. The code goes from the page's request (POST /api/jobs/<id>/code, the job's
 person only, while it waits) through the desk into the field, and nowhere else: it is never
-logged, stored or kept after the step took it. The step's play is harvester.sources.attend.
+logged, stored or kept after the step took it. A handover ends the run as a page asking for a
+person does (Continue in the browser: the person does it in the job's browser with the session
+the run left, and Done runs the job again, its kept session past the sign-in). An approval or a
+handover whose "until" the page shows already asks nothing. The three belong to the sign-in,
+which a kept session skips (recipe.sign_in_steps). The steps' play is harvester.sources.attend.
 
 The desk is the executor's (one per app); the run's thread knows it (serve), as it knows its stop
 (sources.base.watch_stop). Without one (a weekly recipe test, nobody to ask) such a step asks for
@@ -18,6 +27,7 @@ a person as a challenge does. The recorder's recipe test serves one of its own, 
 """
 
 import dataclasses
+import re
 import threading
 import time
 from collections.abc import Callable
@@ -25,8 +35,10 @@ from typing import Any
 
 from .l10n import said
 
-# The steps that ask the person, and what each asks for.
-ACTIONS = {"ask-code": "code"}
+# The steps of a person, and what each asks for.
+ACTIONS = {"ask-code": "code", "approve": "approve", "handover": "handover"}
+# Those of them without an element of their own.
+WITHOUT_ELEMENT = ("approve", "handover")
 # How long a run waits for its person by default, and the bounds of a step's own wait (s).
 WAIT = 600
 WAIT_MIN = 30
@@ -40,7 +52,8 @@ POLL = 1.0
 
 @dataclasses.dataclass
 class Asked:
-    """What a run asks its person now: a code (kind "code") about label, until a time (epoch s)."""
+    """What a run asks its person now: a code (kind "code") or an approval ("approve") about
+    label, until a time (epoch s)."""
 
     kind: str
     label: str
@@ -119,19 +132,28 @@ def teller(name: str, log: Callable[[str, str], Any], notify: Callable[..., None
     def tell(asked: Asked) -> None:
         minutes = max(1, round(asked.seconds / 60))
         values = {"job": name, "label": asked.label, "minutes": str(minutes)}
-        log("info", said("Waiting up to {minutes} min for you: enter the code from {label}", minutes=minutes,
-                         label=asked.label))  # fmt: skip
-        notify(nc, "Harvester: {job} needs you", values, "Enter the code from {label} on Harvester's page within "
-               "{minutes} minutes: the job waits for it.")  # fmt: skip
+        if asked.kind == "code":
+            log("info", said("Waiting up to {minutes} min for you: enter the code from {label}", minutes=minutes,
+                             label=asked.label))  # fmt: skip
+            notify(nc, "Harvester: {job} needs you", values, "Enter the code from {label} on Harvester's page "
+                   "within {minutes} minutes: the job waits for it.")  # fmt: skip
+        else:
+            log("info", said("Waiting up to {minutes} min for your approval: {label}", minutes=minutes,
+                             label=asked.label))  # fmt: skip
+            notify(nc, "Harvester: {job} needs you", values, "{label}: approve it within {minutes} minutes, "
+                   "the job goes on once the site shows it went through.")  # fmt: skip
 
     return tell
 
 
 def step_label(step: dict) -> str:
     """A step of a person in a few words, for a log line ("" for another step)."""
-    if step.get("action") == "ask-code":
-        return f"type the code from {step.get('label') or 'the phone'} ({step.get('selector', '')})"
-    return ""
+    action, text = step.get("action"), step.get("label") or ""
+    if action == "ask-code":
+        return f"type the code from {text or 'the phone'} ({step.get('selector', '')})"
+    return {"approve": f"wait for your approval ({text})", "handover": f"hand over to you ({text})"}.get(
+        str(action), ""
+    )
 
 
 def step_wait(step: dict) -> int:
@@ -148,4 +170,33 @@ def step_problem(step: dict) -> str:
     wait = step.get("wait", WAIT)
     if not isinstance(wait, int) or isinstance(wait, bool) or not WAIT_MIN <= wait <= WAIT_MAX:
         return f"the wait for you from {WAIT_MIN} to {WAIT_MAX} seconds"
+    if step["action"] in WITHOUT_ELEMENT and step.get("optional"):
+        return f"a step {step['action']} is never optional: its until says when it is not needed"
+    if step["action"] == "approve" or "until" in step:
+        return until_problem(step.get("until"))
     return ""
+
+
+def until_problem(until: object) -> str:
+    """What is wrong with an approval's or a handover's "until", or ""."""
+    if (
+        not isinstance(until, dict)
+        or set(until) - {"url", "selector"}
+        or not all(isinstance(until.get(key, ""), str) for key in ("url", "selector"))
+        or not (until.get("url") or until.get("selector"))
+    ):
+        return 'until is {"url": <a pattern of the address>, "selector": <an element>}: what the page shows after you'
+    try:
+        re.compile(until.get("url", ""))
+    except re.error as error:
+        return f"until's address pattern is not a regular expression ({error})"
+    return ""
+
+
+def recipe_problems(recipe: dict) -> list[str]:
+    """What is wrong with a recipe's steps of a person as a whole: a handover needs the listing's
+    address (start), where the run after it starts with the person's session."""
+    steps = [step for step in recipe.get("steps") or [] if isinstance(step, dict)]
+    if any(step.get("action") == "handover" for step in steps) and not recipe.get("start"):
+        return ["a handover needs the listing's address (start): the run after it starts there with your session"]
+    return []

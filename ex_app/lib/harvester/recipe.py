@@ -98,7 +98,9 @@ images, blob: addresses) (harvester.sources.keep). A recipe's own "save" (beside
 file links) saves the start page itself, where the steps end (a page sent to an on-demand job).
 
 A step {"action": "ask-code", "selector": <the code's field>, "label": "SMS code", "wait": <seconds>}
-waits for a code the job's person reads on their phone and types on Harvester's page
+waits for a code the job's person reads on their phone and types on Harvester's page; {"action":
+"approve", "until": {"url": ..., "selector": ...}, "label": ...} for their approval in an app, until
+the page shows it went through; {"action": "handover", "label": ...} hands the page over to them
 (harvester.needs).
 
 A step {"action": "each", "selector": "select#account", "values": "options"} goes through choices
@@ -378,15 +380,15 @@ def sign_in_steps(steps: list[dict]) -> int:
     """How many of the steps sign in: those up to the last fill of a credential (or of a code
     the person types, ask-code) and the first click or key after it (which sends the form), and
     the return from a sign-in's popup; 0 without a credential (no sign-in, only the way to the
-    listing). The steps after them lead to the listing and are always replayed."""
+    listing). An approval or a handover ends it too (at least), itself included. The steps after
+    them lead to the listing and are always replayed."""
     signing = [step.get("credential") or step.get("action") == "ask-code" for step in steps]
     last = max((index for index, sign in enumerate(signing) if sign), default=-1)
-    if last < 0:
+    sent = (index + 1 for index in range(last + 1, len(steps)) if steps[index].get("action") in ("click", "press"))
+    end = next(sent, last + 1) if last >= 0 else 0
+    end = max([end, *(index + 1 for index, step in enumerate(steps) if step.get("action") in needs.WITHOUT_ELEMENT)])
+    if not end:
         return 0
-    end = next(
-        (index + 1 for index in range(last + 1, len(steps)) if steps[index].get("action") in ("click", "press")),
-        last + 1,
-    )
     # A sign-in in a popup ends back in the page that opened it.
     while end < len(steps) and steps[end].get("action") == "opener":
         end += 1
@@ -679,7 +681,9 @@ def _check_steps(steps: list) -> list[str]:
             problems.append(f"step {number}: the browser may not open {step.get('url')}")
         elif step["action"] == "scroll" and not _rounds_ok(step.get("rounds", SCROLL_ROUNDS)):
             problems.append(f"step {number}: rounds of scrolling from 1 to {SCROLL_ROUNDS_MAX}")
-        elif step["action"] not in ("goto", "scroll", "each", *SWITCHES) and not step.get("selector"):
+        elif step["action"] not in ("goto", "scroll", "each", *SWITCHES, *needs.WITHOUT_ELEMENT) and not step.get(
+            "selector"
+        ):
             problems.append(f"step {number}: no element")
         elif step["action"] not in ("mail-code", *needs.ACTIONS) and "wait" in step and not _wait_ok(step["wait"]):
             problems.append(f"step {number}: wait is an address's pattern (url) and an element (selector)")
@@ -770,6 +774,7 @@ def check_recipe(recipe: dict) -> list[str]:
         return ["the steps are not a list"]
     problems = _check_steps(steps)
     problems += choices.check(steps, sign_in_steps(steps)) if not problems else []
+    problems += needs.recipe_problems(recipe)
     start = recipe.get("start", "")
     if not isinstance(start, str):
         return problems + ["the listing (start) is an address"]

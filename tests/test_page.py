@@ -824,3 +824,16 @@ def test_the_recorder_offers_a_code_from_the_phone_and_its_test_asks_for_it(page
     page.locator(".harvester-steps .harvester-asking").get_by_role("button", name="Send").click()
     assert sent(page)[-1] == {"type": "test-code", "code": "135790"}
     assert page.locator(".harvester-steps .harvester-asking").count() == 0
+
+
+@needs_chromium
+@pytest.mark.parametrize(
+    "page",
+    [[ASKING | {"asking": {"kind": "approve", "label": "Confirm in the bank's app", "until": 4102444800}}]],
+    indirect=True,
+)
+def test_a_job_that_waits_for_an_approval_says_so(page):
+    row = page.locator("tbody tr").first
+    assert row.locator(".harvester-status").inner_text() == "Needs you"
+    assert "Confirm in the bank's app: approve it on your phone or in the app." in row.inner_text()
+    assert row.get_by_role("textbox").count() == 0, "nothing to type"

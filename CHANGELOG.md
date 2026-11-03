@@ -4,6 +4,16 @@
 
 ### Added
 
+- Approvals in an app: the step `{"action": "approve", "until": {"url", "selector"}, "label",
+  "wait"}` shows **Needs you** with its label and notifies the job's person, then waits until the
+  page shows `until` (an address's pattern, an element, or both) that the approval went through,
+  or fails after its wait; Stop ends it, and a page that shows `until` already asks nothing.
+- Handing over to the person: the step `{"action": "handover", "label"}` stops the run as a page
+  asking for a person does, keeping the browser's session as it was there: **Continue in the
+  browser** opens the page, the person does what only they can (a passkey), and **Done** runs the
+  job, whose kept session skips the sign-in. Its optional `until` skips it when the page shows
+  it already; a recipe with a handover needs its `start`. Approvals and handovers end the sign-in
+  a kept session skips.
 - Codes from the phone: the step `{"action": "ask-code", "selector", "label", "wait"}` pauses
   the run at a code Harvester cannot read itself (an SMS, a call, an authenticator it has no
   secret of): the job shows **Needs you** with a field **Enter the code from …** on the jobs page

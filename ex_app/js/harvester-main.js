@@ -230,6 +230,8 @@
 			return of ? t('Type the code from e-mail ({of}) into {selector}', { of, selector }) : t('Type the code from e-mail into {selector}', { selector })
 		}
 		if (step.action === 'ask-code') return t('Ask you for the code from {label} and type it into {selector}', { label: step.label, selector })
+		if (step.action === 'approve') return t('Wait for your approval: {label}', { label: step.label })
+		if (step.action === 'handover') return t('Hand the page over to you: {label}', { label: step.label })
 		if (step.credential === 'totp') return t('Fill in the current one-time code ({selector})', { selector })
 		if (step.credential) return t('Fill in the account’s {credential} ({selector})', { credential: credentialName(step.credential), selector })
 		return t('Fill in “{value}” ({selector})', { value: step.value, selector })
@@ -351,10 +353,13 @@
 	}
 
 	// What a running job asks its person (harvester.needs): the code from their phone, typed here
-	// and sent to the run (never kept), before the time shown.
+	// and sent to the run (never kept), or their approval in an app, before the time shown.
 	function askingBox(root, job) {
 		const asking = job.asking
 		const until = new Date(asking.until * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+		if (asking.kind !== 'code') {
+			return el('p', { class: 'harvester-asking', text: `${t('{label}: approve it on your phone or in the app. The job goes on once the site shows it went through.', { label: asking.label })} ${t('The job waits for it until {time}.', { time: until })}` })
+		}
 		const input = el('input', { class: 'harvester-code', autocomplete: 'one-time-code', spellcheck: 'false', maxlength: '64', 'aria-label': t('Enter the code from {label}', { label: asking.label }) })
 		const note = el('small', { class: 'harvester-muted', text: t('The job waits for it until {time}.', { time: until }) })
 		const form = el('form', {
@@ -2108,6 +2113,7 @@
 		let asking = null
 		function askingLine() {
 			if (!testing || !asking) return ''
+			if (asking.kind !== 'code') return el('p', { class: 'harvester-asking', text: t('{label}: approve it on your phone or in the app. The job goes on once the site shows it went through.', { label: asking.label }) })
 			const input = el('input', { class: 'harvester-code', autocomplete: 'one-time-code', spellcheck: 'false', maxlength: '64', 'aria-label': t('Enter the code from {label}', { label: asking.label }) })
 			return el('form', {
 				class: 'harvester-asking',

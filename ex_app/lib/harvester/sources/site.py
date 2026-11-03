@@ -173,8 +173,12 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes,too
             self.context.set_default_timeout(STEP_TIMEOUT)
             self.main = self.context.new_page()
             self.sign_in(steps, secrets, session, start)
-        except BaseException:
-            # Whatever failed, the browser closes and its lock is free for the next job.
+        except BaseException as error:
+            # Whatever failed, the browser closes and its lock is free for the next job; a page
+            # handed over to the person keeps its session, for them to go on in.
+            if isinstance(error, attend.HandedOver):
+                with contextlib.suppress(PlaywrightError):
+                    error.session = self.context.storage_state()  # type: ignore[assignment]
             self.close()
             raise
 
@@ -710,6 +714,8 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
             raise SourceError("; ".join(problems))
         self.driver: Driver | None = None
         self.kept: dict | None = None
+        # The session a step handed over to the person in (attend.HandedOver), kept for them.
+        self.handed: dict | None = None
         self.sleep: Callable[[float], None] = time.sleep
         # Told of each listing page the walk reads (survey(): the recipe's test; a job's run:
         # what each level found, watch.Watch). It may answer what went wrong there: the walk then
@@ -748,7 +754,7 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
         self.kept = session
 
     def session(self) -> dict | None:
-        return self.driver.session() if self.driver else None
+        return self.driver.session() if self.driver else self.handed
 
     def _driver(self) -> Driver:
         if self.driver is None:
@@ -773,21 +779,25 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
         found = self.account_cookies(start)
         if recipes.uses_browser(self.recipe) or int(self.settings["browser"]):
             links = self.recipe.get("links") or {}
-            driver = BrowserDriver(
-                self.recipe.get("steps") or [],
-                self.secrets,
-                self.kept,
-                start,
-                cookie_jar.to_playwright(found),
-                http1=bool(int(self.settings["http1"])),
-                home=self.home,
-                saw=self._saw,
-                viewport=self.recipe.get("viewport"),
-                timezone=self.timezone,
-                downloads=bool(links.get("click")),
-                stealth=bool(int(self.settings["stealth"])),
-                told=self._step_told,
-            )
+            try:
+                driver = BrowserDriver(
+                    self.recipe.get("steps") or [],
+                    self.secrets,
+                    self.kept,
+                    start,
+                    cookie_jar.to_playwright(found),
+                    http1=bool(int(self.settings["http1"])),
+                    home=self.home,
+                    saw=self._saw,
+                    viewport=self.recipe.get("viewport"),
+                    timezone=self.timezone,
+                    downloads=bool(links.get("click")),
+                    stealth=bool(int(self.settings["stealth"])),
+                    told=self._step_told,
+                )
+            except attend.HandedOver as error:
+                self.handed = error.session
+                raise
             # Its own downloads (the guarded client's) as the job asks; the browser is a browser.
             driver.impersonate = download.impersonates(self.settings)
             return driver

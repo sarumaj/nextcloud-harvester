@@ -443,6 +443,22 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   one-time code's fill it belongs to the sign-in, which a kept session skips. An optional one
   asks only when its field shows within 5 seconds (a site that trusts the browser since the last
   time). A weekly recipe test has nobody to ask: it ends there as on a page asking for a person.
+- **Approvals in an app:** a step `{"action": "approve", "until": {"selector": "#accounts"},
+  "label": "Confirm in the bank's app"}` waits for you to approve the sign-in on your phone (a
+  bank's app, a push of a sign-in service): the job shows **Needs you** with the label, you get a
+  notification, and the run goes on once the page shows `until`: an element (`selector`), an
+  address matching a pattern (`url`), or both. Its wait, Stop and the end of its time are a
+  code's; a page that shows `until` already (the site trusts the browser) asks nothing.
+- **Handing over to you:** a step `{"action": "handover", "label": "Sign in with your passkey"}`
+  is for what only you can do in the page itself (a passkey, a check no code or app answers):
+  the run stops there as on a page asking for a person, with **Needs you**, a notification and
+  the browser's session as it was, and **Continue in the browser** opens that page in the job's
+  browser; you do it, **Done** keeps the session and runs the job, whose kept session skips the
+  sign-in and the handover. Its optional `until` (as an approval's) skips it when the page shows
+  it already. A recipe with a handover needs its listing's address (`start`). Approvals and
+  handovers end the sign-in, which a kept session skips; they are never optional, and act on the
+  page, not in a frame. A passkey of a security key or the phone's own (Bluetooth) cannot reach
+  the server's browser: a site that offers a code or an app instead works better.
 
 ## The recorder
 
@@ -602,9 +618,9 @@ recorder that makes them, and what a run does. Installing and the admin's settin
 - **Sessions and challenges:** a job keeps its browser session (cookies, local storage; encrypted in
   Nextcloud, like its account) and replays the sign-in only when the listing shows a sign-in (a
   password or user name field, or a sign-in's address). The sign-in is the steps up to the last fill
-  of a credential or a code from the phone and the click or key that sends it; the steps after it
-  (a tab, *Show all*, a
-  filter, scrolling) lead to the listing and run every time. When the kept session does not reach
+  of a credential or a code from the phone and the click or key that sends it, or up to an approval
+  or a handover; the steps after it (a tab, *Show all*, a filter, scrolling) lead to the listing
+  and run every time. When the kept session does not reach
   the listing (a step after the sign-in fails, or the start page has none of the recipe's links: a
   username-first or single sign-on page taken for the listing), the run signs in once anew from no
   session, in a browser of its own, and keeps the new session; if that fails too, the old one is
@@ -613,7 +629,8 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   instead of a file after files came (the session ended in the middle of the run) signs in anew
   once, and the file is asked for again. When a site asks for a person instead (reCAPTCHA, hCaptcha,
   Cloudflare, "verify you are human") the run stops, the job shows **Needs you** and its user gets a
-  notification; scheduled runs wait. **Continue in the browser** opens the recorder's browser with
+  notification; scheduled runs wait (a recipe's step `handover` stops so too). **Continue in the
+  browser** opens the recorder's browser with
   the job's session at that page: the person answers it, **Done** keeps the session and runs the
   job. Harvester never answers a challenge itself. When a step fails or a page asks for a person,
   the job keeps what its browser showed (a JPEG of the window, at most 400 KB, with the page's

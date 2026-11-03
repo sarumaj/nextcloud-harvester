@@ -281,3 +281,132 @@ def test_the_recorders_test_asks_on_its_page():
     asked = recorder._desk.open(0, "code", "the bank's SMS", 600)
     asyncio.run(recorder._trial_message("test-code", {"code": " 135790 "}))
     assert asked.take() == "135790"
+
+
+APPROVE = {"action": "approve", "until": {"selector": "#accounts"}, "label": "Confirm in the bank's app"}
+HANDOVER = {"action": "handover", "label": "Sign in with your passkey"}
+ACCOUNTS = "https://bank.example/accounts"
+# The bank's pages: an approval that shows the accounts after a while, or goes to them; the
+# accounts with a statement; a sign-in that sets a cookie before it wants a passkey.
+BANK = {
+    "/approve": "<p>Confirm in your app</p><script>setTimeout(() => { const div = document.createElement('div');"
+    " div.id = 'accounts'; div.textContent = 'Accounts'; document.body.append(div) }, 600)</script>",
+    "/push": "<p>Confirm in your app</p><script>setTimeout(() => { location.href = '/accounts' }, 600)</script>",
+    "/approved": '<div id="accounts">Accounts</div>',
+    "/accounts": '<div id="accounts"><a class="file" href="/files/1.pdf">Statement 1</a></div>',
+    "/login": "<p>Use your passkey</p><script>document.cookie = 'half=1; path=/'</script>",
+}
+
+
+def bank(monkeypatch) -> None:
+    def fulfill(route) -> None:
+        path = "/" + route.request.url.split("://", 1)[1].split("/", 1)[1]
+        body = f"<html><body>{BANK.get(path, 'nothing here')}</body></html>"
+        route.fulfill(status=200 if path in BANK else 404, headers={"content-type": "text/html"}, body=body)
+
+    monkeypatch.setattr(site_module, "guard", fulfill)
+    monkeypatch.setattr(needs, "POLL", 0.1)
+
+
+def test_approvals_and_handovers_are_checked_and_labelled():
+    ok = {"steps": [GOTO, APPROVE, HANDOVER | {"until": {"url": "/accounts$"}}], "start": ACCOUNTS, "links": LINKS}
+    assert not check_recipe(ok)
+    assert check_recipe({"steps": [GOTO, HANDOVER], "links": LINKS}) == [
+        "a handover needs the listing's address (start): the run after it starts there with your session"
+    ]
+    assert check_recipe({**ok, "steps": [GOTO, {"action": "approve", "label": "x"}]}) == [
+        'step 2: until is {"url": <a pattern of the address>, "selector": <an element>}: what the page shows after you'
+    ]
+    assert check_recipe({**ok, "steps": [GOTO, APPROVE | {"until": {"url": "("}}]})[0].startswith(
+        "step 2: until's address pattern is not a regular expression"
+    )
+    assert check_recipe({**ok, "steps": [GOTO, APPROVE | {"until": {"selector": "a", "text": "x"}}]})[0].startswith(
+        "step 2: until is"
+    )
+    assert check_recipe({**ok, "steps": [GOTO, HANDOVER | {"optional": True}]}) == [
+        "step 2: a step handover is never optional: its until says when it is not needed"
+    ]
+    assert check_recipe({**ok, "steps": [GOTO, APPROVE | {"frame": [{"selector": "iframe"}]}]}) == [
+        "step 2: the frame is a list of frames, each with its selector, address or name"
+    ]
+    assert step_label(APPROVE) == "wait for your approval (Confirm in the bank's app)"
+    assert step_label(HANDOVER) == "hand over to you (Sign in with your passkey)"
+    password = {"action": "fill", "selector": "#pw", "credential": "password"}
+    steps = [GOTO, password, {"action": "click", "selector": "#go"}, APPROVE, {"action": "click", "selector": "a.tab"}]
+    assert sign_in_steps(steps) == 4, "the approval ends the sign-in: the tab after it leads to the listing"
+    assert sign_in_steps([GOTO, HANDOVER, {"action": "click", "selector": "a"}]) == 2
+
+
+def drive(steps: list[dict], act=lambda asked: None) -> list[needs.Asked]:
+    """The steps in a job's browser, its person asked on a desk of its own; what they were told."""
+    told = asking(needs.Desk(), act)
+    try:
+        site_module.BrowserDriver(steps, {}).close()
+    finally:
+        needs.serve(None)
+    assert site_module.browser.free_browsers() == FREE
+    return told
+
+
+@needs_chromium
+def test_an_approval_waits_until_the_page_shows_it_went_through(monkeypatch):
+    bank(monkeypatch)
+    told = drive([GOTO | {"url": "https://bank.example/approve"}, APPROVE])
+    assert [(asked.kind, asked.label) for asked in told] == [("approve", "Confirm in the bank's app")]
+    told = drive([GOTO | {"url": "https://bank.example/push"}, APPROVE | {"until": {"url": "/accounts$"}}])
+    assert len(told) == 1, "until the address shows it"
+    assert not drive([GOTO | {"url": "https://bank.example/approved"}, APPROVE]), "shown already: nothing asked"
+
+
+@needs_chromium
+def test_an_approval_that_does_not_come_ends_the_run(monkeypatch):
+    bank(monkeypatch)
+
+    def late(asked: needs.Asked) -> None:
+        asked.until = 0
+
+    with pytest.raises(
+        attend.Unanswered, match=r"the approval \(Confirm in the bank's app\) did not show within 10 min"
+    ):
+        drive([GOTO | {"url": "https://bank.example/login"}, APPROVE], late)
+
+
+@needs_chromium
+def test_a_handover_leaves_the_session_and_the_run_after_it_goes_past(monkeypatch):
+    bank(monkeypatch)
+    recipe = {
+        "steps": [GOTO, HANDOVER],
+        "start": ACCOUNTS,
+        "links": {"selector": "a.file", "pattern": "pdf"},
+    }
+    source = site_module.Site({"recipe": json.dumps(recipe)}, {}, None)
+    try:
+        with pytest.raises(ChallengeError) as caught:
+            list(source.items(lambda key: False))
+        session = source.session()
+    finally:
+        source.close()
+    assert (caught.value.url, caught.value.kind) == ("https://bank.example/login", "Sign in with your passkey")
+    assert session is not None and [cookie["name"] for cookie in session["cookies"]] == ["half"]
+    # The person did it in the browser (Continue in the browser, Done): the run with that
+    # session starts at the listing, past the sign-in and its handover.
+    again = site_module.Site({"recipe": json.dumps(recipe)}, {}, None)
+    again.restore(session)
+    try:
+        assert [item.url for item in again.items(lambda key: False)] == ["https://bank.example/files/1.pdf"]
+    finally:
+        again.close()
+    assert not drive([GOTO | {"url": ACCOUNTS}, HANDOVER | {"until": {"selector": "a.file"}}]), "done already"
+    assert site_module.browser.free_browsers() == FREE
+
+
+def test_the_teller_asks_for_an_approval():
+    lines: list[tuple[str, str]] = []
+    sent: list[tuple] = []
+    tell = needs.teller("Bank", lambda level, text: lines.append((level, text)), lambda *args: sent.append(args), "nc")
+    tell(needs.Asked("approve", "Confirm in the bank's app", 300, 0))
+    assert lines == [("info", "Waiting up to 5 min for your approval: Confirm in the bank's app")]
+    assert (
+        sent[0][3]
+        == "{label}: approve it within {minutes} minutes, the job goes on once the site shows it went through."
+    )
