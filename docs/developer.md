@@ -121,7 +121,9 @@ A tag `vX.Y.Z` (the version and the image tag in `appinfo/info.xml`) runs
 
 - **Archive:** `harvester-X.Y.Z.tar.gz`, the source the image is built from, on the Forgejo
   release (signed with `APP_SIGNING_KEY` when set), with the translations (`l10n/`) AppAPI
-  installs from it.
+  installs from it; the release's text is the version's section of `CHANGELOG.md` (a tag
+  without one fails before anything is released). The shared action `nextcloud-app-release` of
+  `dawid/ci-actions` signs, attaches and writes the text.
 - **Image:** built with Kaniko (the runners' job containers have no Docker socket and no user
   namespaces, so neither Docker nor Buildah works there) and pushed as `X.Y.Z` and `latest`, the
   same build and digest, to every registry that has a token:

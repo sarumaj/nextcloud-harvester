@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Releases through the shared action `nextcloud-app-release` of `dawid/ci-actions`: the release's
+  text is the version's section of this changelog, and a tag without one fails.
+
 ## 0.12.0 - 2026-11-03
 
 ### Added

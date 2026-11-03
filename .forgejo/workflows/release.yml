@@ -1,7 +1,9 @@
 ---
 # A tag vX.Y.Z (the version and the image tag in appinfo/info.xml) becomes a release:
 # - the External App's source as harvester-X.Y.Z.tar.gz on the Forgejo release, signed with
-#   the app's key when there is one;
+#   the app's key when there is one (signature.txt beside it), with the version's section of
+#   CHANGELOG.md as its text (the shared action nextcloud-app-release of dawid/ci-actions; a
+#   tag without its section fails before anything is released);
 # - its image, built with Kaniko (the runners' job containers cannot run Docker or Buildah:
 #   no Docker socket, no user namespaces), pushed as X.Y.Z to each registry that has a token.
 # The homelab's nextcloud role builds the image from the tag itself and registers the app with
@@ -48,11 +50,9 @@ jobs:
     timeout-minutes: 15
     env:
       TAG: ${{ inputs.tag || github.ref_name }}
-      API: ${{ github.server_url }}/api/v1/repos/${{ github.repository }}
-      TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Install the tools
-        run: apt-get update -qq && apt-get install -qq -y --no-install-recommends ca-certificates curl git jq openssl >/dev/null
+        run: apt-get update -qq && apt-get install -qq -y --no-install-recommends ca-certificates git openssl python3 >/dev/null
 
       - name: Check out the tag
         run: |
@@ -61,6 +61,7 @@ jobs:
           git fetch -q --depth 1 origin "refs/tags/$TAG:refs/tags/$TAG"
           git checkout -q "$TAG"
 
+      # The image tag and the registry the image job needs; the action checks the version too.
       - name: Check the tag is the app's version and image tag
         id: version
         run: |
@@ -82,32 +83,18 @@ jobs:
             | gzip -n > "harvester-$VERSION.tar.gz"
           # Counted, not piped to head: with pipefail, head's early exit fails the step (SIGPIPE).
           echo "$(tar -tzf "harvester-$VERSION.tar.gz" | wc -l) entries"
-          ls -l "harvester-$VERSION.tar.gz"
 
-      - name: Sign the archive
-        env:
-          KEY: ${{ secrets.APP_SIGNING_KEY }}
-        run: |
-          if [ -z "$KEY" ]; then echo "::warning::No APP_SIGNING_KEY: the archive is not signed"; exit 0; fi
-          umask 077 && printf '%s\n' "$KEY" > /tmp/key.pem
-          openssl dgst -sha512 -sign /tmp/key.pem "harvester-$VERSION.tar.gz" | openssl base64 -A > signature.txt
-          rm /tmp/key.pem
-
-      - name: Attach the archive to the release
-        run: |
-          auth="Authorization: token $TOKEN"
-          id=$(curl -fsS -H "$auth" "$API/releases/tags/$TAG" | jq -r .id) || id=""
-          if [ -z "$id" ] || [ "$id" = null ]; then
-            id=$(jq -n --arg t "$TAG" '{tag_name: $t, name: $t}' \
-              | curl -fsS -H "$auth" -H 'Content-Type: application/json' -d @- "$API/releases" | jq -r .id)
-          fi
-          for name in "harvester-$VERSION.tar.gz" signature.txt; do
-            [ -f "$name" ] || continue
-            old=$(curl -fsS -H "$auth" "$API/releases/$id/assets" | jq -r --arg n "$name" '.[] | select(.name == $n) | .id')
-            [ -n "$old" ] && curl -fsS -X DELETE -H "$auth" "$API/releases/$id/assets/$old"
-            url=$(curl -fsS -H "$auth" -F "attachment=@$name" "$API/releases/$id/assets?name=$name" | jq -r .browser_download_url)
-            echo "$name: $url"
-          done
+      - name: Release
+        uses: https://git.ciepiela.org/dawid/ci-actions/nextcloud-app-release@main
+        with:
+          app-id: harvester
+          app-dir: .
+          archive: harvester-${{ env.VERSION }}.tar.gz
+          tag: ${{ env.TAG }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          signing-key: ${{ secrets.APP_SIGNING_KEY }}
+          attach-signature: "true"
+          app-store: "false"
 
   image:
     needs: release
