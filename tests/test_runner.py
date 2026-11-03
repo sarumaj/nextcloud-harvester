@@ -157,8 +157,17 @@ class FakeNextcloud:  # pylint: disable=too-few-public-methods
     async def set_user(self, user):
         self._user = user
 
-    async def create(self, subject, message="", link=""):
-        self.sent.append((subject, message, link))
+    async def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self, subject, message="", subject_params=None, message_params=None, link=""
+    ):
+        # As Nextcloud shows it untranslated: the rich parameters' names in their placeholders.
+        def shown(text, params):
+            for key, param in (params or {}).items():
+                assert param["type"] == "highlight" and param["id"] == key and param["name"]
+                text = text.replace(f"{{{key}}}", param["name"])
+            return text
+
+        self.sent.append((shown(subject, subject_params), shown(message, message_params), link))
 
 
 class AskingSource(FakeSource):

@@ -145,8 +145,9 @@ async def save_session(nc: AsyncNextcloudApp, job: Job, session: dict | None) ->
 
 
 def plain(text: str) -> str:
-    """Text a notification shows as it is: Nextcloud reads {name} as a placeholder and % as a
-    printf code (an address with %2F, say), either of which can break the notification."""
+    """Text a notification shows as it is (a run's error, not one of the app's texts): Nextcloud
+    reads {name} as a placeholder and % as a printf code (an address with %2F, say), either of
+    which can break the notification."""
     return text.replace("{", "(").replace("}", ")").replace("%", "\uff05")[:400]
 
 
@@ -613,8 +614,9 @@ class Executor:
         if job.last_status != "changed":
             self.notify(
                 nc,
-                f"Harvester: {job.name} — the site seems to have changed: {change['reason']}",
-                f"{change['detail']}. Test the recipe (its form's recorder) and pick the links anew.",
+                "Harvester: {job} — the site seems to have changed: {reason}",
+                {"job": job.name, "reason": change["reason"], "detail": change["detail"]},
+                "{detail}. Test the recipe (its form's recorder) and pick the links anew.",
             )
         return True
 
@@ -718,7 +720,12 @@ class Executor:
         )
         self.store.delete(job_id)
         LOG.info("one-time job %s (%s) deleted after its run", job_id, job.user)
-        self.notify(nc, f"Harvester: {job.name} done", f"{message}. The one-time job is deleted; its files stay.")
+        self.notify(
+            nc,
+            "Harvester: {job} done",
+            {"job": job.name, "result": message},
+            "{result}. The one-time job is deleted; its files stay.",
+        )
 
     def _credentials(self, nc: AsyncNextcloudApp, job: Job) -> dict[str, str]:
         """The job's account, as its user set it."""
@@ -768,14 +775,19 @@ class Executor:
         if isinstance(error, ChallengeError):
             # Not a failure of the job: it waits for its user to answer the page in the browser.
             self.store.finish(job_id, "challenge", message, challenge_url=error.url)
-            self.notify(nc, f"Harvester: {job.name} needs you", f"{error.url} asks for a person ({error.kind}).")
+            self.notify(
+                nc,
+                "Harvester: {job} needs you",
+                {"job": job.name, "address": error.url, "kind": error.kind},
+                "{address} asks for a person ({kind}).",
+            )
             return
         status = "auth" if isinstance(error, AuthError) else "failed"
         LOG.warning("job %s (%s) %s: %s", job_id, job.user, status, message)
         self.store.finish(job_id, status, message)
         # Told once: the same failure on the next scheduled runs is no news.
         if (job.last_status, job.last_message) != (status, message):
-            self.notify(nc, f"Harvester: {job.name} failed", message)
+            self.notify(nc, "Harvester: {job} failed", {"job": job.name}, detail=message)
 
     def _work(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
         self,
@@ -886,9 +898,30 @@ class Executor:
             self.store.log(job_id, "info", f"Fetching {fetch['url']}")
         watch_stop(control.stopped)
 
-    def notify(self, nc: AsyncNextcloudApp, subject: str, message: str) -> None:
-        """Tells the job's user, with a link to the app's page; a notification that fails is lost."""
+    def notify(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self, nc: AsyncNextcloudApp, subject: str, values: dict[str, str], message: str = "", detail: str = ""
+    ) -> None:
+        """Tells the job's user, with a link to the app's page; a notification that fails is lost.
+        The subject and the message are the app's texts with {placeholders} (scripts/l10n.py
+        collects them): Nextcloud translates them into the user's language with the app's
+        l10n/<language>.json and puts in the values, shown as they are. detail, a text of the
+        run's own (its error), comes as it is in place of a message."""
+        params = {
+            key: {"type": "highlight", "id": key, "name": str(value)[:400] or "-"} for key, value in values.items()
+        }
+
+        def used(text: str) -> dict:
+            return {key: param for key, param in params.items() if f"{{{key}}}" in text}
+
         try:
-            self.call(nc.notifications.create(plain(subject), plain(message), link=page_link(nc)))
+            self.call(
+                nc.notifications.create(
+                    subject,
+                    message or plain(detail),
+                    subject_params=used(subject),
+                    message_params=used(message),
+                    link=page_link(nc),
+                )
+            )
         except Exception:  # pylint: disable=broad-exception-caught
             LOG.warning("a notification could not be sent: %s", subject)

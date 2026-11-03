@@ -22,7 +22,8 @@ import main
 from harvester.browser import launch_options
 
 PAGE = "https://nc.example/"
-SCRIPT = (pathlib.Path(__file__).parent.parent / "ex_app" / "js" / "harvester-main.js").read_text(encoding="utf-8")
+ROOT = pathlib.Path(__file__).parent.parent
+SCRIPT = (ROOT / "ex_app" / "js" / "harvester-main.js").read_text(encoding="utf-8")
 # Nextcloud's globals, and a WebSocket that keeps what the page sends and takes what a test
 # answers (receive).
 STUBS = """
@@ -42,6 +43,27 @@ class FakeSocket {
   receive(data) { this.emit('message', { data: JSON.stringify(data) }) }
 }
 window.WebSocket = FakeSocket
+"""
+# Nextcloud's translations, for a test in a language (@pytest.mark.language): OC.L10N.register
+# (l10n/<language>.js), and t() and n() as Nextcloud's, which escape and sanitize unless told
+# not to (the page tells them not to: it shows text).
+L10N_STUBS = """
+const bundles = {}
+const plurals = {}
+window.OC.L10N = { register: (app, bundle, form) => {
+  bundles[app] = bundle
+  plurals[app] = new Function('n', `${form.replace(/nplurals=\\d+;\\s*plural=/, 'return ').replace(/;\\s*$/, '')}`)
+} }
+const build = (text, vars, count, options) => {
+  let out = text.replace(/%n/g, String(count))
+  if (vars) out = out.replace(/{(\\w+)}/g, (m, k) => (k in vars ? String(vars[k]) : m))
+  return options && options.sanitize === false ? out : out.replace(/</g, '&lt;')
+}
+window.t = (app, text, vars, count, options) => build(typeof (bundles[app] || {})[text] === 'string' ? bundles[app][text] : text, vars, count, options)
+window.n = (app, one, many, count, vars, options) => {
+  const forms = (bundles[app] || {})[`_${one}_::_${many}_`]
+  return build(Array.isArray(forms) ? forms[Number(plurals[app](count))] : count === 1 ? one : many, vars, count, options)
+}
 """
 RECIPE = {
     "steps": [{"action": "goto", "url": "https://site.example/login"}, {"action": "scroll"}],
@@ -123,8 +145,11 @@ CALLS: list[tuple[str, str, dict | None]] = []
 def fixture_page(request):
     from playwright.sync_api import sync_playwright  # pylint: disable=import-outside-toplevel
 
-    # A test may give its jobs (parametrized indirectly), else the one of its own.
+    # A test may give its jobs (parametrized indirectly), else the one of its own, and the
+    # person's language (AppAPI adds its l10n/<language>.js, if the app has one, after the page).
     jobs = getattr(request, "param", [JOB])
+    marker = request.node.get_closest_marker("language")
+    language = ROOT / "l10n" / f"{marker.args[0]}.js" if marker else None
     answers = {
         "/sources": main.list_sources(),
         "/presets": main.list_presets(),
@@ -155,9 +180,13 @@ def fixture_page(request):
         route.fulfill(status=200, content_type="application/json", body=json.dumps(answer))
 
     def document(route) -> None:
-        body = f'<html><head><script>{STUBS}</script><script src="/main.js"></script></head>'
+        stubs = STUBS + (L10N_STUBS if language else "")
+        body = f'<html><head><script>{stubs}</script><script src="/main.js"></script>'
+        if language and language.exists():
+            body += f"<script>{language.read_text(encoding='utf-8')}</script>"
+        body += "</head>"
         body += '<body><main id="content"><div id="content"></div></main></body></html>'
-        route.fulfill(status=200, content_type="text/html", body=body)
+        route.fulfill(status=200, content_type="text/html; charset=utf-8", body=body)
 
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(**launch_options(9))  # a port nobody listens on: all fulfilled
@@ -275,7 +304,7 @@ def test_the_recorders_controls(page):
     }
     receive(page, {"type": "test", "result": result})
     panel = page.locator(".harvester-test").inner_text()
-    assert "1 file links on 1 pages" in panel and "2026/A" in panel and "a.month matched nothing" in panel
+    assert "1 file link on 1 page." in panel and "2026/A" in panel and "a.month matched nothing" in panel
 
     # A recipe without a next page (removed) is kept without one, with the recorder's steps.
     receive(page, {"type": "recipe", "recipe": {**RECIPE, "steps": RECIPE["steps"][:1], "next": None}, "proposals": {}})
@@ -429,7 +458,7 @@ def test_the_recorders_frames_and_optional_steps(page):
     receive(
         page, {"type": "where", "frame": {"host": "cmp-cdn.example", "url": "https://cmp-cdn.example/d", "level": 2}}
     )
-    assert where.inner_text() == "Acting in a frame: cmp-cdn.example (2nd level)"
+    assert where.inner_text() == "Acting in a frame: cmp-cdn.example (level 2)"
     receive(page, {"type": "where", "frame": None})
     assert where.inner_text() == "Acting in: the page"
 
@@ -607,7 +636,7 @@ def test_the_recorders_cookies_panel(page):
     assert sent(page)[-1] == {"type": "cookies-export", "all": True}
     text = "# Netscape HTTP Cookie File\nsite.example\tFALSE\t/\tTRUE\t0\tsid\tsecret-1\n"
     receive(page, {"type": "cookies-export", "text": text, "count": 1})
-    assert "1 cookies in the account’s Cookies field" in panel.inner_text()
+    assert "1 cookie in the account’s Cookies field" in panel.inner_text()
     page.get_by_role("button", name="Cancel").click()
     assert page.locator("textarea[data-credential=cookies]").input_value() == text
     assert not [call for call in CALLS if "credentials" in call[1] and call[0] == "PUT"], "nothing stored yet"
@@ -636,3 +665,35 @@ def test_the_job_browsers_cookies_panel_keeps_the_session_and_fills_the_account(
     receive(page, {"type": "cookies-export", "text": text, "count": 1})
     page.wait_for_function("document.querySelector('.harvester-cookies-panel').innerText.includes('stored in the job')")
     assert ("PUT", "/jobs/1/credentials", {"cookies": text}) in CALLS, "stored once the person confirmed"
+
+
+@needs_chromium
+@pytest.mark.language("de")
+def test_the_page_in_the_persons_language(page):
+    german = json.loads((ROOT / "l10n" / "de.json").read_text(encoding="utf-8"))["translations"]
+    heads = page.locator("table.harvester-jobs th").all_inner_texts()
+    assert heads[:5] == [german[text] for text in ("Job", "Folder", "Schedule", "Tags", "Last run")]
+    # Placeholders and plurals: "2 jobs, 1 recording".
+    load = page.locator(".harvester-load").inner_text()
+    assert german["_%n job_::_%n jobs_"][1].replace("%n", "2") in load
+    assert german["_%n recording_::_%n recordings_"][0].replace("%n", "1") in load
+    # The server's texts too: a source's title and description on the New job page.
+    page.get_by_role("button", name=german["New job"]).click()
+    kinds = page.locator(".harvester-kinds").inner_text()
+    site = main.SOURCES["site"]
+    assert german[site.title] in kinds and german[site.description] in kinds
+    assert site.title not in kinds
+
+
+@needs_chromium
+@pytest.mark.language("fr")
+def test_a_language_without_translations_is_english(page):
+    assert page.locator("table.harvester-jobs th").all_inner_texts()[:5] == [
+        "Job",
+        "Folder",
+        "Schedule",
+        "Tags",
+        "Last run",
+    ]
+    assert page.get_by_role("button", name="New job").is_visible()
+    assert page.locator(".harvester-load").inner_text() == "Runners 2/2 · Browsers 3/3 (2 jobs, 1 recording) · 3 queued"

@@ -22,6 +22,14 @@ occ app_api:daemon:registry:add <daemon> --registry-from=ghcr.io/sarumaj --regis
 The homelab registers the app with its own local image (`local.homelab/harvester`) and needs
 neither.
 
+**Translations** (German and Polish; the page, the settings below and the notifications):
+installed from the app store, AppAPI copies the release archive's `l10n/` into the server's
+writable apps folder (`<apps>/harvester/l10n/`), where Nextcloud finds them. An app registered
+by hand (`occ app_api:app:register` with `--json-info` or `--info-xml`) gets them only when its
+JSON names a folder the Nextcloud server can read, `"translations_folder": "/path/to/l10n"`
+(the repository's or the archive's `l10n/` at the same version); otherwise, copy that folder to
+`<apps>/harvester/l10n/` after each update. Without them everything is English.
+
 ## Settings
 
 - **Admin settings:** *Administration settings > Additional settings > Harvester* sets the

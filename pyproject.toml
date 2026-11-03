@@ -4,6 +4,8 @@ line-length = 120
 [tool.pytest.ini_options]
 pythonpath = ["ex_app/lib"]
 testpaths = ["tests"]
+# test_page.py: the page in a person's language (its l10n/<language>.js, if the app has one).
+markers = ["language(code): the language of the page's person"]
 
 [tool.pylint.main]
 init-hook = "import sys; sys.path.insert(0, 'ex_app/lib')"

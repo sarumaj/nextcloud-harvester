@@ -82,7 +82,8 @@ def form(runners: int, browsers: int, address: str = "", name: str = "the proxy"
                 type=SettingsFieldType.TEXT,
                 default=name,
                 placeholder="the proxy",
-                description='What the job\'s form calls it: "Through <name>", e.g. "the home connection".',
+                # No <name>: Nextcloud's page sanitizes the text as HTML, which drops it as a tag.
+                description='What the job\'s form calls it, as in "Through the proxy": e.g. "the home connection".',
             ),
             SettingsField(
                 id=GUARD,

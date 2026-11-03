@@ -9,6 +9,9 @@
   (`executor.py`, `runner.py`), the sources (`sources/`), recipes and their patterns, the
   browser, the recorder and the guard (`browser/`), the templates (`presets/`).
 - `ex_app/js/harvester-main.js`: the page in Nextcloud (plain JavaScript, no build).
+- `l10n/`: the translations (German `de` and formal `de_DE`, Polish `pl`), `.json` and `.js`
+  alike; `scripts/l10n.py` collects the texts and writes the `.js` files (see
+  [Translations](#translations)).
 - `tests/`: pytest, against fake sites and servers, without network.
 - `scripts/rclone_backends.py`: the review of a new rclone's remotes (see
   [Sources](user.md#sources)).
@@ -20,7 +23,8 @@
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/playwright install chromium   # for the browser's tests (the full browser)
 .venv/bin/python -m pytest -q
-.venv/bin/black --check ex_app tests && .venv/bin/pylint ex_app/lib tests
+.venv/bin/black --check ex_app tests scripts && .venv/bin/pylint ex_app/lib tests scripts
+.venv/bin/python scripts/l10n.py                 # every text in every language
 ```
 
 The tests run against a fake magazine archive (`tests/fake_site.py`), over HTTP and in
@@ -38,13 +42,66 @@ registered by the homelab's `nextcloud` role (`nextcloud_harvester`), as
 `local.homelab/harvester:<version>`. `appinfo/info.xml` describes the app; its routes are also
 in the role's registration.
 
+## Translations
+
+Harvester is translated as Nextcloud's PHP apps are, with `l10n/<language>.json` and
+`l10n/<language>.js` (German `de` with *du*, `de_DE` with *Sie*, Polish `pl`). AppAPI copies the
+release archive's `l10n/` into the server's apps folder when it installs the app; Nextcloud then
+adds the person's `.js` to the app's page and to the admin settings (its `t()` in the browser),
+and translates the app's notifications with the `.json`. The app itself (Python) translates
+nothing: what it says is English, and Nextcloud or the page puts it into the person's language
+where the translations have it. Another language, or a text without a translation, is English.
+
+Translated:
+
+- the page's texts: `t('…')` and `n('…', '…', count)` in `ex_app/js/harvester-main.js`, which
+  call Nextcloud's `t()` and `n()` without escaping (the page sets them as text). A text with
+  values has placeholders (`t('Delete {name}?', { name })`), never pieces put together, so a
+  language can order them; a count is `n()` (`%n` and its forms). Only quoted texts are found:
+  no variables, no template strings;
+- what the page shows of the server's lists, through `said()`: the sources' titles,
+  descriptions and account fields, the options' titles and help, the templates' titles,
+  descriptions and parameters;
+- the admin's settings (Nextcloud's settings page runs `t()` over their titles, help and
+  placeholders): no `<…>` in them, which Nextcloud's sanitizing drops;
+- the API's errors given as plain strings (`HTTPException(404, "no such job")`), shown by the
+  page through `said()`;
+- the notifications: `executor.notify(nc, "Harvester: {job} failed", {"job": name}, …)` sends
+  the subject and message with their values as rich parameters, and Nextcloud translates them
+  for the person who gets them.
+
+Not translated: the progress log and the run's messages, the server's errors with values in
+them, the schedule in words, the recorder's warnings, recipes and their keys, the API's
+identifiers, and the logs (for the admin).
+
+**A new or changed text:** write it in English where it is shown, as above, then
+
+```bash
+.venv/bin/python scripts/l10n.py --missing de   # the texts German lacks, as JSON
+```
+
+translate them into each `l10n/<language>.json` (a plural's key is `_one_::_many_`, its value
+the language's forms: two in German, four in Polish), and run
+
+```bash
+.venv/bin/python scripts/l10n.py --write   # orders each .json, writes its .js
+```
+
+`tests/test_l10n.py` fails while a language lacks a text, keeps one the app no longer has, has
+other placeholders or `%n` than the English, or its `.js` differs from its `.json`; the page's
+tests run in English and in German (`@pytest.mark.language("de")` in `tests/test_page.py`). A
+new language is a new `l10n/<language>.json` with its `pluralForm` (Nextcloud's, from its
+server's `l10n/<language>.json`), filled the same way. German as Nextcloud's: *du* in `de`,
+*Sie* in `de_DE`, the same words otherwise; quotes „…“ in German, „…” in Polish.
+
 ## Releases
 
 A tag `vX.Y.Z` (the version and the image tag in `appinfo/info.xml`) runs
 `.forgejo/workflows/release.yml`:
 
 - **Archive:** `harvester-X.Y.Z.tar.gz`, the source the image is built from, on the Forgejo
-  release (signed with `APP_SIGNING_KEY` when set).
+  release (signed with `APP_SIGNING_KEY` when set), with the translations (`l10n/`) AppAPI
+  installs from it.
 - **Image:** built with Kaniko (the runners' job containers have no Docker socket and no user
   namespaces, so neither Docker nor Buildah works there) and pushed as `X.Y.Z` and `latest`, the
   same build and digest, to every registry that has a token:

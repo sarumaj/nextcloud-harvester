@@ -17,6 +17,8 @@ the app's browser or taken from a template, not by code.
   recipes to export and import as files.
 - **Sign-ins:** passwords, one-time codes, codes by e-mail, cookies, OAuth2 for mail; kept
   sessions; when a site asks for a person, the job waits for you in its browser.
+- **Languages:** English, German and Polish: the page, the admin's settings and the
+  notifications follow each person's language in Nextcloud (others are English).
 - **Careful with sites and with the server:** one job per site at a time, the pauses a site asks
   for, files fetched once; the browsers and downloads reach only public addresses.
 
@@ -67,12 +69,13 @@ and how a release is made.
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/playwright install chromium
 .venv/bin/python -m pytest -q
-.venv/bin/black --check ex_app tests && .venv/bin/pylint ex_app/lib tests
+.venv/bin/black --check ex_app tests scripts && .venv/bin/pylint ex_app/lib tests scripts
+.venv/bin/python scripts/l10n.py
 npx --yes markdownlint-cli2 "*.md" "docs/**/*.md"
 ```
 
-More in the [developer's guide](docs/developer.md); the changes are in the
-[changelog](CHANGELOG.md).
+More in the [developer's guide](docs/developer.md), also how a text is translated; the changes
+are in the [changelog](CHANGELOG.md).
 
 ## Reporting problems
 

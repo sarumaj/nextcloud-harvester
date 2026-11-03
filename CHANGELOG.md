@@ -17,9 +17,20 @@
 - **Test the recipe** shows its progress on the recorder's Steps: the step playing, its attempt
   or pause, and each step passed, skipped or failed; a click on the failed one opens its pause
   and retry.
+- German (`de`, and `de_DE` with *Sie*) and Polish translations in `l10n/`, as the PHP apps
+  have them: the page (texts with placeholders and plurals), the sources', options' and
+  templates' titles and help, the admin's settings, the API's plain errors, and the
+  notifications, which Nextcloud now translates for each person (their values as rich
+  parameters). Other languages are English. `scripts/l10n.py` collects the texts and writes the
+  `.js` files; `tests/test_l10n.py` checks every text in every language, with its placeholders,
+  and the page's tests run in German too.
 
 ### Changed
 
+- The page counts in words that fit the number ("1 file link on 1 page"), and the recorder says
+  "level 2" instead of "2nd level".
+- The help of the admin's setting *The proxy's name* gives an example instead of
+  `Through <name>`, whose `<name>` Nextcloud's settings page dropped as a tag.
 - The README in the structure the four apps share.
 - `appinfo/info.xml`: indented with 4 spaces, in Talk AI's order, with `<website>`; Nextcloud up
   to 36.

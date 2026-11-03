@@ -7,21 +7,43 @@
 (function () {
 	'use strict'
 
+	// The page's texts in the person's language: Nextcloud's t() and n() with the app's
+	// translations (l10n/<language>.js, which AppAPI adds to the page and which registers before
+	// the page is drawn, on DOMContentLoaded), English where a language or a text has none. The
+	// page shows them as text, so Nextcloud neither escapes nor sanitizes them as HTML. Without
+	// Nextcloud's t() (a test's page) the English text is filled in here.
+	const RAW = { escape: false, sanitize: false }
+	const fill = (text, vars) => vars ? text.replace(/{(\w+)}/g, (match, key) => (key in vars ? String(vars[key]) : match)) : text
+	function t(text, vars) {
+		return typeof window.t === 'function' ? window.t('harvester', text, vars, undefined, RAW) : fill(text, vars)
+	}
+	function n(one, many, count, vars) {
+		return typeof window.n === 'function'
+			? window.n('harvester', one, many, count, vars, RAW)
+			: fill((count === 1 ? one : many).replace(/%n/g, String(count)), vars)
+	}
+	// A text the server sends (a source's, an option's or a template's title and help, an error):
+	// translated if the app's translations have it (scripts/l10n.py collects them), as sent if not.
+	const said = (text) => (text ? t(String(text)) : text)
+	// The proxy's name as the admin set it, or the default's words in the person's language.
+	const proxyName = (name) => (!name || name === 'the proxy' ? t('the proxy') : name)
+
 	const API = OC.generateUrl('/apps/app_api/proxy/harvester/api')
 	// The recorder's WebSocket goes to HaRP directly (AppAPI's PHP proxy has none).
 	const RECORDER = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${OC.webroot || ''}/exapps/harvester/ws/record`
 	const VIEWPORT = { width: 1280, height: 800 }
 	const BLANK = { name: '', source: 'site', target: '/Harvester', schedule: '0 6 * * *', options: {}, tags: [], enabled: true }
-	// Usual schedules, offered below the job's schedule (cron, in the job's time zone).
-	const SCHEDULES = [
-		{ value: '*/15 * * * *', label: 'Every 15 minutes' },
-		{ value: '*/30 * * * *', label: 'Every 30 minutes' },
-		{ value: '0 * * * *', label: 'Hourly' },
-		{ value: '0 */6 * * *', label: 'Every 6 hours' },
-		{ value: '0 6 * * *', label: 'Daily 06:00' },
-		{ value: '0 6 * * 1-5', label: 'Weekdays 06:00' },
-		{ value: '0 6 * * 1', label: 'Mondays 06:00' },
-		{ value: '0 6 1 * *', label: 'Monthly, the 1st' },
+	// Usual schedules, offered below the job's schedule (cron, in the job's time zone); made when
+	// shown, once the translations are there.
+	const SCHEDULES = () => [
+		{ value: '*/15 * * * *', label: t('Every 15 minutes') },
+		{ value: '*/30 * * * *', label: t('Every 30 minutes') },
+		{ value: '0 * * * *', label: t('Hourly') },
+		{ value: '0 */6 * * *', label: t('Every 6 hours') },
+		{ value: '0 6 * * *', label: t('Daily 06:00') },
+		{ value: '0 6 * * 1-5', label: t('Weekdays 06:00') },
+		{ value: '0 6 * * 1', label: t('Mondays 06:00') },
+		{ value: '0 6 1 * *', label: t('Monthly, the 1st') },
 	]
 	// A new job's schedule runs in the person's time zone (an IANA name, as the server takes it).
 	const ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
@@ -59,7 +81,7 @@
 		const data = await response.json().catch(() => ({}))
 		if (!response.ok) {
 			const detail = Array.isArray(data.detail) ? data.detail.map((d) => d.msg).join(', ') : data.detail
-			throw new Error(detail || response.statusText)
+			throw new Error(said(detail) || response.statusText)
 		}
 		return data
 	}
@@ -143,7 +165,7 @@
 	}
 
 	function when(timestamp) {
-		return timestamp ? new Date(timestamp * 1000).toLocaleString() : 'never'
+		return timestamp ? new Date(timestamp * 1000).toLocaleString() : t('never')
 	}
 
 	// The host of the innermost frame a step acts in ("" for a frame without an address of its own).
@@ -158,7 +180,7 @@
 
 	function describe(step) {
 		const action = describeAction(step)
-		return step.frame && step.frame.length ? `${action} ⧉ in frame ${frameHost(step) || '(no address)'}` : action
+		return step.frame && step.frame.length ? t('{action} ⧉ in frame {host}', { action, host: frameHost(step) || t('(no address)') }) : action
 	}
 
 	// Clicks whose text reads like a consent banner's button: a banner shows on the first visit,
@@ -167,21 +189,22 @@
 	const looksLikeConsent = (step) => step.action === 'click' && CONSENT.test(String(step.text || '').trim())
 
 	function describeAction(step) {
-		if (step.action === 'goto') return `Open ${step.url}`
-		if (step.action === 'scroll') return `Scroll to load more${step.rounds ? ` (at most ${step.rounds} times)` : ''}`
-		if (step.action === 'click') return `Click ${step.text ? `“${step.text}”` : step.selector}`
-		if (step.action === 'press') return `Press ${step.key} in ${step.selector}`
-		if (step.action === 'select') return `Choose “${step.label || [].concat(step.value).join(', ')}” in ${step.selector}`
-		if (step.action === 'hover') return `Hover over ${step.selector}`
-		if (step.action === 'popup') return 'Go on in the popup it opened'
-		if (step.action === 'opener') return 'Back to the page that opened the popup (once it closed)'
+		const selector = step.selector
+		if (step.action === 'goto') return t('Open {address}', { address: step.url })
+		if (step.action === 'scroll') return step.rounds ? t('Scroll to load more (at most {rounds} times)', { rounds: step.rounds }) : t('Scroll to load more')
+		if (step.action === 'click') return step.text ? t('Click “{text}”', { text: step.text }) : t('Click {selector}', { selector })
+		if (step.action === 'press') return t('Press {key} in {selector}', { key: step.key, selector })
+		if (step.action === 'select') return t('Choose “{choice}” in {selector}', { choice: step.label || [].concat(step.value).join(', '), selector })
+		if (step.action === 'hover') return t('Hover over {selector}', { selector })
+		if (step.action === 'popup') return t('Go on in the popup it opened')
+		if (step.action === 'opener') return t('Back to the page that opened the popup (once it closed)')
 		if (step.action === 'mail-code') {
-			const of = [step.from ? `from ${step.from}` : '', step.subject ? `subject ${step.subject}` : ''].filter(Boolean).join(', ')
-			return `Type the code from e-mail${of ? ` (${of})` : ''} into ${step.selector}`
+			const of = [step.from ? t('from {sender}', { sender: step.from }) : '', step.subject ? t('subject {subject}', { subject: step.subject }) : ''].filter(Boolean).join(', ')
+			return of ? t('Type the code from e-mail ({of}) into {selector}', { of, selector }) : t('Type the code from e-mail into {selector}', { selector })
 		}
-		if (step.credential === 'totp') return `Fill in the current one-time code (${step.selector})`
-		if (step.credential) return `Fill in the account's ${step.credential} (${step.selector})`
-		return `Fill in “${step.value}” (${step.selector})`
+		if (step.credential === 'totp') return t('Fill in the current one-time code ({selector})', { selector })
+		if (step.credential) return t('Fill in the account’s {credential} ({selector})', { credential: credentialName(step.credential), selector })
+		return t('Fill in “{value}” ({selector})', { value: step.value, selector })
 	}
 
 	// Fill steps whose own value sits in what looks like a password's field (#pw, [type=password],
@@ -192,7 +215,7 @@
 		const steps = recipe && Array.isArray(recipe.steps) ? recipe.steps : []
 		return steps.flatMap((step, index) => step && step.action === 'fill' && !step.credential && step.value
 			&& PASSWORD_FIELD.test(String(step.selector || ''))
-			? [`Step ${index + 1} fills a value of its own into ${step.selector}, which looks like a password field: mark it as the account’s password in the recorder’s Steps (and change the password if the recipe was shared).`]
+			? [t('Step {number} fills a value of its own into {selector}, which looks like a password field: mark it as the account’s password in the recorder’s Steps (and change the password if the recipe was shared).', { number: index + 1, selector: step.selector })]
 			: [])
 	}
 
@@ -201,10 +224,12 @@
 	function statusText(status) {
 		if (!status || !status.runners || !status.browsers) return ''
 		const { runners, browsers } = status
-		const plural = (number, word) => `${number} ${word}${number === 1 ? '' : 's'}`
 		const open = browsers.jobs + browsers.recordings
-		const held = open ? ` (${[browsers.jobs ? plural(browsers.jobs, 'job') : '', browsers.recordings ? plural(browsers.recordings, 'recording') : ''].filter(Boolean).join(', ')})` : ''
-		return `Runners ${runners.busy}/${runners.total} · Browsers ${open}/${browsers.total}${held} · ${status.queued} queued`
+		const held = [browsers.jobs ? n('%n job', '%n jobs', browsers.jobs) : '', browsers.recordings ? n('%n recording', '%n recordings', browsers.recordings) : ''].filter(Boolean).join(', ')
+		const values = { busy: runners.busy, runners: runners.total, open, browsers: browsers.total, held, queued: status.queued }
+		return held
+			? t('Runners {busy}/{runners} · Browsers {open}/{browsers} ({held}) · {queued} queued', values)
+			: t('Runners {busy}/{runners} · Browsers {open}/{browsers} · {queued} queued', values)
 	}
 
 	async function renderJobs(root) {
@@ -224,56 +249,56 @@
 			await show(root)
 		}
 		const table = el('table', { class: 'harvester-jobs' },
-			el('thead', {}, el('tr', {}, ...['Job', 'Folder', 'Schedule', 'Tags', 'Last run', ''].map((h) => el('th', { text: h })))))
+			el('thead', {}, el('tr', {}, ...[t('Job'), t('Folder'), t('Schedule'), t('Tags'), t('Last run'), ''].map((h) => el('th', { text: h })))))
 		const body = el('tbody', {})
 		for (const job of jobs) {
 			const state = job.running ? (job.paused ? 'held' : 'running') : job.queued ? 'queued' : job.last_status || 'never'
-			const label = { running: 'Running', held: 'Paused', queued: 'Queued', ok: 'OK', failed: 'Failed', auth: 'Sign-in refused', challenge: 'Needs you', changed: 'Changed', never: 'Not run yet' }[state] || state
+			const label = { running: t('Running'), held: t('Paused'), queued: t('Queued'), ok: t('OK'), failed: t('Failed'), auth: t('Sign-in refused'), challenge: t('Needs you'), changed: t('Changed'), never: t('Not run yet') }[state] || state
 			body.append(el('tr', {},
-				el('td', { class: 'harvester-with-icon', title: (sources.find((x) => x.name === job.source) || {}).title || job.source },
+				el('td', { class: 'harvester-with-icon', title: said((sources.find((x) => x.name === job.source) || {}).title) || job.source },
 					icon(job.source), el('strong', { text: job.name }),
 					// Not "paused": that is a running job held by Pause.
-					job.enabled ? '' : el('span', { class: 'harvester-chip', text: 'off', title: 'Not enabled: runs only with Run now' })),
+					job.enabled ? '' : el('span', { class: 'harvester-chip', text: t('off'), title: t('Not enabled: runs only with Run now') })),
 				el('td', { class: 'harvester-muted', text: job.target }),
 				el('td', {}, onDemand(job)
-					? el('span', { class: 'harvester-chip harvester-on-demand', text: 'On demand', title: 'No schedule: runs when you send it an address' })
+					? el('span', { class: 'harvester-chip harvester-on-demand', text: t('On demand'), title: t('No schedule: runs when you send it an address') })
 					: el('code', { text: job.schedule }),
-				job.once ? el('span', { class: 'harvester-chip', text: 'once', title: 'Deleted after a run that went through; its files stay' }) : ''),
+				job.once ? el('span', { class: 'harvester-chip', text: t('once'), title: t('Deleted after a run that went through; its files stay') }) : ''),
 				el('td', {}, ...job.tags.map((tag) => el('span', { class: 'harvester-chip', text: tag }))),
 				el('td', {},
 					el('span', { class: `harvester-status harvester-status-${state}`, text: label }),
 					el('div', {
 						class: 'harvester-muted harvester-message',
 						'data-job-message': String(job.id),
-						text: job.running ? job.waiting || 'Starting'
-							: job.queued ? job.waiting || 'Waiting for its site or a free runner'
+						text: job.running ? job.waiting || t('Starting')
+							: job.queued ? job.waiting || t('Waiting for its site or a free runner')
 								: job.last_run ? `${when(job.last_run)} · ${job.last_message || ''}` : '',
 					}),
 					notices[job.id] ? el('div', { class: 'harvester-error harvester-message', role: 'alert', text: notices[job.id] }) : '',
 					fetchList(job, act)),
 				el('td', { class: 'harvester-actions' },
-					state === 'challenge' ? el('button', { class: 'primary', text: 'Continue in the browser', onclick: () => openSession(root, job) }) : '',
+					state === 'challenge' ? el('button', { class: 'primary', text: t('Continue in the browser'), onclick: () => openSession(root, job) }) : '',
 					// The site seems to have changed: its recipe walked again, without downloads
 					// (the progress log tells what each level found); or picked anew in its form.
-					state === 'changed' ? el('button', { class: 'primary', text: 'Test the recipe', title: 'Walk the recipe as a run would, downloading nothing: the progress log says what each level finds', onclick: act(job, '/test') }) : '',
+					state === 'changed' ? el('button', { class: 'primary', text: t('Test the recipe'), title: t('Walk the recipe as a run would, downloading nothing: the progress log says what each level finds'), onclick: act(job, '/test') }) : '',
 					// While it runs: pause (or resume) and stop instead of Run now; a stopped run
 					// keeps what it saved, and the next run goes on from there.
 					...(job.running
 						? [
-							el('button', { text: job.paused ? 'Resume' : 'Pause', onclick: act(job, job.paused ? '/resume' : '/pause') }),
-							el('button', { text: 'Stop', onclick: act(job, '/stop') }),
+							el('button', { text: job.paused ? t('Resume') : t('Pause'), onclick: act(job, job.paused ? '/resume' : '/pause') }),
+							el('button', { text: t('Stop'), onclick: act(job, '/stop') }),
 						]
 						: [onDemand(job) && !ownAddress(job) ? ''
 							: job.queued
-								? el('button', { text: 'Run now', disabled: '', title: 'Queued already: it runs once its turn comes' })
-								: el('button', { text: 'Run now', onclick: act(job, '/run') })]),
-					onDemand(job) ? el('button', { text: 'Fetch a URL…', 'aria-expanded': 'false', onclick: (event) => fetchForm(event.currentTarget, job) }) : '',
-					el('button', { text: 'Edit', onclick: () => renderForm(root, job) }),
+								? el('button', { text: t('Run now'), disabled: '', title: t('Queued already: it runs once its turn comes') })
+								: el('button', { text: t('Run now'), onclick: act(job, '/run') })]),
+					onDemand(job) ? el('button', { text: t('Fetch a URL…'), 'aria-expanded': 'false', onclick: (event) => fetchForm(event.currentTarget, job) }) : '',
+					el('button', { text: t('Edit'), onclick: () => renderForm(root, job) }),
 					el('button', {
 						class: 'error',
-						text: 'Delete',
+						text: t('Delete'),
 						onclick: (event) => {
-							if (confirm(`Delete ${job.name}? The files it downloaded stay.`)) act(job, '', 'DELETE')(event)
+							if (confirm(t('Delete {name}? The files it downloaded stay.', { name: job.name }))) act(job, '', 'DELETE')(event)
 						},
 					}))))
 		}
@@ -281,17 +306,17 @@
 		for (const id of Object.keys(notices)) delete notices[id]
 		table.append(body)
 		// Everyone's load, so a job that waits is understood; updated by the progress log's polls.
-		const load = el('p', { class: 'harvester-muted harvester-load', role: 'status', title: 'All people’s jobs and recordings', text: statusText(status) })
+		const load = el('p', { class: 'harvester-muted harvester-load', role: 'status', title: t('All people’s jobs and recordings'), text: statusText(status) })
 		root.replaceChildren(
 			el('div', { class: 'harvester-header' },
 				el('div', {},
 					el('h2', { text: 'Harvester' }),
-					el('p', { class: 'harvester-muted', text: 'Fetches files from websites into your folders on a schedule, and tags them.' })),
-				el('button', { class: 'primary', text: 'New job', onclick: () => renderStart(root) })),
+					el('p', { class: 'harvester-muted', text: t('Fetches files from websites into your folders on a schedule, and tags them.') })),
+				el('button', { class: 'primary', text: t('New job'), onclick: () => renderStart(root) })),
 			load,
 			jobs.length ? table : el('div', { class: 'harvester-empty' },
-				el('p', { text: 'No jobs yet.' }),
-				el('p', { class: 'harvester-muted', text: 'A job fetches the files of one site: record it in the browser, or start from a template.' })),
+				el('p', { text: t('No jobs yet.') }),
+				el('p', { class: 'harvester-muted', text: t('A job fetches the files of one site: record it in the browser, or start from a template.') })),
 			jobs.length ? progressPanel(root, jobs) : '',
 			sendHelp())
 	}
@@ -300,12 +325,12 @@
 	// (Stop ends it), the others each with Cancel.
 	function fetchList(job, act) {
 		if (!(job.fetches || []).length) return ''
-		return el('ul', { class: 'harvester-fetches', 'aria-label': `Addresses ${job.name} waits to fetch` },
+		return el('ul', { class: 'harvester-fetches', 'aria-label': t('Addresses {name} waits to fetch', { name: job.name }) },
 			...job.fetches.map((fetch) => el('li', {},
 				el('code', { text: fetch.url }),
 				fetch.running
-					? el('span', { class: 'harvester-muted', text: ' fetching' })
-					: el('button', { class: 'harvester-link', text: 'Cancel', 'aria-label': `Cancel the fetch of ${fetch.url}`, onclick: act(job, `/fetch/${fetch.id}`, 'DELETE') }))))
+					? el('span', { class: 'harvester-muted', text: ` ${t('fetching')}` })
+					: el('button', { class: 'harvester-link', text: t('Cancel'), 'aria-label': t('Cancel the fetch of {address}', { address: fetch.url }), onclick: act(job, `/fetch/${fetch.id}`, 'DELETE') }))))
 	}
 
 	// Fetch a URL…: a row below the job's with the address to fetch; Fetch queues it (checked
@@ -320,7 +345,7 @@
 		}
 		button.setAttribute('aria-expanded', 'true')
 		const root = button.closest('#harvester')
-		const input = el('input', { type: 'url', required: '', placeholder: 'https://…', 'aria-label': `The address ${job.name} fetches`, spellcheck: 'false' })
+		const input = el('input', { type: 'url', required: '', placeholder: t('https://…'), 'aria-label': t('The address {name} fetches', { name: job.name }), spellcheck: 'false' })
 		const error = el('p', { class: 'harvester-error', role: 'alert' })
 		const form = el('form', {
 			class: 'harvester-fetch',
@@ -337,17 +362,17 @@
 			},
 		},
 		input,
-		el('button', { class: 'primary', type: 'submit', text: 'Fetch' }),
-		el('button', { type: 'button', text: 'Cancel', onclick: () => fetchForm(button, job) }))
+		el('button', { class: 'primary', type: 'submit', text: t('Fetch') }),
+		el('button', { type: 'button', text: t('Cancel'), onclick: () => fetchForm(button, job) }))
 		row.after(el('tr', { class: 'harvester-fetch-row' }, el('td', { colspan: '6' }, form,
-			el('small', { class: 'harvester-muted', text: 'Fetched in place of the job’s own address, for this run alone; files it fetched before are not fetched again.' }), error)))
+			el('small', { class: 'harvester-muted', text: t('Fetched in place of the job’s own address, for this run alone; files it fetched before are not fetched again.') }), error)))
 		input.focus()
 	}
 
 	// Queues the address for the on-demand job; the error says why it was refused.
 	async function sendTo(job, url) {
 		const answer = await api('POST', `/jobs/${job.id}/fetch`, { url: url.trim() })
-		if (!answer.new) notices[job.id] = 'That address waits to be fetched already.'
+		if (!answer.new) notices[job.id] = t('That address waits to be fetched already.')
 		return answer
 	}
 
@@ -355,15 +380,15 @@
 	function sendHelp() {
 		const code = `javascript:void window.open('${PAGE}?fetch='+encodeURIComponent(location.href))`
 		return el('details', { class: 'harvester-send' },
-			el('summary', { text: 'Send to Harvester from any page' }),
-			el('p', { text: 'Drag this link to your bookmarks bar. On a page with a video, gallery, feed or files, click the bookmark: Harvester opens and asks which on-demand job fetches the page (or makes a new one from it).' }),
+			el('summary', { text: t('Send to Harvester from any page') }),
+			el('p', { text: t('Drag this link to your bookmarks bar. On a page with a video, gallery, feed or files, click the bookmark: Harvester opens and asks which on-demand job fetches the page (or makes a new one from it).') }),
 			el('a', {
 				class: 'harvester-bookmarklet',
 				href: code,
-				title: 'Drag it to your bookmarks bar',
+				title: t('Drag it to your bookmarks bar'),
 				// Nextcloud's page runs no script from a link: here it is only dragged.
 				onclick: (event) => event.preventDefault(),
-			}, 'Send to Harvester'))
+			}, t('Send to Harvester')))
 	}
 
 	// The page opened with ?fetch=<address> (the bookmarklet): which on-demand job fetches it, or
@@ -371,11 +396,11 @@
 	async function renderSend(root, url) {
 		const jobs = (await api('GET', '/jobs')).filter((job) => onDemand(job) && addressOf(job.source))
 		const error = el('p', { class: 'harvester-error', role: 'alert' })
-		const select = el('select', { 'aria-label': 'On-demand job' },
+		const select = el('select', { 'aria-label': t('On-demand job') },
 			...jobs.map((job) => el('option', { value: String(job.id), text: `${job.name} (${job.target})` })))
 		const fetchButton = el('button', {
 			class: 'primary',
-			text: 'Fetch',
+			text: t('Fetch'),
 			onclick: async () => {
 				fetchButton.disabled = true
 				error.textContent = ''
@@ -397,16 +422,16 @@
 		const kinds = sources.filter((source) => source.address).map((source) => el('button', {
 			class: 'harvester-with-icon',
 			onclick: () => renderForm(root, null, { ...BLANK, name: host, source: source.name, schedule: '', options: withAddress(source.name, url) }, url),
-		}, icon(source.name), el('span', { text: source.title })))
+		}, icon(source.name), el('span', { text: said(source.title) })))
 		root.replaceChildren(
 			el('div', { class: 'harvester-header' },
-				el('div', {}, el('h2', { text: 'Send to Harvester' }), el('p', {}, el('code', { class: 'harvester-sent', text: url }))),
-				el('button', { text: 'Back to the jobs', onclick: () => show(root) })),
+				el('div', {}, el('h2', { text: t('Send to Harvester') }), el('p', {}, el('code', { class: 'harvester-sent', text: url }))),
+				el('button', { text: t('Back to the jobs'), onclick: () => show(root) })),
 			jobs.length
-				? el('div', { class: 'harvester-card' }, field('Fetch it with', select, 'An on-demand job: the address takes the place of its own, for this run alone.'), fetchButton, error)
-				: el('p', { class: 'harvester-muted', text: 'No on-demand job yet: make one from this address.' }),
+				? el('div', { class: 'harvester-card' }, field(t('Fetch it with'), select, t('An on-demand job: the address takes the place of its own, for this run alone.')), fetchButton, error)
+				: el('p', { class: 'harvester-muted', text: t('No on-demand job yet: make one from this address.') }),
 			el('div', { class: 'harvester-card' },
-				el('h3', { text: 'New job from this address' }),
+				el('h3', { text: t('New job from this address') }),
 				el('div', { class: 'harvester-send-kinds' }, ...kinds)))
 		;(jobs.length ? fetchButton : root.querySelector('.harvester-send-kinds button')).focus()
 	}
@@ -415,8 +440,8 @@
 	// Polled, often while a job runs or waits its turn; a run that is queued, starts or ends
 	// redraws the list (its states and messages change).
 	function progressPanel(root, jobs) {
-		const select = el('select', { 'aria-label': 'Job' },
-			el('option', { value: '', text: 'All jobs' }),
+		const select = el('select', { 'aria-label': t('Job') },
+			el('option', { value: '', text: t('All jobs') }),
 			...jobs.map((job) => el('option', { value: String(job.id), text: job.name })))
 		try {
 			const kept = localStorage.getItem('harvester-log-job') || ''
@@ -424,7 +449,7 @@
 		} catch (e) { /* no storage: all jobs */ }
 		const list = el('ol', { class: 'harvester-log', 'aria-live': 'polite' })
 		const panel = el('section', { class: 'harvester-progress' },
-			el('div', { class: 'harvester-progress-head' }, el('h3', { text: 'Progress' }), select), list)
+			el('div', { class: 'harvester-progress-head' }, el('h3', { text: t('Progress') }), select), list)
 		let after = 0
 		let timer = null
 		const running = jobs.filter((job) => job.running).map((job) => job.id)
@@ -445,7 +470,7 @@
 				entry.shot ? el('button', {
 					type: 'button',
 					class: 'harvester-link',
-					text: 'Show what the browser saw',
+					text: t('Show what the browser saw'),
 					onclick: () => showShot(root, jobs.find((job) => job.id === entry.job) || { id: entry.job, name: entry.name }),
 				}) : ''))
 		async function poll() {
@@ -474,7 +499,7 @@
 					if (message && running.includes(entry.job) && !(data.waiting || {})[entry.job]) message.textContent = entry.message
 				}
 				while (list.children.length > 300) list.firstChild.remove()
-				if (!list.children.length) list.append(el('li', { class: 'harvester-muted', text: 'No runs yet.' }))
+				if (!list.children.length) list.append(el('li', { class: 'harvester-muted', text: t('No runs yet.') }))
 				else if (data.lines.length && list.firstChild.classList.contains('harvester-muted')) list.firstChild.remove()
 				if (stick) list.scrollTop = list.scrollHeight
 			} catch (e) { /* tried again below */ }
@@ -499,16 +524,16 @@
 			const inputs = {}
 			const fields = Object.entries(preset.parameters).map(([name, spec]) => {
 				inputs[name] = el('input', { value: spec.default, spellcheck: 'false' })
-				const row = field(spec.title, inputs[name], spec.description)
+				const row = field(said(spec.title), inputs[name], said(spec.description))
 				if (spec.suggestions && spec.suggestions.length) inputs[name].after(suggestionChips(inputs[name], spec.suggestions))
 				return row
 			})
 			return el('div', { class: 'harvester-card' },
-				el('h3', { class: 'harvester-with-icon' }, icon(preset.source), el('span', { text: preset.title })),
-				el('p', { class: 'harvester-muted', text: preset.description }), ...fields,
+				el('h3', { class: 'harvester-with-icon' }, icon(preset.source), el('span', { text: said(preset.title) })),
+				el('p', { class: 'harvester-muted', text: said(preset.description) }), ...fields,
 				el('button', {
 					class: 'primary',
-					text: 'Use this template',
+					text: t('Use this template'),
 					onclick: async () => {
 						try {
 							const body = Object.fromEntries(Object.entries(inputs).map(([k, input]) => [k, input.value]))
@@ -521,17 +546,17 @@
 		})
 		// One card per source: a blank job of it.
 		const kinds = sources.map((source) => el('div', { class: 'harvester-card harvester-kind' },
-			el('h3', { class: 'harvester-with-icon' }, icon(source.name), el('span', { text: source.title })),
-			el('p', { class: 'harvester-muted', text: source.description }),
-			el('button', { class: 'primary', text: 'Start', onclick: () => renderForm(root, null, { ...BLANK, source: source.name }) })))
+			el('h3', { class: 'harvester-with-icon' }, icon(source.name), el('span', { text: said(source.title) })),
+			el('p', { class: 'harvester-muted', text: said(source.description) }),
+			el('button', { class: 'primary', text: t('Start'), onclick: () => renderForm(root, null, { ...BLANK, source: source.name }) })))
 		// A recipe file (Export recipe in a job's form): read here, checked by the server.
-		const file = el('input', { type: 'file', accept: '.json,application/json', 'aria-label': 'Recipe file' })
+		const file = el('input', { type: 'file', accept: '.json,application/json', 'aria-label': t('Recipe file') })
 		file.addEventListener('change', async () => {
 			error.textContent = ''
 			const chosenFile = file.files[0]
 			if (!chosenFile) return
 			if (chosenFile.size > RECIPE_FILE_BYTES) {
-				error.textContent = `The file is larger than a recipe (${RECIPE_FILE_BYTES / 1000} KB at most).`
+				error.textContent = t('The file is larger than a recipe ({size} KB at most).', { size: RECIPE_FILE_BYTES / 1000 })
 				file.value = ''
 				return
 			}
@@ -543,19 +568,19 @@
 			}
 		})
 		const importCard = el('div', { class: 'harvester-card harvester-import' },
-			el('h3', { text: 'Import a recipe' }),
-			el('p', { class: 'harvester-muted', text: 'A recipe file (Export recipe in a job’s form): the job’s form opens filled in, to choose the folder and the account; nothing is saved until Save.' }),
+			el('h3', { text: t('Import a recipe') }),
+			el('p', { class: 'harvester-muted', text: t('A recipe file (Export recipe in a job’s form): the job’s form opens filled in, to choose the folder and the account; nothing is saved until Save.') }),
 			file)
 		// The person's own templates (Save as template in a job's form), each to use or remove.
 		const own = el('div', { class: 'harvester-own-templates' })
 		root.replaceChildren(
 			el('div', { class: 'harvester-header' },
-				el('div', {}, el('h2', { text: 'New job' }), el('p', { class: 'harvester-muted', text: 'What should the job fetch?' })),
-				el('button', { text: 'Back to the jobs', onclick: () => show(root) })),
+				el('div', {}, el('h2', { text: t('New job') }), el('p', { class: 'harvester-muted', text: t('What should the job fetch?') })),
+				el('button', { text: t('Back to the jobs'), onclick: () => show(root) })),
 			el('div', { class: 'harvester-kinds' }, ...kinds),
 			importCard,
 			own,
-			cards.length ? el('h3', { text: 'Templates for known sites' }) : '',
+			cards.length ? el('h3', { text: t('Templates for known sites') }) : '',
 			...cards, error)
 		ownTemplates(root, own, error)
 		// The button that opened this view is gone: the keyboard goes on from the first choice.
@@ -570,17 +595,17 @@
 		try {
 			templates = await api('GET', '/templates')
 		} catch (e) {
-			error.textContent = `Your templates could not be read: ${e.message}`
+			error.textContent = t('Your templates could not be read: {error}', { error: e.message })
 			return
 		}
 		container.replaceChildren()
 		if (!templates.length) return
-		container.replaceChildren(el('h3', { text: 'Your templates' }), ...templates.map((template) => el('div', { class: 'harvester-card harvester-own-template' },
+		container.replaceChildren(el('h3', { text: t('Your templates') }), ...templates.map((template) => el('div', { class: 'harvester-card harvester-own-template' },
 			el('h3', { class: 'harvester-with-icon' }, icon(template.file.source), el('span', { text: template.name })),
-			el('p', { class: 'harvester-muted', text: (sources.find((s) => s.name === template.file.source) || {}).title || template.file.source }),
+			el('p', { class: 'harvester-muted', text: said((sources.find((s) => s.name === template.file.source) || {}).title) || template.file.source }),
 			el('button', {
 				class: 'primary',
-				text: 'Use this template',
+				text: t('Use this template'),
 				onclick: async () => {
 					error.textContent = ''
 					try {
@@ -592,10 +617,10 @@
 			}),
 			el('button', {
 				class: 'error',
-				text: 'Remove',
-				'aria-label': `Remove the template ${template.name}`,
+				text: t('Remove'),
+				'aria-label': t('Remove the template {name}', { name: template.name }),
 				onclick: async () => {
-					if (!confirm(`Remove the template ${template.name}?`)) return
+					if (!confirm(t('Remove the template {name}?', { name: template.name }))) return
 					try {
 						await api('DELETE', `/templates/${template.id}`)
 					} catch (e) {
@@ -608,12 +633,14 @@
 	}
 
 	// What a source's account is for, above its fields (each field says what it is used for).
-	const ACCOUNT_USE = {
-		site: 'The recorded sign-in’s fields get the username, password and current one-time code; or a signed-in browser’s cookies instead of a sign-in.',
-		mail: 'The mailbox’s sign-in: a password, or OAuth2’s client and refresh token.',
-		remote: 'rclone’s configuration of the remote, with its passwords or tokens.',
-		releases: 'A token, for private repositories and for more requests than GitHub allows without one.',
-	}
+	const ACCOUNT_USE = () => ({
+		site: t('The recorded sign-in’s fields get the username, password and current one-time code; or a signed-in browser’s cookies instead of a sign-in.'),
+		mail: t('The mailbox’s sign-in: a password, or OAuth2’s client and refresh token.'),
+		remote: t('rclone’s configuration of the remote, with its passwords or tokens.'),
+		releases: t('A token, for private repositories and for more requests than GitHub allows without one.'),
+	})
+	// A credential's name in a step's words ("Fill in the account's password").
+	const credentialName = (name) => ({ username: t('username'), password: t('password') })[name] || name
 
 	// The job's account: its fields, saved with the form's Save (or here with Save account, for
 	// an existing job); an empty field keeps what is stored. Sets container.typed() (whether a
@@ -625,21 +652,21 @@
 		if (!source.credentials.length) return
 		const status = el('p', { class: 'harvester-muted', role: 'status', text: notice })
 		const error = el('p', { class: 'harvester-error' })
-		container.append(el('h3', { text: 'The account this job signs in with' }),
-			el('p', { text: `${ACCOUNT_USE[source.name] || 'What the job signs in with where its source asks for it.'} Stored encrypted in Nextcloud; never shown again.` }))
+		container.append(el('h3', { text: t('The account this job signs in with') }),
+			el('p', { text: `${ACCOUNT_USE()[source.name] || t('What the job signs in with where its source asks for it.')} ${t('Stored encrypted in Nextcloud; never shown again.')}` }))
 		let stored = {}
 		if (job) {
 			try {
 				stored = await api('GET', `/jobs/${job.id}/credentials`)
 			} catch (e) {
-				error.textContent = `Whether an account is stored is unknown: ${e.message}`
+				error.textContent = t('Whether an account is stored is unknown: {error}', { error: e.message })
 			}
 		}
 		const inputs = {}
 		for (const name of source.credentials) {
 			// Several lines (rclone's configuration, cookies) in a text area; secrets hidden.
-			const placeholder = stored[name] ? '(stored, leave empty to keep)' : ''
-			const [title, help] = (source.credential_help || {})[name] || [name, '']
+			const placeholder = stored[name] ? t('(stored, leave empty to keep)') : ''
+			const [title, help] = ((source.credential_help || {})[name] || [name, '']).map(said)
 			inputs[name] = ['config', 'cookies', 'code_mailbox'].includes(name)
 				? el('textarea', { rows: '6', class: 'harvester-recipe', placeholder, autocomplete: 'off', spellcheck: 'false', 'data-credential': name })
 				: el('input', {
@@ -652,7 +679,7 @@
 				// rclone's own questions instead of a configuration written elsewhere and pasted.
 				const button = el('button', {
 					type: 'button',
-					text: 'Set up with rclone',
+					text: t('Set up with rclone'),
 					onclick: () => {
 						if (!button.nextElementSibling || !button.nextElementSibling.classList.contains('harvester-wizard')) button.after(rcloneWizard(inputs[name]))
 					},
@@ -672,21 +699,21 @@
 		const button = job
 			? el('button', {
 				type: 'button',
-				text: 'Save account',
+				text: t('Save account'),
 				onclick: async () => {
 					button.disabled = true
 					error.textContent = ''
 					status.textContent = ''
 					try {
 						const done = await container.save(job)
-						await renderCredentials(container, job, source, done ? 'Account saved.' : 'Nothing typed: the stored account stays.')
+						await renderCredentials(container, job, source, done ? t('Account saved.') : t('Nothing typed: the stored account stays.'))
 					} catch (e) {
 						error.textContent = e.message
 						button.disabled = false
 					}
 				},
 			})
-			: el('p', { class: 'harvester-muted', text: 'Saved with the job when you press Save.' })
+			: el('p', { class: 'harvester-muted', text: t('Saved with the job when you press Save.') })
 		container.append(error, button, status)
 	}
 
@@ -706,7 +733,7 @@
 			session = null
 			panel.remove()
 		}
-		const cancel = el('button', { type: 'button', text: 'Cancel', onclick: close })
+		const cancel = el('button', { type: 'button', text: t('Cancel'), onclick: close })
 		// One step at a time: while rclone answers (it may take seconds), the buttons but Cancel
 		// are off, so a second click does not meet "the wizard is busy".
 		let busy = false
@@ -733,10 +760,10 @@
 
 		async function chooseType() {
 			const select = el('select', {})
-			panel.replaceChildren(el('h3', { text: 'Set up with rclone' }),
-				el('p', { class: 'harvester-muted', text: 'rclone asks for the remote’s settings one at a time, as “rclone config” does.' }),
-				field('Kind of remote', select), error,
-				el('button', { type: 'button', class: 'primary', text: 'Start', onclick: () => step('POST', '/rclone/wizard', { type: select.value }) }),
+			panel.replaceChildren(el('h3', { text: t('Set up with rclone') }),
+				el('p', { class: 'harvester-muted', text: t('rclone asks for the remote’s settings one at a time, as “rclone config” does.') }),
+				field(t('Kind of remote'), select), error,
+				el('button', { type: 'button', class: 'primary', text: t('Start'), onclick: () => step('POST', '/rclone/wizard', { type: select.value }) }),
 				cancel)
 			try {
 				for (const kind of await api('GET', '/rclone/types')) {
@@ -755,9 +782,9 @@
 			let suggestions = ''
 			if (question.exclusive && question.examples.length) {
 				input = el('select', {}, ...question.examples.map((example) =>
-					el('option', { value: example.value, text: example.help ? `${example.value || '(empty)'}: ${example.help.split('\n')[0]}` : example.value })))
+					el('option', { value: example.value, text: example.help ? `${example.value || t('(empty)')}: ${example.help.split('\n')[0]}` : example.value })))
 			} else if (question.type === 'bool') {
-				input = el('select', {}, el('option', { value: 'true', text: 'Yes' }), el('option', { value: 'false', text: 'No' }))
+				input = el('select', {}, el('option', { value: 'true', text: t('Yes') }), el('option', { value: 'false', text: t('No') }))
 			} else if (question.name === 'config_token') {
 				input = el('textarea', { rows: '4', class: 'harvester-recipe', autocomplete: 'off', spellcheck: 'false' })
 			} else {
@@ -774,7 +801,7 @@
 			error.textContent = view.error || ''
 			const back = el('button', {
 				type: 'button',
-				text: 'Back',
+				text: t('Back'),
 				// Before the first question: the choice of the remote's kind, with a new wizard.
 				onclick: () => {
 					if (!view.first) step('POST', `/rclone/wizard/${session}/back`)
@@ -791,22 +818,22 @@
 					step('POST', `/rclone/wizard/${session}/answer`, { state: view.state, result: input.value })
 				},
 			},
-			field(question.name + (question.required ? ' (required)' : ''), input),
+			field(question.required ? t('{name} (required)', { name: question.name }) : question.name, input),
 			suggestions,
 			el('p', { class: 'harvester-wizard-help', text: question.help }),
 			view.authorize
 				? el('div', { class: 'harvester-wizard-authorize' },
 					el('p', {},
-						el('strong', { text: 'Sign in here: ' }),
-						'the provider’s sign-in opens in Harvester’s own browser, shown below; rclone takes the token when you are done. ',
-						'Some providers refuse to sign in in such a browser (Google may say “This browser or app may not be secure”): then use your own computer, as below.'),
-					el('button', { type: 'button', text: 'Sign in here', onclick: () => signInHere(view) }),
-					el('p', { text: 'Or on your own computer: with a web browser and rclone (the same version is best), run this, sign in, and paste everything it prints here:' }),
+						el('strong', { text: `${t('Sign in here:')} ` }),
+						`${t('the provider’s sign-in opens in Harvester’s own browser, shown below; rclone takes the token when you are done.')} `,
+						t('Some providers refuse to sign in in such a browser (Google may say “This browser or app may not be secure”): then use your own computer, as below.')),
+					el('button', { type: 'button', text: t('Sign in here'), onclick: () => signInHere(view) }),
+					el('p', { text: t('Or on your own computer: with a web browser and rclone (the same version is best), run this, sign in, and paste everything it prints here:') }),
 					el('pre', { class: 'harvester-code', text: view.authorize }))
 				: '',
 			error,
-			el('button', { type: 'submit', class: 'primary', text: 'Next' }), back, cancel)
-			panel.replaceChildren(el('h3', { text: `Set up with rclone: ${view.type}` }), form)
+			el('button', { type: 'submit', class: 'primary', text: t('Next') }), back, cancel)
+			panel.replaceChildren(el('h3', { text: t('Set up with rclone: {kind}', { kind: view.type }) }), form)
 			input.focus()
 		}
 
@@ -817,17 +844,18 @@
 			signIn = socket
 			socket.addEventListener('close', () => { if (signIn === socket) signIn = null })
 			const send = (message) => socket.readyState === WebSocket.OPEN && socket.send(JSON.stringify(message))
-			const screen = el('img', { class: 'harvester-screen', tabindex: '0', alt: 'The sign-in’s browser' })
+			const screen = el('img', { class: 'harvester-screen', tabindex: '0', alt: t('The sign-in’s browser') })
 			const url = el('input', { class: 'harvester-url', readonly: '' })
-			const message = el('p', { class: 'harvester-muted', text: 'Starting rclone and the browser…' })
+			const starting = t('Starting rclone and the browser…')
+			const message = el('p', { class: 'harvester-muted', text: starting })
 			let finished = false
-			const back = el('button', { type: 'button', text: 'Back to the question', onclick: () => { finished = true; socket.close(); showQuestion(view) } })
+			const back = el('button', { type: 'button', text: t('Back to the question'), onclick: () => { finished = true; socket.close(); showQuestion(view) } })
 			socket.addEventListener('message', (event) => {
 				const data = JSON.parse(event.data)
 				if (data.type === 'frame') {
 					if (left(screen, socket)) return
 					screen.frame(data.data)
-					if (message.textContent === 'Starting rclone and the browser…') message.textContent = ''
+					if (message.textContent === starting) message.textContent = ''
 				} else if (data.type === 'cursor') screen.style.cursor = data.cursor
 				else if (data.type === 'url') url.value = data.url
 				else if (data.type === 'error') { message.textContent = data.message; screen.say(data.message) }
@@ -840,35 +868,35 @@
 			})
 			socket.addEventListener('close', () => {
 				if (!finished && panel.contains(screen)) {
-					message.textContent ||= 'The browser closed.'
+					message.textContent ||= t('The browser closed.')
 					screen.say(message.textContent)
 				}
 			})
 			const box = wireScreen(screen, send)
 			const container = el('div', { class: 'harvester-recorder' })
 			container.append(
-				el('p', { class: 'harvester-muted', text: 'Sign in and allow rclone’s access; the browser closes by itself once rclone has the token (at most ten minutes).' }),
+				el('p', { class: 'harvester-muted', text: t('Sign in and allow rclone’s access; the browser closes by itself once rclone has the token (at most ten minutes).') }),
 				overlay(el('div', { class: 'harvester-toolbar' }, url, fullWindow(container, box, send), back), message),
 				el('div', { class: 'harvester-stage' }, box))
-			panel.replaceChildren(el('h3', { text: `Set up with rclone: sign in to ${view.type}` }), container)
+			panel.replaceChildren(el('h3', { text: t('Set up with rclone: sign in to {kind}', { kind: view.type }) }), container)
 			screen.focusKeys()
 		}
 
 		function showDone(view) {
-			const back = el('button', { type: 'button', text: 'Back', onclick: () => step('POST', `/rclone/wizard/${session}/back`) })
+			const back = el('button', { type: 'button', text: t('Back'), onclick: () => step('POST', `/rclone/wizard/${session}/back`) })
 			if (view.error) {
-				panel.replaceChildren(el('h3', { text: 'Set up with rclone' }),
+				panel.replaceChildren(el('h3', { text: t('Set up with rclone') }),
 					el('p', { class: 'harvester-error', text: view.error }), error, back, cancel)
 				return
 			}
-			panel.replaceChildren(el('h3', { text: 'Set up with rclone: done' }),
-				el('p', { text: 'The configuration rclone wrote (passwords obscured, as rclone keeps them). Use it, then save it with the job’s Save (or Save account).' }),
+			panel.replaceChildren(el('h3', { text: t('Set up with rclone: done') }),
+				el('p', { text: t('The configuration rclone wrote (passwords obscured, as rclone keeps them). Use it, then save it with the job’s Save (or Save account).') }),
 				el('pre', { class: 'harvester-code harvester-wizard-result', text: view.config }),
 				error,
 				el('button', {
 					type: 'button',
 					class: 'primary',
-					text: 'Use this configuration',
+					text: t('Use this configuration'),
 					onclick: () => {
 						textarea.value = view.config
 						close()
@@ -892,33 +920,33 @@
 		selector.addEventListener('change', () => send({ type: 'selector', target, level, selector: selector.value }))
 		const box = el('div', { class: 'harvester-level', 'data-target': target, 'data-level': String(level) },
 			el('div', { class: 'harvester-level-head' }, el('h4', { text: title }),
-				el('button', { type: 'button', text: 'Pick again', title: 'Pick this on the page again (in its picking mode)', onclick: () => repick(target, level) }),
-				el('button', { type: 'button', class: 'error', text: 'Remove', title: target === 'follow' ? 'Remove this level (the levels after it move up)' : 'Remove this pick', onclick: () => send({ type: 'remove', target, level }) })),
-			field(target === 'next' && spec.kind === 'number' ? 'The numbers’ container (CSS selector)' : 'Element (selector)', selector))
+				el('button', { type: 'button', text: t('Pick again'), title: t('Pick this on the page again (in its picking mode)'), onclick: () => repick(target, level) }),
+				el('button', { type: 'button', class: 'error', text: t('Remove'), title: target === 'follow' ? t('Remove this level (the levels after it move up)') : t('Remove this pick'), onclick: () => send({ type: 'remove', target, level }) })),
+			field(target === 'next' && spec.kind === 'number' ? t('The numbers’ container (CSS selector)') : t('Element (selector)'), selector))
 		if (spec.alternatives && spec.alternatives.length) {
-			box.append(el('p', { class: 'harvester-muted', text: `Alternatives, tried in this order when it finds nothing: ${spec.alternatives.join('  ·  ')}` }))
+			box.append(el('p', { class: 'harvester-muted', text: t('Alternatives, tried in this order when it finds nothing: {alternatives}', { alternatives: spec.alternatives.join('  ·  ') }) }))
 		}
 		if (target === 'next') return renderNext(box, spec, proposal, send)
 		const pattern = el('input', { class: 'harvester-pattern', value: spec.pattern || '', spellcheck: 'false' })
 		pattern.addEventListener('change', () => send({ type: 'pattern', target, level, pattern: pattern.value }))
-		box.append(field('Pattern (named groups become values)', pattern))
+		box.append(field(t('Pattern (named groups become values)'), pattern))
 		if (!proposal) return box
 		if (proposal.error) box.append(el('p', { class: 'harvester-error', text: proposal.error }))
-		box.append(el('p', { text: `On this page: ${proposal.matching} of ${proposal.found} links match (solid outline; dashed: left out).` }))
+		box.append(el('p', { text: n('On this page: {matching} of %n link matches (solid outline; dashed: left out).', 'On this page: {matching} of %n links match (solid outline; dashed: left out).', proposal.found, { matching: proposal.matching }) }))
 		box.append(examplesList(proposal))
 		box.append(renderValues(spec, send, target, level, false),
-			el('button', { type: 'button', text: 'Pick a value', title: 'Click a text near one of these links (a date, a title in its row or card): a value for file names and tags', onclick: () => repick(target, level, 'value') }))
+			el('button', { type: 'button', text: t('Pick a value'), title: t('Click a text near one of these links (a date, a title in its row or card): a value for file names and tags'), onclick: () => repick(target, level, 'value') }))
 		if (target === 'links' && proposal.path) {
-			const use = (label, apply) => el('button', { type: 'button', text: label, onclick: (e) => { apply(); e.target.textContent = '✔ will be used' } })
-			box.append(el('p', { text: `Proposed file name: ${proposal.path}` }), use('Use it', () => { suggestions.path = proposal.path }))
+			const use = (label, apply) => el('button', { type: 'button', text: label, onclick: (e) => { apply(); e.target.textContent = t('✔ will be used') } })
+			box.append(el('p', { text: t('Proposed file name: {path}', { path: proposal.path }) }), use(t('Use it'), () => { suggestions.path = proposal.path }))
 			// The same script serves all the files (download.php?id=N): the name the server gives
 			// each file is likely the better one.
 			if (proposal.generic) {
-				box.append(el('p', { class: 'harvester-muted', text: 'The links all have the same name: the name the server gives each file ({disposition}) may be better.' }),
-					use('Use {disposition}', () => { suggestions.path = proposal.path.replace(/[^/]*$/, '{disposition}') }))
+				box.append(el('p', { class: 'harvester-muted', text: t('The links all have the same name: the name the server gives each file ({disposition}) may be better.', { disposition: '{disposition}' }) }),
+					use(t('Use {disposition}', { disposition: '{disposition}' }), () => { suggestions.path = proposal.path.replace(/[^/]*$/, '{disposition}') }))
 			}
 			if (proposal.tags.length) {
-				box.append(el('p', { text: `Proposed tags: ${proposal.tags.join(', ')}` }), use('Use them', () => { suggestions.tags = proposal.tags }))
+				box.append(el('p', { text: t('Proposed tags: {tags}', { tags: proposal.tags.join(', ') }) }), use(t('Use them'), () => { suggestions.tags = proposal.tags }))
 			}
 		}
 		return box
@@ -933,8 +961,8 @@
 
 	// Where a value of the page is read, in words: in the link, or in its row or card.
 	function valueWhere(value) {
-		const where = value.closest ? `in its ${value.closest}` : 'in the link'
-		return `${where}${value.selector ? ` › ${value.selector}` : ''}: ${value.attribute ? `attribute ${value.attribute}` : 'its text'}`
+		const where = value.closest ? t('in its {container}', { container: value.closest }) : t('in the link')
+		return `${where}${value.selector ? ` › ${value.selector}` : ''}: ${value.attribute ? t('attribute {name}', { name: value.attribute }) : t('its text')}`
 	}
 
 	// A level's values from the page (or a JSON item's fields): name, type, where (the field),
@@ -948,20 +976,20 @@
 				box.addEventListener('change', () => change({ [key]: box.value }))
 				return box
 			}
-			const kind = el('select', { 'aria-label': 'Type' }, ...['text', 'number', 'date'].map((type) => {
-				const option = el('option', { value: type, text: type === 'date' ? 'date (year, month, day)' : type })
+			const kind = el('select', { 'aria-label': t('Type') }, ...['text', 'number', 'date'].map((type) => {
+				const option = el('option', { value: type, text: { text: t('text'), number: t('number'), date: t('date (year, month, day)') }[type] })
 				option.selected = (value.type || 'text') === type
 				return option
 			}))
 			kind.addEventListener('change', () => change({ type: kind.value }))
 			return el('li', {},
-				input('name', 'Name'), ' ', kind, ' ',
-				json ? input('field', 'Field of the item, e.g. issued') : el('small', { class: 'harvester-muted', text: valueWhere(value) }),
-				field('Pattern on its text (empty: all of it)', input('regex', 'Pattern')),
-				el('button', { type: 'button', class: 'error', text: 'Remove', onclick: () => send({ type: 'value-remove', target, level, index }) }))
+				input('name', t('Name')), ' ', kind, ' ',
+				json ? input('field', t('Field of the item, e.g. issued')) : el('small', { class: 'harvester-muted', text: valueWhere(value) }),
+				field(t('Pattern on its text (empty: all of it)'), input('regex', t('Pattern'))),
+				el('button', { type: 'button', class: 'error', text: t('Remove'), onclick: () => send({ type: 'value-remove', target, level, index }) }))
 		})
-		if (!rows.length) return el('p', { class: 'harvester-muted', text: json ? 'Values: none from the items’ fields.' : 'Values from the page: none (Pick a value).' })
-		return el('div', { class: 'harvester-page-values' }, el('h5', { text: json ? 'Values from the items’ fields' : 'Values from the page' }), el('ul', {}, ...rows))
+		if (!rows.length) return el('p', { class: 'harvester-muted', text: json ? t('Values: none from the items’ fields.') : t('Values from the page: none (Pick a value).') })
+		return el('div', { class: 'harvester-page-values' }, el('h5', { text: json ? t('Values from the items’ fields') : t('Values from the page') }), el('ul', {}, ...rows))
 	}
 
 	// File links from a JSON listing (chosen in the Network panel): the request's address, the
@@ -974,53 +1002,56 @@
 			return field(label, box, help)
 		}
 		const page = spec.page || {}
-		const param = el('input', { class: 'harvester-pattern', value: page.param || '', spellcheck: 'false', 'aria-label': 'Page parameter', placeholder: 'page' })
-		const first = el('input', { type: 'number', min: '0', value: String(page.first ?? 1), 'aria-label': 'First value' })
-		const step = el('input', { type: 'number', min: '1', value: String(page.step ?? 1), 'aria-label': 'Step' })
+		const param = el('input', { class: 'harvester-pattern', value: page.param || '', spellcheck: 'false', 'aria-label': t('Page parameter'), placeholder: 'page' })
+		const first = el('input', { type: 'number', min: '0', value: String(page.first ?? 1), 'aria-label': t('First value') })
+		const step = el('input', { type: 'number', min: '1', value: String(page.step ?? 1), 'aria-label': t('Step') })
 		const pages = () => send({ type: 'json-edit', changes: { page: param.value.trim() ? { param: param.value.trim(), first: Number(first.value || 0), step: Number(step.value || 1) } : null } })
 		for (const box of [param, first, step]) box.addEventListener('change', pages)
-		const fieldName = el('input', { class: 'harvester-pattern', spellcheck: 'false', 'aria-label': 'Field', placeholder: 'e.g. issued or meta.date' })
+		const fieldName = el('input', { class: 'harvester-pattern', spellcheck: 'false', 'aria-label': t('Field'), placeholder: t('e.g. issued or meta.date') })
 		const box = el('div', { class: 'harvester-level', 'data-target': 'links', 'data-level': '0' },
 			el('div', { class: 'harvester-level-head' }, el('h4', { text: `${title} (JSON)` }),
-				el('button', { type: 'button', class: 'error', text: 'Remove', title: 'Remove this pick', onclick: () => send({ type: 'remove', target: 'links', level: 0 }) })),
-			el('p', { class: 'harvester-muted', text: 'The files are the items of an answer the page fetched: the job asks for it itself (with its cookies), page by page.' }),
-			input('url', 'Request', 'Its page parameter is set for each page; {year} and the like take the levels’ values.'),
-			input('items', 'Items (path in the answer, e.g. data.items)'),
-			input('file', 'File’s address (field of an item, e.g. pdf.href)'),
-			input('text', 'Text (field of an item, e.g. title)'),
-			input('pattern', 'Pattern on the file’s address (optional; named groups become values)'),
-			el('div', { class: 'harvester-toolbar' }, el('span', { text: 'Pages: parameter ' }), param, el('span', { text: ' from ' }), first, el('span', { text: ' step ' }), step))
+				el('button', { type: 'button', class: 'error', text: t('Remove'), title: t('Remove this pick'), onclick: () => send({ type: 'remove', target: 'links', level: 0 }) })),
+			el('p', { class: 'harvester-muted', text: t('The files are the items of an answer the page fetched: the job asks for it itself (with its cookies), page by page.') }),
+			input('url', t('Request'), t('Its page parameter is set for each page; {year} and the like take the levels’ values.', { year: '{year}' })),
+			input('items', t('Items (path in the answer, e.g. data.items)')),
+			input('file', t('File’s address (field of an item, e.g. pdf.href)')),
+			input('text', t('Text (field of an item, e.g. title)')),
+			input('pattern', t('Pattern on the file’s address (optional; named groups become values)')),
+			el('div', { class: 'harvester-toolbar' }, el('span', { text: `${t('Pages: parameter')} ` }), param, el('span', { text: ` ${t('from')} ` }), first, el('span', { text: ` ${t('step')} ` }), step))
 		if (proposal && proposal.error) box.append(el('p', { class: 'harvester-error', text: proposal.error }))
 		if (proposal && proposal.chosen) {
-			box.append(el('p', { text: `In the answer: ${proposal.items} items, ${proposal.found} with a file’s address; ${proposal.matching} match the pattern.${proposal.following ? ' The next page:' : ' One page (no page parameter).'}` }))
+			const counts = { items: proposal.items, found: proposal.found, matching: proposal.matching }
+			box.append(el('p', { text: `${t('In the answer: {items} items, {found} with a file’s address; {matching} match the pattern.', counts)} ${proposal.following ? t('The next page:') : t('One page (no page parameter).')}` }))
 			if (proposal.following) box.append(el('code', { text: proposal.following }))
-			if (proposal.sample) box.append(el('details', {}, el('summary', { text: 'The first item' }), el('code', { text: proposal.sample })))
+			if (proposal.sample) box.append(el('details', {}, el('summary', { text: t('The first item') }), el('code', { text: proposal.sample })))
 			box.append(examplesList(proposal))
 		} else {
-			box.append(el('p', { class: 'harvester-muted', text: 'Choose its answer in the Network panel again to see what it gives.' }))
+			box.append(el('p', { class: 'harvester-muted', text: t('Choose its answer in the Network panel again to see what it gives.') }))
 		}
 		box.append(renderValues(spec, send, 'links', 0, true),
 			el('div', { class: 'harvester-toolbar' }, fieldName,
-				el('button', { type: 'button', text: 'Add a value', onclick: () => { if (fieldName.value.trim()) send({ type: 'value-add', target: 'links', level: 0, field: fieldName.value.trim() }) } })))
+				el('button', { type: 'button', text: t('Add a value'), onclick: () => { if (fieldName.value.trim()) send({ type: 'value-add', target: 'links', level: 0, field: fieldName.value.trim() }) } })))
 		return box
 	}
 
 	// The next page: one link, or numbered pages (‹ 1 [2] 3 ›: the number one higher than the
 	// current page's), with what this page shows and the switch between the two when both fit.
 	function renderNext(box, spec, proposal, send) {
-		const where = `On ${Number(spec.level || 0) === 0 ? 'the listing' : `the pages of level ${spec.level}`}.`
+		const where = Number(spec.level || 0) === 0 ? t('On the listing.') : t('On the pages of level {level}.', { level: spec.level })
 		if (spec.kind === 'number') {
-			box.append(el('p', { text: `Numbered pages: the number after the current page’s is followed. ${where}` }))
+			box.append(el('p', { text: `${t('Numbered pages: the number after the current page’s is followed.')} ${where}` }))
 			if (proposal && proposal.kind === 'number') {
 				box.append(el('p', {
-					text: `On this page: numbers ${proposal.numbers.join(' ')}; this is page ${proposal.current}, the next is ${proposal.following ?? 'none (the last page)'}.`,
+					text: proposal.following != null
+						? t('On this page: numbers {numbers}; this is page {current}, the next is {next}.', { numbers: proposal.numbers.join(' '), current: proposal.current, next: proposal.following })
+						: t('On this page: numbers {numbers}; this is page {current}, the next is none (the last page).', { numbers: proposal.numbers.join(' '), current: proposal.current }),
 				}))
 			}
-			if (spec.buttons) box.append(el('p', { class: 'harvester-muted', text: 'The numbers are buttons: the job clicks them in the browser.' }))
-			if (proposal && proposal.link) box.append(el('button', { type: 'button', text: 'Use the picked link alone', onclick: () => send({ type: 'next-kind', kind: 'link' }) }))
+			if (spec.buttons) box.append(el('p', { class: 'harvester-muted', text: t('The numbers are buttons: the job clicks them in the browser.') }))
+			if (proposal && proposal.link) box.append(el('button', { type: 'button', text: t('Use the picked link alone'), onclick: () => send({ type: 'next-kind', kind: 'link' }) }))
 		} else {
-			box.append(el('p', { text: `The link to the next page. ${where}` }))
-			if (proposal && proposal.number) box.append(el('button', { type: 'button', text: 'Use numbered pages', onclick: () => send({ type: 'next-kind', kind: 'number' }) }))
+			box.append(el('p', { text: `${t('The link to the next page.')} ${where}` }))
+			if (proposal && proposal.number) box.append(el('button', { type: 'button', text: t('Use numbered pages'), onclick: () => send({ type: 'next-kind', kind: 'number' }) }))
 		}
 		return box
 	}
@@ -1030,47 +1061,49 @@
 	// browser showed when a step failed.
 	function renderTest(result) {
 		const ended = {
-			complete: 'It went through the whole site.',
-			files: 'It stopped at the first file links (a test lists a few).',
-			pages: 'It stopped after its pages (a test reads a few).',
-			time: 'It stopped: its time was up.',
-			stopped: 'Stopped.',
-			failed: 'It failed.',
+			complete: t('It went through the whole site.'),
+			files: t('It stopped at the first file links (a test lists a few).'),
+			pages: t('It stopped after its pages (a test reads a few).'),
+			time: t('It stopped: its time was up.'),
+			stopped: t('Stopped.'),
+			failed: t('It failed.'),
 		}[result.ended] || ''
+		const found = n('%n page', '%n pages', result.pages.length)
+		const counts = (page) => ({ level: page.level === 0 ? t('Listing') : t('Level {level}', { level: page.level }), page: page.page, matching: page.matching, found: page.found })
 		const box = el('div', { class: 'harvester-test', 'aria-live': 'polite' },
-			el('h3', { text: 'Test' }),
-			el('p', { text: `${result.files} file links on ${result.pages.length} pages. ${ended}` }))
-		if (result.as_job) box.append(el('p', { class: 'harvester-muted', text: 'As the job runs: a new browser with the job’s stored account, in the recipe’s window.' }))
+			el('h3', { text: t('Test') }),
+			el('p', { text: `${n('%n file link on {pages}.', '%n file links on {pages}.', result.files, { pages: found })} ${ended}`.trim() }))
+		if (result.as_job) box.append(el('p', { class: 'harvester-muted', text: t('As the job runs: a new browser with the job’s stored account, in the recipe’s window.') }))
 		if (result.probe) {
 			const probe = result.probe
 			box.append(probe.ok
-				? el('p', { text: `The first file’s first ${Math.round(probe.bytes / 1000)} KB: ${probe.type || 'no type given'}, of the job’s file types.` })
-				: el('p', { class: 'harvester-error' }, el('span', { text: `The first file: ${probe.problem} ` }), el('code', { text: probe.address || probe.url })))
+				? el('p', { text: t('The first file’s first {size} KB: {type}, of the job’s file types.', { size: Math.round(probe.bytes / 1000), type: probe.type || t('no type given') }) })
+				: el('p', { class: 'harvester-error' }, el('span', { text: `${t('The first file: {problem}', { problem: probe.problem })} ` }), el('code', { text: probe.address || probe.url })))
 		}
-		if (result.http) box.append(el('p', { class: 'harvester-muted', text: 'The job reads these pages without the browser (no steps): a page built by JavaScript may show it fewer links than here. Turn on “Use the browser” then.' }))
+		if (result.http) box.append(el('p', { class: 'harvester-muted', text: t('The job reads these pages without the browser (no steps): a page built by JavaScript may show it fewer links than here. Turn on “Use the browser” then.') }))
 		if (result.problems.length) box.append(el('ul', { class: 'harvester-error' }, ...result.problems.map((problem) => el('li', { text: problem }))))
 		// Optional steps it went on without: no problems of the recipe, but worth knowing.
 		const skipped = result.skipped || []
 		if (skipped.length) {
 			box.append(el('div', { class: 'harvester-skipped' },
-				el('p', { class: 'harvester-muted', text: 'Optional steps skipped:' }),
-				el('ul', {}, ...skipped.map((step) => el('li', { class: 'harvester-muted', text: `step ${step.number} (${step.label}): ${step.why}` })))))
+				el('p', { class: 'harvester-muted', text: t('Optional steps skipped:') }),
+				el('ul', {}, ...skipped.map((step) => el('li', { class: 'harvester-muted', text: t('step {number} ({label}): {why}', { number: step.number, label: step.label, why: step.why }) })))))
 		}
 		// Elements an alternative selector found: the recipe still works, but the site changed.
 		const repaired = result.repaired || []
 		if (repaired.length) {
 			box.append(el('div', { class: 'harvester-repaired' },
-				el('p', { class: 'harvester-muted', text: 'Found by an alternative selector (the recipe is unchanged):' }),
+				el('p', { class: 'harvester-muted', text: t('Found by an alternative selector (the recipe is unchanged):') }),
 				el('ul', {}, ...repaired.map((line) => el('li', { class: 'harvester-muted', text: line })))))
 		}
 		box.append(el('ol', { class: 'harvester-test-pages' }, ...result.pages.map((page) => el('li', {},
-			el('span', { text: `${page.level === 0 ? 'Listing' : `Level ${page.level}`}, page ${page.page}: ${page.matching} of ${page.found} ${page.kind === 'follow' ? 'links to follow' : 'file links'} ` }),
+			el('span', { text: `${page.kind === 'follow' ? t('{level}, page {page}: {matching} of {found} links to follow', counts(page)) : t('{level}, page {page}: {matching} of {found} file links', counts(page))} ` }),
 			el('code', { text: page.url }),
 			page.files.length ? el('ul', {}, ...page.files.map((file) => el('li', {},
 				file.problem ? el('span', { class: 'harvester-error', text: `${file.url}: ${file.problem}` }) : el('span', { text: file.path, title: file.url })))) : ''))))
 		if (result.shot) {
 			box.append(el('p', { text: `${result.shot.what}: ${result.shot.title || ''} ` }, el('code', { text: result.shot.url })),
-				el('img', { class: 'harvester-shot-image', src: `data:image/jpeg;base64,${result.shot.image}`, alt: 'What the browser showed then' }))
+				el('img', { class: 'harvester-shot-image', src: `data:image/jpeg;base64,${result.shot.image}`, alt: t('What the browser showed then') }))
 		}
 		return box
 	}
@@ -1100,12 +1133,12 @@
 	// whose text goes to the browser as text. Returns the box to put on the page.
 	function wireScreen(screen, send) {
 		const keys = el('textarea', {
-			class: 'harvester-keys', 'aria-label': 'Keyboard of the remote browser',
+			class: 'harvester-keys', 'aria-label': t('Keyboard of the remote browser'),
 			autocomplete: 'off', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false',
 		})
 		// Until its first frame (or instead of it, when the browser cannot start or is taken),
 		// the screen says what is going on, not an empty image.
-		const notice = el('div', { class: 'harvester-screen-notice', text: 'Starting the browser…' })
+		const notice = el('div', { class: 'harvester-screen-notice', text: t('Starting the browser…') })
 		const box = el('div', { class: 'harvester-screen-box' }, screen, notice, keys)
 		screen.frame = (data) => { screen.src = `data:image/jpeg;base64,${data}`; notice.hidden = true }
 		screen.say = (text) => { if (!screen.getAttribute('src')) { notice.textContent = text; notice.hidden = false } }
@@ -1196,7 +1229,7 @@
 		path.setAttribute('stroke', 'currentColor')
 		path.setAttribute('stroke-width', '2')
 		svg.append(path)
-		const button = el('button', { class: 'harvester-wide-switch', title: 'Full window (again: back)', 'aria-label': 'Full window' }, svg)
+		const button = el('button', { class: 'harvester-wide-switch', title: t('Full window (again: back)'), 'aria-label': t('Full window') }, svg)
 		const leave = () => {
 			container.classList.remove('harvester-wide')
 			button.setAttribute('aria-pressed', 'false')
@@ -1231,8 +1264,8 @@
 		const collapse = el('button', {
 			class: 'harvester-overlay-toggle',
 			text: '▾',
-			title: 'Hide or show the controls',
-			'aria-label': 'Hide or show the controls',
+			title: t('Hide or show the controls'),
+			'aria-label': t('Hide or show the controls'),
 			onclick: () => bar.classList.toggle('harvester-overlay-hidden'),
 		})
 		bar.prepend(collapse)
@@ -1265,24 +1298,24 @@
 		const error = el('p', { class: 'harvester-error' })
 		const list = el('div', { class: 'harvester-cookie-groups' })
 		const form = el('div', { class: 'harvester-cookie-form' })
-		const scope = el('select', { 'aria-label': 'Which cookies' },
-			el('option', { value: 'site', text: 'This site’s' }), el('option', { value: 'all', text: 'All' }))
+		const scope = el('select', { 'aria-label': t('Which cookies') },
+			el('option', { value: 'site', text: t('This site’s') }), el('option', { value: 'all', text: t('All') }))
 		const load = () => send({ type: 'cookies', all: everything })
 		scope.addEventListener('change', () => { everything = scope.value === 'all'; load() })
-		const readable = (expires) => expires ? new Date(expires * 1000).toLocaleString() : 'session'
+		const readable = (expires) => expires ? new Date(expires * 1000).toLocaleString() : t('session')
 
 		// Add (cookie null) or change a cookie. A value left empty while changing keeps the one the
 		// panel never showed.
 		function edit(cookie) {
 			const input = (value, attributes = {}) => { const node = el('input', attributes); node.value = value; return node }
-			const name = input(cookie ? cookie.name : '', { 'aria-label': 'Name' })
+			const name = input(cookie ? cookie.name : '', { 'aria-label': t('Name') })
 			const value = input(cookie && key(cookie) in values ? values[key(cookie)] : '', {
-				'aria-label': 'Value', placeholder: cookie && !(key(cookie) in values) ? '(unchanged)' : '', autocomplete: 'off', spellcheck: 'false',
+				'aria-label': t('Value'), placeholder: cookie && !(key(cookie) in values) ? t('(unchanged)') : '', autocomplete: 'off', spellcheck: 'false',
 			})
-			const domain = input(cookie ? cookie.domain : host, { 'aria-label': 'Domain' })
-			const path = input(cookie ? cookie.path : '/', { 'aria-label': 'Path' })
+			const domain = input(cookie ? cookie.domain : host, { 'aria-label': t('Domain') })
+			const path = input(cookie ? cookie.path : '/', { 'aria-label': t('Path') })
 			const expiresAt = cookie && cookie.expires ? new Date(cookie.expires * 1000 - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ''
-			const expires = input(expiresAt, { type: 'datetime-local', 'aria-label': 'Expires (empty: the session)' })
+			const expires = input(expiresAt, { type: 'datetime-local', 'aria-label': t('Expires (empty: the session)') })
 			const secure = el('input', { type: 'checkbox' })
 			secure.checked = cookie ? cookie.secure : true
 			const httpOnly = el('input', { type: 'checkbox' })
@@ -1305,69 +1338,69 @@
 				send(message)
 				form.replaceChildren()
 			}
-			form.replaceChildren(el('h4', { text: cookie ? `Change ${cookie.name}` : 'Add a cookie' }),
-				field('Name', name), field('Value', value), field('Domain', domain, 'This site, a parent (example.com) or a subdomain; a leading dot: its subdomains too.'),
-				field('Path', path), field('Expires', expires, 'Empty: until the browser closes (a session cookie).'),
+			form.replaceChildren(el('h4', { text: cookie ? t('Change {name}', { name: cookie.name }) : t('Add a cookie') }),
+				field(t('Name'), name), field(t('Value'), value), field(t('Domain'), domain, t('This site, a parent (example.com) or a subdomain; a leading dot: its subdomains too.')),
+				field(t('Path'), path), field(t('Expires'), expires, t('Empty: until the browser closes (a session cookie).')),
 				el('label', {}, secure, ' Secure '), el('label', {}, httpOnly, ' HttpOnly '), field('SameSite', sameSite),
 				el('div', { class: 'harvester-toolbar' },
-					el('button', { type: 'button', class: 'primary', text: cookie ? 'Save cookie' : 'Add cookie', onclick: save }),
-					el('button', { type: 'button', text: 'Cancel', onclick: () => form.replaceChildren() })))
+					el('button', { type: 'button', class: 'primary', text: cookie ? t('Save cookie') : t('Add cookie'), onclick: save }),
+					el('button', { type: 'button', text: t('Cancel'), onclick: () => form.replaceChildren() })))
 		}
 
 		function render() {
 			list.replaceChildren(...(groups.length ? groups : [null]).map((group) => {
-				if (!group) return el('p', { class: 'harvester-muted', text: everything ? 'No cookies.' : `No cookies for ${host || 'this page'}.` })
+				if (!group) return el('p', { class: 'harvester-muted', text: everything ? t('No cookies.') : host ? t('No cookies for {host}.', { host }) : t('No cookies for this page.') })
 				return el('div', { class: 'harvester-cookie-group', 'data-domain': group.domain },
 					el('div', { class: 'harvester-level-head' }, el('h4', { text: group.domain }),
-						el('button', { type: 'button', class: 'error', text: 'Delete all', title: `Delete every cookie of ${group.domain}`, onclick: () => send({ type: 'cookies-delete-site', domain: group.domain, all: everything }) })),
+						el('button', { type: 'button', class: 'error', text: t('Delete all'), title: t('Delete every cookie of {domain}', { domain: group.domain }), onclick: () => send({ type: 'cookies-delete-site', domain: group.domain, all: everything }) })),
 					el('table', { class: 'harvester-cookies' },
-						el('tr', {}, ...['Name', 'Value', 'Path', 'Expires', 'Flags', ''].map((text) => el('th', { text }))),
+						el('tr', {}, ...[t('Name'), t('Value'), t('Path'), t('Expires'), t('Flags'), ''].map((text) => el('th', { text }))),
 						...group.cookies.map((cookie) => {
 							const known = key(cookie) in values
 							const flags = [cookie.secure ? 'Secure' : '', cookie.httpOnly ? 'HttpOnly' : '', `SameSite=${cookie.sameSite}`].filter(Boolean).join(' ')
 							return el('tr', { 'data-cookie': cookie.name },
 								el('td', {}, el('code', { text: cookie.name })),
 								el('td', {}, known ? el('code', { class: 'harvester-cookie-value', text: values[key(cookie)] }) : el('span', { class: 'harvester-muted', text: `•••• (${cookie.size})` }),
-									el('button', { type: 'button', class: 'harvester-link', text: known ? 'Hide' : 'Show', onclick: () => {
+									el('button', { type: 'button', class: 'harvester-link', text: known ? t('Hide') : t('Show'), onclick: () => {
 										if (known) { delete values[key(cookie)]; render() } else send({ type: 'cookie-show', name: cookie.name, domain: cookie.domain, path: cookie.path })
 									} })),
 								el('td', { text: cookie.path }),
 								el('td', { text: readable(cookie.expires) }),
 								el('td', { text: flags }),
 								el('td', {},
-									el('button', { type: 'button', text: 'Edit', onclick: () => edit(cookie) }),
-									el('button', { type: 'button', class: 'error', text: 'Delete', onclick: () => send({ type: 'cookie-delete', name: cookie.name, domain: cookie.domain, path: cookie.path, all: everything }) })))
+									el('button', { type: 'button', text: t('Edit'), onclick: () => edit(cookie) }),
+									el('button', { type: 'button', class: 'error', text: t('Delete'), onclick: () => send({ type: 'cookie-delete', name: cookie.name, domain: cookie.domain, path: cookie.path, all: everything }) })))
 						})))
 			}))
 		}
 
 		const actions = el('div', { class: 'harvester-toolbar' }, scope,
-			el('button', { type: 'button', text: 'Refresh', onclick: load }),
-			el('button', { type: 'button', text: 'Add', onclick: () => edit(null) }))
+			el('button', { type: 'button', text: t('Refresh'), onclick: load }),
+			el('button', { type: 'button', text: t('Add'), onclick: () => edit(null) }))
 		if (intoAccount) {
 			actions.append(el('button', {
 				type: 'button',
-				text: 'Into the account',
-				title: 'These cookies (this site’s, or all) as a cookies.txt into the job’s account: stored once you save it',
+				text: t('Into the account'),
+				title: t('These cookies (this site’s, or all) as a cookies.txt into the job’s account: stored once you save it'),
 				onclick: () => send({ type: 'cookies-export', all: everything }),
 			}))
 		}
 		if (keep) {
 			actions.append(el('button', {
 				type: 'button',
-				text: 'Use for this job',
-				title: 'Keep the browser’s session (cookies, local storage) for the job’s next run; the browser stays open',
+				text: t('Use for this job'),
+				title: t('Keep the browser’s session (cookies, local storage) for the job’s next run; the browser stays open'),
 				onclick: () => send({ type: 'cookies-keep' }),
 			}))
 		}
 		const box = el('div', { class: 'harvester-cookies-panel', hidden: '' },
-			el('h3', { text: 'Cookies' }),
-			el('p', { class: 'harvester-muted', text: 'The browser’s cookies, changed at once. Values stay hidden until you show one: they are often the sign-in itself.' }),
+			el('h3', { text: t('Cookies') }),
+			el('p', { class: 'harvester-muted', text: t('The browser’s cookies, changed at once. Values stay hidden until you show one: they are often the sign-in itself.') }),
 			actions, error, status, list, form)
 		const button = el('button', {
 			type: 'button',
-			text: 'Cookies',
-			title: 'See, change or take over the browser’s cookies',
+			text: t('Cookies'),
+			title: t('See, change or take over the browser’s cookies'),
 			'aria-expanded': 'false',
 			onclick: () => {
 				box.hidden = !box.hidden
@@ -1392,7 +1425,7 @@
 						.then((text) => { status.textContent = text || '' })
 						.catch((e) => { error.textContent = e.message })
 				}
-			} else if (data.type === 'cookies-kept') status.textContent = 'Kept for the job: its next run starts with this session.'
+			} else if (data.type === 'cookies-kept') status.textContent = t('Kept for the job: its next run starts with this session.')
 			else return false
 			return true
 		}
@@ -1400,12 +1433,13 @@
 	}
 
 	function networkLine() {
-		const line = el('p', { class: 'harvester-muted harvester-network', text: 'Checking which address sites see…' })
+		const line = el('p', { class: 'harvester-muted harvester-network', text: t('Checking which address sites see…') })
 		line.show = (data) => {
-			const where = data.proxied ? `through ${data.via}` : 'directly, from the server'
+			const where = data.proxied ? t('through {proxy}', { proxy: proxyName(data.via) }) : t('directly, from the server')
+			const address = data.country ? `${data.ip} (${data.country})` : data.ip
 			line.textContent = data.error
-				? `Sites see: unknown (${where}; the check failed: ${data.error})`
-				: `Sites see ${data.ip}${data.country ? ` (${data.country})` : ''}, ${where}.`
+				? t('Sites see: unknown ({where}; the check failed: {error})', { where, error: data.error })
+				: t('Sites see {address}, {where}.', { address, where })
 			line.classList.toggle('harvester-proxied', Boolean(data.proxied && !data.error))
 		}
 		return line
@@ -1414,33 +1448,33 @@
 	// What a job's browser showed when a step failed or a page asked for a person: the picture,
 	// the page's address and title; from here the browser opens live at that page.
 	async function showShot(root, job) {
-		const view = el('div', { class: 'harvester-shot' }, el('p', { class: 'harvester-muted', text: 'Loading…' }))
+		const view = el('div', { class: 'harvester-shot' }, el('p', { class: 'harvester-muted', text: t('Loading…') }))
 		root.replaceChildren(view)
 		let shot
 		try {
 			shot = await api('GET', `/jobs/${job.id}/shot`)
 		} catch (e) {
 			view.replaceChildren(el('p', { class: 'harvester-error', text: e.message }),
-				el('button', { text: 'Back', onclick: () => show(root) }))
+				el('button', { text: t('Back'), onclick: () => show(root) }))
 			return
 		}
 		if (!root.contains(view)) return
 		view.replaceChildren(
 			el('div', { class: 'harvester-header' },
 				el('div', {},
-					el('h2', { text: `${job.name}: what the browser saw` }),
+					el('h2', { text: t('{name}: what the browser saw', { name: job.name }) }),
 					el('p', { class: 'harvester-muted', text: `${shot.what} · ${when(shot.at)}` })),
 				el('div', { class: 'harvester-actions' },
-					el('button', { class: 'primary', text: 'Open in the browser', title: 'The job’s browser at this page, with its session, to look live', onclick: () => openSession(root, job, 'shot') }),
-					el('button', { text: 'Back', onclick: () => show(root) }))),
-			el('p', {}, el('strong', { text: shot.title || '(no title)' }), el('br'), el('code', { text: shot.url })),
-			el('img', { class: 'harvester-shot-image', src: `data:image/jpeg;base64,${shot.image}`, alt: `The page ${shot.url} as the job’s browser showed it` }))
+					el('button', { class: 'primary', text: t('Open in the browser'), title: t('The job’s browser at this page, with its session, to look live'), onclick: () => openSession(root, job, 'shot') }),
+					el('button', { text: t('Back'), onclick: () => show(root) }))),
+			el('p', {}, el('strong', { text: shot.title || t('(no title)') }), el('br'), el('code', { text: shot.url })),
+			el('img', { class: 'harvester-shot-image', src: `data:image/jpeg;base64,${shot.image}`, alt: t('The page {address} as the job’s browser showed it', { address: shot.url }) }))
 	}
 
 	// The remote browser's navigation: Back, Forward and Reload, buttons as any other (Tab and
 	// Enter or Space reach them); the server records none of them outside the mode record.
 	function navigation(send) {
-		return [['back', 'Back', 'The page before'], ['forward', 'Forward', 'The page after'], ['reload', 'Reload', 'Load this page again']]
+		return [['back', t('Back'), t('The page before')], ['forward', t('Forward'), t('The page after')], ['reload', t('Reload'), t('Load this page again')]]
 			.map(([type, text, title]) => el('button', { type: 'button', text, title, onclick: () => send({ type }) }))
 	}
 
@@ -1450,15 +1484,16 @@
 	function openSession(root, job, at = '') {
 		const socket = new WebSocket(`${RECORDER}?job=${job.id}${at ? `&at=${encodeURIComponent(at)}` : ''}`)
 		const send = (message) => socket.readyState === WebSocket.OPEN && socket.send(JSON.stringify(message))
-		const screen = el('img', { class: 'harvester-screen', tabindex: '0', alt: 'The job’s browser' })
-		const url = el('input', { class: 'harvester-url', value: job.challenge_url || '', 'aria-label': 'Address' })
+		const screen = el('img', { class: 'harvester-screen', tabindex: '0', alt: t('The job’s browser') })
+		const url = el('input', { class: 'harvester-url', value: job.challenge_url || '', 'aria-label': t('Address') })
 		url.addEventListener('keydown', (event) => { if (event.key === 'Enter') send({ type: 'goto', url: url.value }) })
-		const message = el('p', { class: 'harvester-muted', text: 'Starting the browser…' })
+		const starting = t('Starting the browser…')
+		const message = el('p', { class: 'harvester-muted', text: starting })
 		const network = networkLine()
 		const done = el('button', {
 			class: 'primary',
-			text: 'Done',
-			title: 'Keep this session for the job and run it again',
+			text: t('Done'),
+			title: t('Keep this session for the job and run it again'),
 			onclick: () => { done.disabled = true; send({ type: 'save-session' }) },
 		})
 		// The job's account takes cookies when its source has the field; stored only once the
@@ -1466,9 +1501,9 @@
 		const source = sources.find((s) => s.name === job.source)
 		const intoAccount = source && source.credentials.includes('cookies')
 			? async (text, count) => {
-				if (!confirm(`Store these ${count} cookies as the account’s Cookies of “${job.name}”? They replace the ones stored, and the job’s kept session is forgotten.`)) return 'Not stored.'
+				if (!confirm(n('Store this cookie as the account’s Cookies of “{name}”? It replaces the ones stored, and the job’s kept session is forgotten.', 'Store these %n cookies as the account’s Cookies of “{name}”? They replace the ones stored, and the job’s kept session is forgotten.', count, { name: job.name }))) return t('Not stored.')
 				await api('PUT', `/jobs/${job.id}/credentials`, { cookies: text })
-				return `${count} cookies stored in the job’s account.`
+				return n('%n cookie stored in the job’s account.', '%n cookies stored in the job’s account.', count)
 			}
 			: null
 		const cookies = cookiesPanel(send, intoAccount, true)
@@ -1478,7 +1513,7 @@
 			if (data.type === 'frame') {
 				if (left(screen, socket)) return
 				screen.frame(data.data)
-				if (message.textContent === 'Starting the browser…') message.textContent = ''
+				if (message.textContent === starting) message.textContent = ''
 			} else if (data.type === 'cursor') screen.style.cursor = data.cursor
 			else if (data.type === 'url') url.value = data.url
 			else if (data.type === 'error') { message.textContent = data.message; done.disabled = false; screen.say(data.message) }
@@ -1486,24 +1521,24 @@
 			else if (data.type === 'viewport') screen.resized(data)
 			else if (data.type === 'network') network.show(data)
 		})
-		socket.addEventListener('close', () => { if (root.contains(screen)) { message.textContent ||= 'The browser closed.'; screen.say(message.textContent) } })
+		socket.addEventListener('close', () => { if (root.contains(screen)) { message.textContent ||= t('The browser closed.'); screen.say(message.textContent) } })
 		const box = wireScreen(screen, send)
 		const container = el('div', { class: 'harvester-recorder' })
 		container.append(
 			el('div', { class: 'harvester-header' },
 				el('div', {},
-					el('h2', { text: `${job.name}: ${at === 'shot' ? 'in the job’s browser' : 'continue in the browser'}` }),
+					el('h2', { text: at === 'shot' ? t('{name}: in the job’s browser', { name: job.name }) : t('{name}: continue in the browser', { name: job.name }) }),
 					el('p', {
 						class: 'harvester-muted',
 						text: at === 'shot'
-							? 'The job’s browser with its session, at the page where it stopped. Look around (nothing is recorded); Done keeps this session and runs the job again, Cancel leaves it as it was.'
-							: 'The site asks for a person. Answer it here as you would in your own browser (and sign in, if it asks); then press Done. The job keeps this session and runs again.',
+							? t('The job’s browser with its session, at the page where it stopped. Look around (nothing is recorded); Done keeps this session and runs the job again, Cancel leaves it as it was.')
+							: t('The site asks for a person. Answer it here as you would in your own browser (and sign in, if it asks); then press Done. The job keeps this session and runs again.'),
 					}))),
 			overlay(
 				el('div', { class: 'harvester-toolbar' }, ...navigation(send), url,
-					el('button', { type: 'button', text: 'Go', onclick: () => send({ type: 'goto', url: url.value }) }),
+					el('button', { type: 'button', text: t('Go'), onclick: () => send({ type: 'goto', url: url.value }) }),
 					fullWindow(container, box, send), cookies.button, done,
-					el('button', { text: 'Cancel', onclick: () => { socket.close(); show(root) } })),
+					el('button', { text: t('Cancel'), onclick: () => { socket.close(); show(root) } })),
 				network, message, cookies.box),
 			el('div', { class: 'harvester-stage' }, box))
 		root.replaceChildren(container)
@@ -1546,8 +1581,8 @@
 		const query = flags.filter((box) => box && box.checked).map((box) => `${box.dataset.option}=1`).join('&')
 		const socket = new WebSocket(query ? `${RECORDER}?${query}` : RECORDER)
 		const send = (message) => socket.readyState === WebSocket.OPEN && socket.send(JSON.stringify(message))
-		const screen = el('img', { class: 'harvester-screen', tabindex: '0', alt: 'The recorder’s browser' })
-		const url = el('input', { class: 'harvester-url', placeholder: 'https://… the site’s first page', 'aria-label': 'Address' })
+		const screen = el('img', { class: 'harvester-screen', tabindex: '0', alt: t('The recorder’s browser') })
+		const url = el('input', { class: 'harvester-url', placeholder: t('https://… the site’s first page'), 'aria-label': t('Address') })
 		const message = el('p', { class: 'harvester-error' })
 		const network = networkLine()
 		const panel = el('div', { class: 'harvester-steps' })
@@ -1558,32 +1593,31 @@
 			? (text, count) => {
 				cookieField.value = text
 				cookieField.dispatchEvent(new Event('input', { bubbles: true }))
-				return `${count} cookies in the account’s Cookies field: stored with the job when you save it.`
+				return n('%n cookie in the account’s Cookies field: stored with the job when you save it.', '%n cookies in the account’s Cookies field: stored with the job when you save it.', count)
 			}
 			: null, false)
 		const help = {
-			record: 'Use the site as usual: sign in and go to the listing. Clicks, typing, addresses typed and Back or Forward are recorded; scrolling is not (add “scroll to load more” for a listing that grows as it is scrolled).',
-			browse: 'Go anywhere without recording (into a year, an issue, …) to pick there.',
-			follow: 'Click one link that leads to a further listing (a year, a category): similar links are picked with it.',
-			links: 'Click one file link: the similar ones are picked with it, and a pattern is proposed.',
-			next: 'Click the link to the next page of this listing (if there is one); for numbered pages (1 2 3 …), click the number of the next page.',
+			record: t('Use the site as usual: sign in and go to the listing. Clicks, typing, addresses typed and Back or Forward are recorded; scrolling is not (add “scroll to load more” for a listing that grows as it is scrolled).'),
+			browse: t('Go anywhere without recording (into a year, an issue, …) to pick there.'),
+			follow: t('Click one link that leads to a further listing (a year, a category): similar links are picked with it.'),
+			links: t('Click one file link: the similar ones are picked with it, and a pattern is proposed.'),
+			next: t('Click the link to the next page of this listing (if there is one); for numbered pages (1 2 3 …), click the number of the next page.'),
 		}
 		const modeHelp = el('small', { text: (recipe.steps || []).length ? help.browse : help.record })
 		// Where the person acts: the page, or a frame in it (recorder.js reports it as the mouse
 		// or the focus comes in).
-		const ordinal = (n) => `${n}${n % 10 === 1 && n % 100 !== 11 ? 'st' : n % 10 === 2 && n % 100 !== 12 ? 'nd' : n % 10 === 3 && n % 100 !== 13 ? 'rd' : 'th'}`
-		const where = el('small', { class: 'harvester-where', 'aria-live': 'polite', text: 'Acting in: the page' })
+		const where = el('small', { class: 'harvester-where', 'aria-live': 'polite', text: t('Acting in: the page') })
 		const showWhere = (frame) => {
-			where.textContent = frame ? `Acting in a frame: ${frame.host || '(no address)'} (${ordinal(frame.level)} level)` : 'Acting in: the page'
+			where.textContent = frame ? t('Acting in a frame: {host} (level {level})', { host: frame.host || t('(no address)'), level: frame.level }) : t('Acting in: the page')
 		}
 		const scroll = el('button', {
 			type: 'button',
-			text: 'Add: scroll to load more',
-			title: 'A step: scroll to the end of the page until no more comes (a listing that loads more as it is scrolled)',
+			text: t('Add: scroll to load more'),
+			title: t('A step: scroll to the end of the page until no more comes (a listing that loads more as it is scrolled)'),
 			onclick: () => send({ type: 'scroll' }),
 		})
 		const radios = {}
-		const labels = [['record', 'Record steps'], ['browse', 'Browse'], ['follow', 'Pick links to follow'], ['links', 'Pick file links'], ['next', 'Pick next-page link']]
+		const labels = [['record', t('Record steps')], ['browse', t('Browse')], ['follow', t('Pick links to follow')], ['links', t('Pick file links')], ['next', t('Pick next-page link')]]
 		const placing = el('div', { class: 'harvester-placing' })
 		let current = placed ? 'record' : 'browse'
 		const choose = (mode, text, level, target) => {
@@ -1606,8 +1640,8 @@
 		// keeping the later ones; from there on, instead of the later ones; or instead of all.
 		function askPlace() {
 			const count = (recipe.steps || []).length
-			const after = el('select', { 'aria-label': 'After which step' },
-				...Array.from({ length: count + 1 }, (_, n) => el('option', { value: String(n), text: n ? `after step ${n}` : 'before step 1' })))
+			const after = el('select', { 'aria-label': t('After which step') },
+				...Array.from({ length: count + 1 }, (_, number) => el('option', { value: String(number), text: number ? t('after step {number}', { number }) : t('before step 1') })))
 			after.value = String(count)
 			const start = (replace, at) => {
 				send({ type: 'record-at', after: at === undefined ? Number(after.value) : at, replace })
@@ -1615,11 +1649,11 @@
 				choose('record')
 			}
 			placing.replaceChildren(
-				el('span', { text: 'This recipe has steps. Record new ones ' }), after, ' ',
-				el('button', { type: 'button', class: 'primary', text: 'Append', title: 'The new steps go in there; the steps after it stay after them', onclick: () => start(false) }),
-				el('button', { type: 'button', text: 'Replace from there', title: 'The steps after that place go; the new ones take their place', onclick: () => start(true) }),
-				el('button', { type: 'button', text: 'Replace all', title: 'All steps go (the sign-in too); the new ones are the recipe’s', onclick: () => start(true, 0) }),
-				el('button', { type: 'button', text: 'Cancel', onclick: () => placing.replaceChildren() }))
+				el('span', { text: `${t('This recipe has steps. Record new ones')} ` }), after, ' ',
+				el('button', { type: 'button', class: 'primary', text: t('Append'), title: t('The new steps go in there; the steps after it stay after them'), onclick: () => start(false) }),
+				el('button', { type: 'button', text: t('Replace from there'), title: t('The steps after that place go; the new ones take their place'), onclick: () => start(true) }),
+				el('button', { type: 'button', text: t('Replace all'), title: t('All steps go (the sign-in too); the new ones are the recipe’s'), onclick: () => start(true, 0) }),
+				el('button', { type: 'button', text: t('Cancel'), onclick: () => placing.replaceChildren() }))
 			after.focus()
 		}
 		for (const [mode, label] of labels) {
@@ -1632,17 +1666,19 @@
 		// Pick again: the pick's mode; a level's links replace that level's, the later ones stay.
 		const repick = (target, level, mode) => {
 			if (mode === 'value') {
-				const which = target === 'links' ? 'the file links' : `the links of level ${level + 1}`
-				choose('value', `Click a text near one of ${which} (outlined): in a link, or in its row or card. It becomes a value (a date, a title); click more for more.`, level, target)
+				choose('value', target === 'links'
+					? t('Click a text near one of the file links (outlined): in a link, or in its row or card. It becomes a value (a date, a title); click more for more.')
+					: t('Click a text near one of the links of level {level} (outlined): in a link, or in its row or card. It becomes a value (a date, a title); click more for more.', { level: level + 1 }), level, target)
 			} else if (target === 'follow') {
-				const where = level === 0 ? 'the listing' : `a page of level ${level}`
-				choose('follow', `Go to ${where} (Browse) and click one of the links to follow: they replace level ${level + 1}’s.`, level)
+				choose('follow', level === 0
+					? t('Go to the listing (Browse) and click one of the links to follow: they replace level {next}’s.', { next: level + 1 })
+					: t('Go to a page of level {level} (Browse) and click one of the links to follow: they replace level {next}’s.', { level, next: level + 1 }), level)
 			} else choose(target)
 		}
 		const test = el('button', {
 			type: 'button',
-			text: 'Test the recipe',
-			title: 'Walk the recipe here with this browser’s session, without downloading: the pages, the file links and their names',
+			text: t('Test the recipe'),
+			title: t('Walk the recipe here with this browser’s session, without downloading: the pages, the file links and their names'),
 			onclick: () => {
 				if (testing) send({ type: 'test-stop' })
 				else send({ type: 'test', recipe, settings: settings() })
@@ -1652,21 +1688,21 @@
 		// adds it; this page never has it), the first file's first bytes fetched.
 		const testJob = el('button', {
 			type: 'button',
-			text: 'Test as the job runs',
-			title: jobId() ? 'A new browser with the job’s stored account and window: the sign-in replayed, the first file’s start fetched' : 'Save the job first: this test signs in with its stored account',
+			text: t('Test as the job runs'),
+			title: jobId() ? t('A new browser with the job’s stored account and window: the sign-in replayed, the first file’s start fetched') : t('Save the job first: this test signs in with its stored account'),
 			onclick: () => send({ type: 'test', recipe, settings: settings(), as_job: true, job: jobId() }),
 		})
 		testJob.disabled = !jobId()
 		const networkBox = el('div', { class: 'harvester-requests', hidden: '' })
 		const renderRequests = () => networkBox.replaceChildren(
-			el('p', { class: 'harvester-muted', text: requests.length ? 'The page’s requests answered with JSON (newest last). One whose items are the files can be the file links.' : 'No answers in JSON yet: browse the listing, its requests show here.' }),
+			el('p', { class: 'harvester-muted', text: requests.length ? t('The page’s requests answered with JSON (newest last). One whose items are the files can be the file links.') : t('No answers in JSON yet: browse the listing, its requests show here.') }),
 			el('ul', {}, ...requests.map((request) => el('li', {},
 				el('code', { text: request.url }), ` ${(request.size / 1000).toFixed(1)} KB (${request.status}) `,
-				el('button', { type: 'button', text: 'Use as the file links', onclick: () => send({ type: 'json-pick', id: request.id }) })))))
+				el('button', { type: 'button', text: t('Use as the file links'), onclick: () => send({ type: 'json-pick', id: request.id }) })))))
 		const networkButton = el('button', {
 			type: 'button',
-			text: 'Network',
-			title: 'The answers in JSON to the page’s requests (XHR, fetch): a listing a page builds from one',
+			text: t('Network'),
+			title: t('The answers in JSON to the page’s requests (XHR, fetch): a listing a page builds from one'),
 			'aria-expanded': 'false',
 			onclick: () => {
 				networkBox.hidden = !networkBox.hidden
@@ -1694,32 +1730,35 @@
 			box.checked = Boolean(step.optional)
 			box.addEventListener('change', () => toggle(box.checked))
 			const tool = (text, label, message, usable = true) => {
-				const button = el('button', { type: 'button', class: 'harvester-link', text, title: label, 'aria-label': `${label}: step ${index + 1}`, onclick: () => send({ ...message, step: index }) })
+				const button = el('button', { type: 'button', class: 'harvester-link', text, title: label, 'aria-label': t('{action}: step {number}', { action: label, number: index + 1 }), onclick: () => send({ ...message, step: index }) })
 				button.disabled = !usable
 				return button
 			}
 			const tools = el('span', { class: 'harvester-step-tools' },
-				tool('↑', 'Move up', { type: 'step-move', by: -1 }, index > 0),
-				tool('↓', 'Move down', { type: 'step-move', by: 1 }, index < count - 1),
-				tool('✕', 'Remove', { type: 'step-delete' }))
+				tool('↑', t('Move up'), { type: 'step-move', by: -1 }, index > 0),
+				tool('↓', t('Move down'), { type: 'step-move', by: 1 }, index < count - 1),
+				tool('✕', t('Remove'), { type: 'step-delete' }))
 			const details = []
 			if (step.action === 'fill') {
-				const kind = el('select', { 'aria-label': `What step ${index + 1} fills in` },
-					...[['', 'a value of its own'], ['username', 'the account’s user name'], ['password', 'the account’s password'], ['totp', 'the current one-time code']]
+				const kind = el('select', { 'aria-label': t('What step {number} fills in', { number: index + 1 }) },
+					...[['', t('a value of its own')], ['username', t('the account’s user name')], ['password', t('the account’s password')], ['totp', t('the current one-time code')]]
 						.map(([value, text]) => el('option', { value, text })))
 				kind.value = step.credential || ''
 				kind.addEventListener('change', () => edit({ credential: kind.value }))
-				details.push(el('label', {}, 'Fills in ', kind))
+				details.push(el('label', {}, `${t('Fills in')} `, kind))
 			}
 			if ((step.action === 'fill' && !step.credential) || (step.action === 'select' && !Array.isArray(step.value))) {
-				const value = el('input', { class: 'harvester-step-value', value: String(step.value || ''), 'aria-label': `The value of step ${index + 1}` })
+				const value = el('input', { class: 'harvester-step-value', value: String(step.value || ''), 'aria-label': t('The value of step {number}', { number: index + 1 }) })
 				value.addEventListener('change', () => edit({ value: value.value }))
 				details.push(value)
 			}
 			if (step.wait && (step.wait.url || step.wait.selector)) {
-				const what = [step.wait.url ? `an address like ${step.wait.url}` : '', step.wait.selector ? `${step.wait.selector} to show` : ''].filter(Boolean).join(' and ')
-				details.push(el('small', { class: 'harvester-muted', text: `then waits for ${what} ` }),
-					el('button', { type: 'button', class: 'harvester-link', text: 'wait for the network instead', onclick: () => edit({ wait: null }) }))
+				const address = step.wait.url
+				const shown = step.wait.selector
+				const what = address && shown ? t('then waits for an address like {address} and {selector} to show', { address, selector: shown })
+					: address ? t('then waits for an address like {address}', { address }) : t('then waits for {selector} to show', { selector: shown })
+				details.push(el('small', { class: 'harvester-muted', text: `${what} ` }),
+					el('button', { type: 'button', class: 'harvester-link', text: t('wait for the network instead'), onclick: () => edit({ wait: null }) }))
 			}
 			details.push(timing(step, index, edit))
 			const classes = [step.frame && step.frame.length ? 'harvester-framed' : '', mark ? `harvester-step-${mark.state}` : '']
@@ -1731,14 +1770,14 @@
 				mark ? stepMark(mark) : '',
 				el('span', { text: `${describe(step)} ` }),
 				mailCode(step, index),
-				el('label', { title: 'Best effort: when it fails (not there, not visible), the job waits a few seconds at most and goes on without it' }, box, ' optional'),
+				el('label', { title: t('Best effort: when it fails (not there, not visible), the job waits a few seconds at most and goes on without it') }, box, ` ${t('optional')}`),
 				!step.optional && looksLikeConsent(step)
-					? el('button', { type: 'button', class: 'harvester-link harvester-hint', text: 'make optional?', title: 'A consent banner often shows only on the first visit', onclick: () => toggle(true) })
+					? el('button', { type: 'button', class: 'harvester-link harvester-hint', text: t('make optional?'), title: t('A consent banner often shows only on the first visit'), onclick: () => toggle(true) })
 					: '',
 				tools,
 				details.length ? el('div', { class: 'harvester-step-details' }, ...details) : '')
 			if (mark && mark.state === 'failed' && !testing) {
-				item.title = 'The test failed here: click to change its pause or retries'
+				item.title = t('The test failed here: click to change its pause or retries')
 				item.addEventListener('click', (event) => {
 					if (event.target.closest('button, input, select, summary, label, details')) return
 					editing = index
@@ -1752,17 +1791,17 @@
 		// What the test did with a step: playing (its attempt, when it has more), pausing (a
 		// countdown), trying again, passed, skipped (optional), failed, not played (the session).
 		function stepMark(mark) {
-			const attempt = mark.of > 1 ? ` (attempt ${mark.attempt} of ${mark.of})` : ''
 			const left = mark.ends ? Math.max(0, Math.ceil((mark.ends - Date.now()) / 1000)) : 0
+			const attempt = { attempt: mark.attempt, of: mark.of, left }
 			const text = {
-				playing: `▶ playing${attempt}`,
-				pausing: `⏸ pausing ${left} s`,
-				retrying: `↻ attempt ${mark.attempt} of ${mark.of} in ${left} s`,
-				passed: '✓ passed',
-				skipped: '– skipped (optional)',
-				failed: '✗ failed',
-				session: '↷ not played (signed in)',
-				stopped: '■ stopped',
+				playing: mark.of > 1 ? t('▶ playing (attempt {attempt} of {of})', attempt) : t('▶ playing'),
+				pausing: t('⏸ pausing {left} s', attempt),
+				retrying: t('↻ attempt {attempt} of {of} in {left} s', attempt),
+				passed: t('✓ passed'),
+				skipped: t('– skipped (optional)'),
+				failed: t('✗ failed'),
+				session: t('↷ not played (signed in)'),
+				stopped: t('■ stopped'),
 			}[mark.state] || ''
 			return el('span', { class: 'harvester-step-mark', title: mark.why || '', text: `${text} ` })
 		}
@@ -1772,10 +1811,10 @@
 		function timing(step, index, edit) {
 			const retry = step.retry || null
 			const number = (value, label, max, stepping) => el('input', {
-				type: 'number', min: '0', max: String(max), step: stepping, value, class: 'harvester-step-number', 'aria-label': `${label} of step ${index + 1}`,
+				type: 'number', min: '0', max: String(max), step: stepping, value, class: 'harvester-step-number', 'aria-label': t('{setting} of step {number}', { setting: label, number: index + 1 }),
 			})
-			const pause = number(step.pause ? String(step.pause) : '', 'The pause before (seconds)', 60, '0.5')
-			pause.placeholder = 'none'
+			const pause = number(step.pause ? String(step.pause) : '', t('The pause before (seconds)'), 60, '0.5')
+			pause.placeholder = t('none')
 			pause.addEventListener('change', () => {
 				const seconds = Number(pause.value)
 				if (!pause.value || seconds === 0) {
@@ -1786,8 +1825,8 @@
 					edit({ pause: seconds })
 				} else pause.value = step.pause ? String(step.pause) : ''
 			})
-			const times = number(retry ? String(retry.times) : '0', 'Tries again', 10, '1')
-			const delay = number(String(retry && retry.delay !== undefined ? retry.delay : 2), 'The delay between tries (seconds)', 60, '0.5')
+			const times = number(retry ? String(retry.times) : '0', t('Tries again'), 10, '1')
+			const delay = number(String(retry && retry.delay !== undefined ? retry.delay : 2), t('The delay between tries (seconds)'), 60, '0.5')
 			const setRetry = () => {
 				const count = Number(times.value || 0)
 				const seconds = Number(delay.value === '' ? 2 : delay.value)
@@ -1804,12 +1843,12 @@
 			}
 			times.addEventListener('change', setRetry)
 			delay.addEventListener('change', setRetry)
-			const set = [step.pause ? `pause ${step.pause} s` : '', retry ? `retry ${retry.times}×` : ''].filter(Boolean).join(', ')
+			const set = [step.pause ? t('pause {seconds} s', { seconds: step.pause }) : '', retry ? t('retry {times}×', { times: retry.times }) : ''].filter(Boolean).join(', ')
 			const box = el('details', { class: 'harvester-step-timing' },
-				el('summary', { text: set || 'pause, retry', title: 'Wait before this step, or try it again when it fails' }),
-				el('label', {}, 'Pause before it ', pause, ' s'),
-				el('label', { title: 'When the step fails (its element not there in time, its wait not met), try it again this many times' }, ' Try again ', times, ' times'),
-				el('label', {}, ', every ', delay, ' s'))
+				el('summary', { text: set || t('pause, retry'), title: t('Wait before this step, or try it again when it fails') }),
+				el('label', {}, `${t('Pause before it')} `, pause, ' s'),
+				el('label', { title: t('When the step fails (its element not there in time, its wait not met), try it again this many times') }, ` ${t('Try again')} `, times, ` ${t('times')}`),
+				el('label', {}, `, ${t('every')} `, delay, ' s'))
 			box.open = editing === index
 			if (editing === index && focusEditor) {
 				focusEditor = false
@@ -1838,8 +1877,8 @@
 		function mailCode(step, index) {
 			const code = step.action === 'mail-code'
 			if (!code && !(step.action === 'fill' && (step.credential === 'totp' || /^\d{4,8}$/.test(String(step.value || ''))))) return ''
-			const from = el('input', { class: 'harvester-pattern', value: step.from || '', placeholder: 'Sender, e.g. no-reply@shop\\.example', 'aria-label': 'Sender (a pattern)' })
-			const subject = el('input', { class: 'harvester-pattern', value: step.subject || '', placeholder: 'Subject, e.g. code|Code', 'aria-label': 'Subject (a pattern)' })
+			const from = el('input', { class: 'harvester-pattern', value: step.from || '', placeholder: t('Sender, e.g. no-reply@shop\\.example'), 'aria-label': t('Sender (a pattern)') })
+			const subject = el('input', { class: 'harvester-pattern', value: step.subject || '', placeholder: t('Subject, e.g. code|Code'), 'aria-label': t('Subject (a pattern)') })
 			const use = (on) => {
 				if (on) {
 					Object.assign(step, { action: 'mail-code', from: from.value, subject: subject.value })
@@ -1854,34 +1893,34 @@
 				renderPanel()
 			}
 			return el('details', code ? { class: 'harvester-mail-code', open: '' } : { class: 'harvester-mail-code' },
-				el('summary', { text: code ? 'code from e-mail' : 'code from e-mail?' }),
-				el('small', { class: 'harvester-muted', text: 'The job waits up to 3 minutes for a new message of this sender and subject in the account’s mailbox for codes, and types its code (the first number of 6 to 8 digits).' }),
-				field('Sender (pattern)', from), field('Subject (pattern)', subject),
-				el('button', { type: 'button', text: code ? 'Change' : 'Use the code from e-mail', onclick: () => use(true) }),
-				code ? el('button', { type: 'button', text: 'Back to a one-time code', onclick: () => use(false) }) : '')
+				el('summary', { text: code ? t('code from e-mail') : t('code from e-mail?') }),
+				el('small', { class: 'harvester-muted', text: t('The job waits up to 3 minutes for a new message of this sender and subject in the account’s mailbox for codes, and types its code (the first number of 6 to 8 digits).') }),
+				field(t('Sender (pattern)'), from), field(t('Subject (pattern)'), subject),
+				el('button', { type: 'button', text: code ? t('Change') : t('Use the code from e-mail'), onclick: () => use(true) }),
+				code ? el('button', { type: 'button', text: t('Back to a one-time code'), onclick: () => use(false) }) : '')
 		}
 
 		function renderPanel() {
-			test.textContent = testing ? 'Stop the test' : 'Test the recipe'
+			test.textContent = testing ? t('Stop the test') : t('Test the recipe')
 			testJob.hidden = testing
 			panel.replaceChildren(
-				el('div', { class: 'harvester-level-head' }, el('h3', { text: 'Steps' })),
+				el('div', { class: 'harvester-level-head' }, el('h3', { text: t('Steps') })),
 				leaks,
 				warnings.length ? el('ul', { class: 'harvester-error harvester-warnings' }, ...warnings.map((warning) => el('li', { text: warning }))) : '',
 				el('ol', {}, ...(recipe.steps || []).map((step, index, all) => renderStep(step, index, all.length))),
-				el('div', { class: 'harvester-level-head' }, el('h3', { text: 'Listing' }),
-					el('button', { type: 'button', text: 'Undo pick', title: 'Take back the last change of the picks', onclick: () => send({ type: 'undo-pick' }) })),
-				el('p', { text: recipe.start || ((recipe.steps || []).length ? '(where the steps end)' : '(the page where you pick)') }),
+				el('div', { class: 'harvester-level-head' }, el('h3', { text: t('Listing') }),
+					el('button', { type: 'button', text: t('Undo pick'), title: t('Take back the last change of the picks'), onclick: () => send({ type: 'undo-pick' }) })),
+				el('p', { text: recipe.start || ((recipe.steps || []).length ? t('(where the steps end)') : t('(the page where you pick)')) }),
 				...(recipe.follow || []).map((spec, level) =>
-					renderLevel(`Level ${level + 1}: links to follow`, spec, proposals[`follow${level}`], send, 'follow', level, suggestions, repick)),
+					renderLevel(t('Level {level}: links to follow', { level: level + 1 }), spec, proposals[`follow${level}`], send, 'follow', level, suggestions, repick)),
 				recipe.links && (recipe.links.selector || recipe.links.kind === 'json')
-					? renderLevel('File links', recipe.links, proposals.links, send, 'links', 0, suggestions, repick)
-					: el('p', { text: 'File links: not picked yet.' }),
+					? renderLevel(t('File links'), recipe.links, proposals.links, send, 'links', 0, suggestions, repick)
+					: el('p', { text: t('File links: not picked yet.') }),
 				recipe.next && recipe.next.selector
-					? renderLevel('Next page', recipe.next, proposals.next, send, 'next', Number(recipe.next.level || 0), suggestions, repick)
-					: el('p', { text: 'Next page: none.' }),
+					? renderLevel(t('Next page'), recipe.next, proposals.next, send, 'next', Number(recipe.next.level || 0), suggestions, repick)
+					: el('p', { text: t('Next page: none.') }),
 				el('div', { class: 'harvester-level-head' }, test, testJob),
-				testing ? el('p', { class: 'harvester-muted', 'aria-live': 'polite', text: 'Testing: the browser shows the job’s way through the site…' }) : '',
+				testing ? el('p', { class: 'harvester-muted', 'aria-live': 'polite', text: t('Testing: the browser shows the job’s way through the site…') }) : '',
 				tested && !testing ? renderTest(tested) : '')
 		}
 
@@ -1936,32 +1975,32 @@
 				renderPanel()
 			}
 		})
-		socket.addEventListener('close', () => { message.textContent ||= 'The recorder’s browser closed.'; screen.say(message.textContent) })
+		socket.addEventListener('close', () => { message.textContent ||= t('The recorder’s browser closed.'); screen.say(message.textContent) })
 
 		const box = wireScreen(screen, send)
 		const container = el('div', { class: 'harvester-recorder' })
 		const drawer = el('button', {
 			class: 'harvester-drawer-switch',
-			text: 'Recipe',
-			title: 'Show or hide the steps and picks (in a full window)',
+			text: t('Recipe'),
+			title: t('Show or hide the steps and picks (in a full window)'),
 			onclick: () => container.classList.toggle('harvester-drawer-open'),
 		})
 		container.append(
-			el('h2', { text: 'Recorder' }),
-			el('p', { text: 'Sign in and go to the listing as you would (passwords are not recorded: the job uses its account). Then pick the links to follow (if the files are a level deeper) and the file links: their patterns are proposed, the matches outlined. Test the recipe to see what the job would find.' }),
+			el('h2', { text: t('Recorder') }),
+			el('p', { text: t('Sign in and go to the listing as you would (passwords are not recorded: the job uses its account). Then pick the links to follow (if the files are a level deeper) and the file links: their patterns are proposed, the matches outlined. Test the recipe to see what the job would find.') }),
 			overlay(
 				el('div', { class: 'harvester-toolbar' },
 					...navigation(send),
 					url,
-					el('button', { type: 'button', text: 'Go', onclick: () => send({ type: 'goto', url: url.value }) }),
-					el('button', { type: 'button', text: 'Undo step', onclick: () => send({ type: 'undo' }) }),
-					el('button', { type: 'button', text: 'Clear picks', onclick: () => { recipe = { steps: recipe.steps }; send({ type: 'clear' }) } }),
+					el('button', { type: 'button', text: t('Go'), onclick: () => send({ type: 'goto', url: url.value }) }),
+					el('button', { type: 'button', text: t('Undo step'), onclick: () => send({ type: 'undo' }) }),
+					el('button', { type: 'button', text: t('Clear picks'), onclick: () => { recipe = { steps: recipe.steps }; send({ type: 'clear' }) } }),
 					fullWindow(container, box, send),
 					cookies.button,
 					networkButton,
 					drawer,
-					el('button', { class: 'primary', text: 'Done', onclick: () => close(true) }),
-					el('button', { text: 'Cancel', onclick: () => close(false) })),
+					el('button', { class: 'primary', text: t('Done'), onclick: () => close(true) }),
+					el('button', { text: t('Cancel'), onclick: () => close(false) })),
 				modes, placing, el('div', { class: 'harvester-toolbar' }, modeHelp, scroll), where, network, message, cookies.box, networkBox),
 			el('div', { class: 'harvester-stage' }, box, panel))
 		root.replaceChildren(container)
@@ -1979,7 +2018,7 @@
 			const chip = el('button', {
 				type: 'button',
 				class: 'harvester-chip',
-				text: label || (value === '' ? '(empty)' : value),
+				text: label ? said(label) : (value === '' ? t('(empty)') : value),
 				title: value,
 				onclick: () => {
 					input.value = value
@@ -1995,7 +2034,7 @@
 		const mark = () => chips.forEach((chip) => chip.setAttribute('aria-pressed', String(chip.dataset.value === String(input.value))))
 		input.addEventListener('input', mark)
 		mark()
-		return el('div', { class: 'harvester-values harvester-suggestions' }, el('small', { class: 'harvester-muted', text: 'Pick: ' }), ...chips)
+		return el('div', { class: 'harvester-values harvester-suggestions' }, el('small', { class: 'harvester-muted', text: `${t('Pick:')} ` }), ...chips)
 	}
 
 	// The input of an option, after its kind: an address, a pattern or a template (monospace), a
@@ -2023,7 +2062,7 @@
 				try {
 					// Python's named groups (?P<name>) as JavaScript writes them.
 					new RegExp(input.value.replace(/\(\?P</g, '(?<'))
-					verdict.textContent = '✓ a valid pattern'
+					verdict.textContent = t('✓ a valid pattern')
 					verdict.classList.remove('harvester-error')
 				} catch (e) {
 					verdict.textContent = `✗ ${e.message.replace(/^Invalid regular expression: /, '')}`
@@ -2038,7 +2077,7 @@
 			const verdict = el('small', { class: 'harvester-check-result' })
 			const check = () => {
 				const bad = input.value && !/^https?:\/\/[^/\s]+/.test(input.value)
-				verdict.textContent = bad ? '✗ an address starting with https://' : ''
+				verdict.textContent = bad ? t('✗ an address starting with https://') : ''
 				verdict.classList.toggle('harvester-error', Boolean(bad))
 			}
 			input.addEventListener('input', check)
@@ -2053,11 +2092,15 @@
 				input.focus()
 				input.setSelectionRange(at + name.length + 2, at + name.length + 2)
 			}
-			return el('div', { class: 'harvester-values' }, el('small', { class: 'harvester-muted', text: 'Insert: ' }),
+			return el('div', { class: 'harvester-values' }, el('small', { class: 'harvester-muted', text: `${t('Insert:')} ` }),
 				...option.values.map((name) => el('button', { type: 'button', class: 'harvester-chip', text: `{${name}}`, onclick: () => insert(name) })))
 		}
 		return null
 	}
+
+	// An option's title: "Through the proxy" in the admin's name for it, the others as the
+	// source gives them.
+	const optionTitle = (key, option) => (key === 'home' ? t('Through {name}', { name: proxyName(option.proxy) }) : said(option.title))
 
 	// The job's form; with sent (an address from ?fetch=), the new job fetches it once saved.
 	function renderForm(root, job, prefill, sent) {
@@ -2088,7 +2131,7 @@
 					const format = { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }
 					const next = answer.next.map((at) => new Date(at * 1000).toLocaleString(undefined, format)).join(' · ')
 					scheduleHint.replaceChildren(el('strong', { text: answer.description }), el('br'),
-						el('span', { class: 'harvester-muted', text: `Next runs (your time): ${next}` }))
+						el('span', { class: 'harvester-muted', text: t('Next runs (your time): {next}', { next }) }))
 				} catch (e) {
 					scheduleHint.textContent = ''
 				}
@@ -2115,10 +2158,10 @@
 		// The recorder's proposals, when the person chose to use them.
 		function applySuggestions(suggestions) {
 			if (suggestions.path && optionInputs.path) optionInputs.path.value = suggestions.path
-			if (suggestions.tags) tags.value = [...new Set([...tags.value.split(',').map((t) => t.trim()).filter(Boolean), ...suggestions.tags])].join(', ')
+			if (suggestions.tags) tags.value = [...new Set([...tags.value.split(',').map((tag) => tag.trim()).filter(Boolean), ...suggestions.tags])].join(', ')
 		}
 
-		options.append(el('legend', { text: 'How the files are fetched' }))
+		options.append(el('legend', { text: t('How the files are fetched') }))
 		for (const [key, option] of Object.entries(chosen.options)) {
 			const current = key in value.options ? value.options[key] : option.default
 			if (option.kind === 'recipe') {
@@ -2135,10 +2178,10 @@
 				}
 				textarea.addEventListener('input', checkLeaks)
 				checkLeaks()
-				options.append(field(option.title, textarea, option.description), leaks,
+				options.append(field(said(option.title), textarea, said(option.description)), leaks,
 					el('button', {
 						type: 'button',
-						text: 'Record in the browser',
+						text: t('Record in the browser'),
 						onclick: () => openRecorder(root, page, textarea, applySuggestions, () => Object.fromEntries(
 							['path', 'download_url', 'max_pages', 'browser', 'http1', 'file_type', 'min_size', 'max_size', 'wait_pattern']
 								.filter((name) => optionInputs[name]).map((name) => [name, optionInputs[name].value])), () => (current && current.id) || null),
@@ -2150,7 +2193,7 @@
 					box.checked = Number(current) === 1
 					optionInputs[key] = { get value() { return box.checked ? 1 : 0 } }
 					options.append(el('label', { class: 'harvester-check' }, box,
-						el('span', {}, el('strong', { text: option.title }), el('br'), el('small', { class: 'harvester-muted', text: option.description }))))
+						el('span', {}, el('strong', { text: optionTitle(key, option) }), el('br'), el('small', { class: 'harvester-muted', text: said(option.description) }))))
 					continue
 				}
 				if (option.choices && option.choices.length) {
@@ -2165,11 +2208,11 @@
 					optionInputs[key] = {
 						get value() { return [...select.selectedOptions].map((item) => item.value).join(',') || option.default },
 					}
-					options.append(field(option.title, select, option.description))
+					options.append(field(optionTitle(key, option), select, said(option.description)))
 					continue
 				}
 				optionInputs[key] = optionInput(option, current)
-				options.append(field(option.title, optionInputs[key], option.description))
+				options.append(field(optionTitle(key, option), optionInputs[key], said(option.description)))
 				const extra = optionHelp(option, optionInputs[key])
 				if (extra) optionInputs[key].after(extra)
 				if (option.suggestions && option.suggestions.length) (extra || optionInputs[key]).after(suggestionChips(optionInputs[key], option.suggestions))
@@ -2184,7 +2227,7 @@
 			}
 		}
 
-		const save = el('button', { class: 'primary', type: 'submit', form: 'harvester-job-form', text: 'Save' })
+		const save = el('button', { class: 'primary', type: 'submit', form: 'harvester-job-form', text: t('Save') })
 		// The job as the form holds it, as Save sends it (and Export recipe, Save as template).
 		const formBody = () => ({
 			name: name.value,
@@ -2198,7 +2241,7 @@
 			options: Object.fromEntries(Object.entries(optionInputs).map(([key, input]) =>
 				[key, typeof chosen.options[key].default === 'number' ? Number(input.value) : input.value])),
 		})
-		const heading = el('span', { text: job ? `Edit ${job.name}` : `New job: ${chosen.title}` })
+		const heading = el('span', { text: job ? t('Edit {name}', { name: job.name }) : t('New job: {source}', { source: said(chosen.title) }) })
 		const form = el('form', {
 			id: 'harvester-job-form',
 			class: 'harvester-form',
@@ -2210,7 +2253,7 @@
 				error.textContent = ''
 				try {
 					current = await api(current ? 'PUT' : 'POST', current ? `/jobs/${current.id}` : '/jobs', body)
-					heading.textContent = `Edit ${current.name}`
+					heading.textContent = t('Edit {name}', { name: current.name })
 				} catch (e) {
 					error.textContent = e.message
 					save.disabled = false
@@ -2221,7 +2264,7 @@
 				try {
 					await credentials.save(current)
 				} catch (e) {
-					error.textContent = `The job is saved, its account is not: ${e.message}`
+					error.textContent = t('The job is saved, its account is not: {error}', { error: e.message })
 					save.disabled = false
 					return
 				}
@@ -2230,25 +2273,27 @@
 					try {
 						await sendTo(current, sent)
 					} catch (e) {
-						notices[current.id] = `The address is not fetched: ${e.message}`
+						notices[current.id] = t('The address is not fetched: {error}', { error: e.message })
 					}
 				}
 				show(root)
 			},
 		},
 		el('h2', { class: 'harvester-with-icon' }, icon(chosen.name), heading),
-		field('Name', name),
-		field('Folder', target, 'In your files, e.g. /Magazines/iX.'),
+		field(t('Name'), name),
+		field(t('Folder'), target, t('In your files, e.g. /Magazines/iX.')),
 		chosen.address ? el('label', { class: 'harvester-check' }, onDemandBox,
-			el('span', {}, el('strong', { text: 'On demand' }), el('br'),
-				el('small', { class: 'harvester-muted', text: 'No schedule: it runs when you send it an address (Fetch a URL…, or Send to Harvester from any page), in place of its own, which may stay empty.' }))) : '',
+			el('span', {}, el('strong', { text: t('On demand') }), el('br'),
+				el('small', { class: 'harvester-muted', text: t('No schedule: it runs when you send it an address (Fetch a URL…, or Send to Harvester from any page), in place of its own, which may stay empty.') }))) : '',
 		el('div', { class: 'harvester-scheduled' },
-			field('Schedule', schedule, `Cron: minute hour day month weekday, in ${zone === ZONE ? 'your time zone' : 'the job’s time zone'} (${zone}). 0 6 * * * is daily at 06:00.`),
+			field(t('Schedule'), schedule, zone === ZONE
+				? t('Cron: minute hour day month weekday, in your time zone ({zone}). 0 6 * * * is daily at 06:00.', { zone })
+				: t('Cron: minute hour day month weekday, in the job’s time zone ({zone}). 0 6 * * * is daily at 06:00.', { zone })),
 			scheduleHint),
 		el('label', { class: 'harvester-check harvester-once' }, once,
-			el('span', { text: 'Delete the job after a run that went through (its files stay; one that failed keeps it, to say why)' })),
-		field('Tags', tags, 'Comma-separated; may use the link’s values, e.g. {year}. A tag whose value a file lacks is left out.'),
-		el('label', { class: 'harvester-check harvester-scheduled' }, enabled, el('span', { text: 'Enabled: runs on its schedule' })),
+			el('span', { text: t('Delete the job after a run that went through (its files stay; one that failed keeps it, to say why)') })),
+		field(t('Tags'), tags, t('Comma-separated; may use the link’s values, e.g. {year}. A tag whose value a file lacks is left out.', { year: '{year}' })),
+		el('label', { class: 'harvester-check harvester-scheduled' }, enabled, el('span', { text: t('Enabled: runs on its schedule') })),
 		options)
 		// A schedule's fields, or (on demand) whether it goes after its run.
 		const showMode = () => {
@@ -2258,7 +2303,7 @@
 		onDemandBox.addEventListener('change', showMode)
 		showMode()
 		// Below the field, now that it is in its label.
-		schedule.after(suggestionChips(schedule, SCHEDULES))
+		schedule.after(suggestionChips(schedule, SCHEDULES()))
 		// Save and Back below the account, which Save stores with the job; Enter in the account's
 		// one-line fields saves as it does in the form's (the wizard's fields answer the wizard).
 		credentials.addEventListener('keydown', (event) => {
@@ -2269,9 +2314,9 @@
 		})
 		const back = el('button', {
 			type: 'button',
-			text: 'Back to the jobs',
+			text: t('Back to the jobs'),
 			onclick: () => {
-				if (!credentials.typed() || confirm('Leave without saving the account you typed?')) show(root)
+				if (!credentials.typed() || confirm(t('Leave without saving the account you typed?'))) show(root)
 			},
 		})
 		// The recipe as a file to keep or share, or as a template of the person's own: the server
@@ -2279,15 +2324,15 @@
 		const notice = el('p', { class: 'harvester-muted', role: 'status' })
 		const exportButton = el('button', {
 			type: 'button',
-			text: 'Export recipe',
-			title: 'Download the job’s recipe and settings as a file (without its account, session and folder)',
+			text: t('Export recipe'),
+			title: t('Download the job’s recipe and settings as a file (without its account, session and folder)'),
 			onclick: async () => {
 				error.textContent = ''
 				notice.textContent = ''
 				try {
 					const file = await api('POST', '/recipes/export', { ...formBody(), target: target.value || '/' })
 					download(`${(file.name || 'recipe').replace(/[\\/:*?"<>|]+/g, '-')}.harvester.json`, JSON.stringify(file, null, 2))
-					notice.textContent = 'Exported: without the account, session and folder.'
+					notice.textContent = t('Exported: without the account, session and folder.')
 				} catch (e) {
 					error.textContent = e.message
 				}
@@ -2295,14 +2340,14 @@
 		})
 		const templateButton = el('button', {
 			type: 'button',
-			text: 'Save as template',
-			title: 'Keep this job as a template of your own on the New job page (without its account, session and folder)',
+			text: t('Save as template'),
+			title: t('Keep this job as a template of your own on the New job page (without its account, session and folder)'),
 			onclick: async () => {
 				error.textContent = ''
 				notice.textContent = ''
 				try {
 					await api('POST', '/templates', { ...formBody(), target: target.value || '/' })
-					notice.textContent = 'Saved as your template: New job lists it.'
+					notice.textContent = t('Saved as your template: New job lists it.')
 				} catch (e) {
 					error.textContent = e.message
 				}

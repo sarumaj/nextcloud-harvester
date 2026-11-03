@@ -52,6 +52,10 @@ recorder that makes them, and what a run does. Installing and the admin's settin
 - **Notifications:** a job that needs a person, fails, or finds its site changed notifies its
   user; the same failure (or change) again on the next runs does not. A one-time job tells what
   it did as it is deleted.
+- **Language:** the page and the notifications are in your language in Nextcloud (*Personal
+  settings*), in German or Polish; in another language they are English. What a run says stays
+  English: the progress log and a job's last message, the reasons it fails or waits, the
+  schedule in words and the recorder's warnings, as do a site's own texts and the recipes.
 
 ## Sources
 

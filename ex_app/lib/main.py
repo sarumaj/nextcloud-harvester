@@ -217,7 +217,9 @@ def list_sources() -> list[dict]:
             "address": source.address_option,
             "credential_help": {name: list(help_) for name, help_ in source.credential_help.items()},
             "options": {
-                key: vars(option) | ({"title": f"Through {browser.PROXY_NAME}"} if key == "home" else {})
+                # "Through the proxy" in the admin's name for it (the page translates the default's).
+                key: vars(option)
+                | ({"title": f"Through {browser.PROXY_NAME}", "proxy": browser.PROXY_NAME} if key == "home" else {})
                 for key, option in (source.options | COMMON_OPTIONS | watch.options_of(source.name)).items()
                 if key != "home" or browser.PROXY
             },
