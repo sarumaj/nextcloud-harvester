@@ -908,6 +908,7 @@ OC.L10N.register(
         "a level {level} page (page {number}, {address}) gave nothing: {why}": "eine Seite der Ebene {level} (Seite {number}, {address}) lieferte nichts: {why}",
         "the next page {address} was read already (a loop): its listing ends": "die nächste Seite {address} wurde schon gelesen (eine Schleife): Die Übersicht endet hier",
         "level {level}: clicking “{element}” failed: {why}": "Ebene {level}: Klick auf „{element}“ fehlgeschlagen: {why}",
+        "waiting for {selector} to show, at most {seconds} s": "warte darauf, dass {selector} erscheint, höchstens {seconds} s",
         "level {level} found nothing (it found {found} before)": "Ebene {level} fand nichts (vorher {found})",
         "level {level}: the pattern no longer matches (none of {found} links; {matched} matched before)": "Ebene {level}: Das Muster passt nicht mehr (auf keinen von {found} Links; vorher passten {matched})",
         "the listing found nothing (it found {found} before)": "die Übersicht fand nichts (vorher {found})",

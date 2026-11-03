@@ -3,7 +3,8 @@
 replayed step waits for (arrived), the tabs the steps act in (Tabs): the first, and a sign-in's
 popup a step went on in; the frame a step acts in (in_frame); a step's pause and its tries
 (with_tries), and the events the replay tells of each step (step_event); a page that loads more
-as it is scrolled (scroll_to_load) or with a button (load_more).
+as it is scrolled (scroll_to_load) or with a button (load_more); and a page that prepares a
+file first, polled (and reloaded) until its element shows (wait_until_shown).
 """
 
 import re
@@ -15,7 +16,7 @@ from playwright.sync_api import Error as PlaywrightError
 
 from .. import recipe as recipes
 from ..l10n import said
-from .base import SourceError
+from .base import SourceError, check_stop
 
 # How long the network may take to go quiet after a step that waited for its address and element
 # (ms): they are there already, the rest is what a script still loads.
@@ -33,6 +34,8 @@ PAGE_SIZE = (
     "() => [document.links.length, document.getElementsByTagName('*').length,"
     " (document.scrollingElement || document.body).scrollHeight]"
 )
+# How often a page that prepares a file is looked at for its element (ms).
+WAIT_POLL = 1_000
 SCROLL_DOWN = "() => window.scrollTo(0, (document.scrollingElement || document.body).scrollHeight)"
 
 
@@ -255,3 +258,34 @@ def scroll_to_load(page, rounds: int) -> None:
         still = still + 1 if page.evaluate(PAGE_SIZE) == before else 0
         if still >= SCROLL_STILL or time.monotonic() > deadline:
             return
+
+
+def _shown(page, selector: str) -> bool:
+    """Whether the selector's first element is on the page and visible."""
+    try:
+        found = page.query_selector(selector)
+        return bool(found and found.is_visible())
+    except PlaywrightError:
+        return False  # between two documents (a reload): looked for again
+
+
+def wait_until_shown(page, wait: dict) -> None:
+    """Waits for an element the page shows once a file is ready (recipe: "wait_for": an export's
+    link, a status that changed, a list's entry that turned ready): the page looked at every
+    WAIT_POLL ms and, with "reload" (seconds), reloaded that often, until "timeout" seconds
+    (recipe.WAIT_FOR_TIMEOUT without); SourceError when it never shows. A stop ends it at once."""
+    selector = str(wait["selector"])
+    timeout = float(wait.get("timeout") or recipes.WAIT_FOR_TIMEOUT)
+    every = float(wait.get("reload") or 0)
+    started = reloaded = time.monotonic()
+    while not _shown(page, selector):
+        check_stop()
+        now = time.monotonic()
+        if now - started >= timeout:
+            raise SourceError(f"{selector} did not show within {timeout:g} s (the file not ready yet?)")
+        if every and now - reloaded >= every:
+            page.reload(wait_until="domcontentloaded")
+            settle(page, SHORT_IDLE)
+            reloaded = time.monotonic()
+            continue
+        page.wait_for_timeout(min(WAIT_POLL, (timeout - (now - started)) * 1000))

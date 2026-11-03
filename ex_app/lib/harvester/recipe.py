@@ -58,7 +58,9 @@ address, a new tab or popup, a dialog), and the walk goes back to the listing af
 its elements' texts, which tell them apart (with their place), as does the file links' key. A
 level (an entry of follow, or links) may load more of its pages before they are read: "scroll":
 rounds of scrolling to the end, "load_more": the element of a "Load more" button, clicked until
-it is gone (harvester.sources.site).
+it is gone (harvester.sources.site). "wait_for": {"selector": ..., "timeout": seconds up to
+WAIT_FOR_MAX, "reload": seconds} waits on each of its pages for an element that shows once a file
+is ready (an export's link after a step clicked "Create export"), reloading the page that often.
 
 A step {"action": "select", "selector": ..., "value": ..., "label": ...} chooses an entry of a
 list (<select>): by its value, else by the text it shows. {"action": "hover", "selector": ...}
@@ -122,6 +124,11 @@ SCROLL_ROUNDS = 20
 SCROLL_ROUNDS_MAX = 100
 # A level's "Load more" button is clicked at most this many times per page.
 LOAD_MORE_MAX = 50
+# How long a level waits for its "wait_for" element by default, and at most (s); its reloads at
+# least this far apart (s).
+WAIT_FOR_TIMEOUT = 300
+WAIT_FOR_MAX = 1800
+WAIT_FOR_RELOAD = 5
 NEXT_KINDS = ("link", "number")
 # The actions that act on an element, and so may do it inside a frame.
 ON_ELEMENTS = ("click", "fill", "press", "mail-code", "select", "hover", "each")
@@ -503,7 +510,28 @@ def _check_level(where: str, spec: object) -> list[str]:
         problems.append(f"{where}: the Load more button's element (selector) is text")
     if not isinstance(spec.get("click", False), bool):
         problems.append(f"{where}: click is true or false")
-    return problems
+    return problems + _check_wait_for(where, spec)
+
+
+def _check_wait_for(where: str, spec: dict) -> list[str]:
+    """A level's wait for an element a page shows once a file is ready (an export's link)."""
+    if "wait_for" not in spec:
+        return []
+    wait = spec["wait_for"]
+    timeout = wait.get("timeout", WAIT_FOR_TIMEOUT) if isinstance(wait, dict) else None
+    reload = wait.get("reload", WAIT_FOR_RELOAD) if isinstance(wait, dict) else None
+    if (
+        not isinstance(wait, dict)
+        or set(wait) - {"selector", "timeout", "reload"}
+        or not (isinstance(wait.get("selector"), str) and wait["selector"].strip())
+        or not (_seconds(timeout) and 1 <= timeout <= WAIT_FOR_MAX)  # type: ignore[operator]
+        or not (_seconds(reload) and WAIT_FOR_RELOAD <= reload <= WAIT_FOR_MAX)  # type: ignore[operator]
+    ):
+        return [
+            f'{where}: wait_for is {{"selector": <the element to wait for>, "timeout": seconds from 1 to '
+            f'{WAIT_FOR_MAX}, "reload": seconds from {WAIT_FOR_RELOAD} (optional)}}'
+        ]
+    return []
 
 
 def _check_key(spec: dict, recipe: dict) -> list[str]:
@@ -768,7 +796,8 @@ def _check_links(links: object, recipe: dict) -> list[str]:
             return ["the recipe saves its start page (save) or has levels and file links, not both"]
         return []
     if isinstance(links, dict) and links.get("kind") == "json":
-        return _check_json(links) + _check_keep(links)
+        waits = ["file links: a JSON listing has no page to wait on (wait_for)"] if "wait_for" in links else []
+        return _check_json(links) + _check_keep(links) + waits
     problems = _check_level("file links", links)
     if isinstance(links, dict):
         problems += _check_values("file links", links.get("values"))
@@ -836,12 +865,13 @@ def token_warnings(recipe: dict) -> list[Said]:
 def uses_browser(recipe: dict) -> bool:
     """Whether the recipe needs the browser: it has steps to replay, a next page or numbered
     pages that are buttons (clicked, no address to fetch), file links or links to follow that
-    are clicked, a level that loads more by scrolling or with a button, pages it saves or
+    are clicked, a level that loads more by scrolling or with a button or waits for an element
+    (wait_for), pages it saves or
     captures files of, or a JSON listing's header read from the page's storage."""
     after = recipe.get("next") or {}
     buttons = isinstance(after, dict) and bool(after.get("buttons"))
     clicked = any(spec.get("click") for spec in levels(recipe))
-    loading = any("scroll" in spec or "load_more" in spec for spec in levels(recipe))
+    loading = any("scroll" in spec or "load_more" in spec or "wait_for" in spec for spec in levels(recipe))
     keeping = bool(recipe.get("save")) or any(spec.get("save") or spec.get("capture") for spec in levels(recipe))
     stored = isinstance(recipe.get("links"), dict) and jsonrequest.uses_browser(recipe["links"])
     return bool(recipe.get("steps")) or buttons or clicked or loading or keeping or stored

@@ -228,8 +228,10 @@ class HttpDriver(Driver):
         return (page[0], kind) if kind else None
 
     def expand(self, page: Any, spec: dict) -> None:
-        if "scroll" in spec or "load_more" in spec:
-            raise SourceError(f"{page.url}: the recipe loads more of its pages, which only the browser can")
+        if "scroll" in spec or "load_more" in spec or "wait_for" in spec:
+            raise SourceError(
+                f"{page.url}: the recipe loads more of its pages or waits on them, which only the browser can"
+            )
 
     def targets(self, page: Any, selector: str) -> list[str]:
         raise SourceError(f"{page.url}: the elements {selector} are clicked, which only the browser can")

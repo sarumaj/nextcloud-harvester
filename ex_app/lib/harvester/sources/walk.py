@@ -30,6 +30,7 @@ from typing import Any
 from playwright.sync_api import Error as PlaywrightError
 
 from .. import choices, jsonlist, patterns
+from .. import recipe as recipes
 from ..l10n import said
 from . import keep, near
 from .base import ChallengeError, Item, SourceError, pattern_search
@@ -342,6 +343,17 @@ class Walk:  # pylint: disable=too-many-instance-attributes,too-many-public-meth
             return
         try:
             for number in range(1, int(self.site.settings["max_pages"]) + 1):
+                if spec.get("wait_for") and number == 1:
+                    wait = spec["wait_for"]
+                    seconds = wait.get("timeout") or recipes.WAIT_FOR_TIMEOUT
+                    self.site.report(
+                        "info",
+                        said(
+                            "waiting for {selector} to show, at most {seconds} s",
+                            selector=wait["selector"],
+                            seconds=f"{seconds:g}",
+                        ),
+                    )
                 self.driver.expand(page, spec)
                 if self.repeated(page, level, spec) and number > 1:
                     return

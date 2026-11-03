@@ -311,6 +311,17 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   walk goes on. The limits: a listing opened again starts at its address, so pages reached by
   buttons without an address (`"buttons": true`) and steps after its address are not done
   again; an element needs a text (or an `aria-label`, a `title`).
+- **Exports a site prepares first:** a step clicks **Create export** or **Generate**, and the
+  file comes a while later: a link appears, a status changes, a list's entry turns ready. A level
+  (an entry of `follow`, or the file links) waits for it with `"wait_for": {"selector": "tr.ready
+  a.download", "timeout": 600, "reload": 30}`: on each of its pages the job looks for the element
+  every second, reloads the page every `reload` seconds if given (at least 5: a list the server
+  updates), and goes on once it shows, at most `timeout` seconds (1 to 1800, 300 without one);
+  then its links are read and downloaded as before, clicked file links too. An element that never
+  shows fails the run (`tr.ready a.download did not show within 600 s (the file not ready
+  yet?)`), and the next run tries again. The log says what it waits for; a stop ends the wait at
+  once. It needs the browser; a JSON listing has no page to wait on. The recorder has no button
+  for it yet: add it to the recipe's JSON.
 - **Choices** (`harvester/choices.py`, `harvester/sources/choose.py`): one recipe for every
   account or contract at a bank, every year, every child at a school portal. The step
   `{"action": "each", "selector": "select#account", "values": "options"}` is a choice point:

@@ -4,6 +4,10 @@
 
 ### Added
 
+- Exports a site prepares first: a level's or the file links' `"wait_for": {"selector",
+  "timeout", "reload"}` looks for the element of the ready file on each page (reloading it every
+  `reload` seconds if asked) for up to 30 minutes, then reads and downloads its links as before,
+  clicked ones too.
 - Choices: the step `each` goes through every option of a `<select>` or a custom dropdown, or a
   fixed list of values (every account, year, child), doing the steps after it and the walk for
   each, the choice's text `{choice}` in the file names, tags, key and addresses. The recorder's

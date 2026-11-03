@@ -59,6 +59,7 @@ from .tabs import (
     short_error,
     step_event,
     step_line,
+    wait_until_shown,
     with_tries,
 )
 
@@ -334,6 +335,8 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes,too
         return page
 
     def expand(self, page: Any, spec: dict) -> None:
+        if spec.get("wait_for"):
+            wait_until_shown(page, spec["wait_for"])
         if "scroll" in spec:
             scroll_to_load(page, int(spec["scroll"]))
         if spec.get("load_more"):
