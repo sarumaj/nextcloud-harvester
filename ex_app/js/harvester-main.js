@@ -144,6 +144,9 @@
 		return node
 	}
 
+	// A sign beside a text (✓ passed): shown, not read out, and no part of the translated text.
+	const glyph = (sign) => (sign ? el('span', { class: 'harvester-glyph', 'aria-hidden': 'true', text: `${sign} ` }) : '')
+
 	function field(label, input, help) {
 		return el('label', { class: 'harvester-field' }, el('span', { text: label }), input,
 			help ? el('small', { text: help }) : '')
@@ -1114,7 +1117,7 @@
 		box.append(renderValues(spec, send, target, level, false),
 			el('button', { type: 'button', text: t('Pick a value'), title: t('Click a text near one of these links (a date, a title in its row or card): a value for file names and tags'), onclick: () => repick(target, level, 'value') }))
 		if (target === 'links' && proposal.path) {
-			const use = (label, apply) => el('button', { type: 'button', text: label, onclick: (e) => { apply(); e.target.textContent = t('✔ will be used') } })
+			const use = (label, apply) => el('button', { type: 'button', text: label, onclick: (e) => { apply(); e.currentTarget.replaceChildren(glyph('✔'), t('will be used')) } })
 			box.append(el('p', { text: t('Proposed file name: {path}', { path: proposal.path }) }), use(t('Use it'), () => { suggestions.path = proposal.path }))
 			// The same script serves all the files (download.php?id=N): the name the server gives
 			// each file is likely the better one.
@@ -2213,17 +2216,17 @@
 		function stepMark(mark) {
 			const left = mark.ends ? Math.max(0, Math.ceil((mark.ends - Date.now()) / 1000)) : 0
 			const attempt = { attempt: mark.attempt, of: mark.of, left }
-			const text = {
-				playing: mark.of > 1 ? t('▶ playing (attempt {attempt} of {of})', attempt) : t('▶ playing'),
-				pausing: t('⏸ pausing {left} s', attempt),
-				retrying: t('↻ attempt {attempt} of {of} in {left} s', attempt),
-				passed: t('✓ passed'),
-				skipped: t('– skipped (optional)'),
-				failed: t('✗ failed'),
-				session: t('↷ not played (signed in)'),
-				stopped: t('■ stopped'),
-			}[mark.state] || ''
-			return el('span', { class: 'harvester-step-mark', title: mark.why || '', text: `${text} ` })
+			const [sign, text] = {
+				playing: ['▶', mark.of > 1 ? t('playing (attempt {attempt} of {of})', attempt) : t('playing')],
+				pausing: ['⏸', t('pausing {left} s', attempt)],
+				retrying: ['↻', t('attempt {attempt} of {of} in {left} s', attempt)],
+				passed: ['✓', t('passed')],
+				skipped: ['–', t('skipped (optional)')],
+				failed: ['✗', t('failed')],
+				session: ['↷', t('not played (signed in)')],
+				stopped: ['■', t('stopped')],
+			}[mark.state] || ['', '']
+			return el('span', { class: 'harvester-step-mark', title: mark.why || '' }, glyph(sign), `${text} `)
 		}
 
 		// A step's pause before it and its retries: the editor of its timing (closed unless set,
@@ -2541,10 +2544,10 @@
 				try {
 					// Python's named groups (?P<name>) as JavaScript writes them.
 					new RegExp(input.value.replace(/\(\?P</g, '(?<'))
-					verdict.textContent = t('✓ a valid pattern')
+					verdict.replaceChildren(glyph('✓'), t('a valid pattern'))
 					verdict.classList.remove('harvester-error')
 				} catch (e) {
-					verdict.textContent = `✗ ${e.message.replace(/^Invalid regular expression: /, '')}`
+					verdict.replaceChildren(glyph('✗'), e.message.replace(/^Invalid regular expression: /, ''))
 					verdict.classList.add('harvester-error')
 				}
 			}
@@ -2556,7 +2559,7 @@
 			const verdict = el('small', { class: 'harvester-check-result' })
 			const check = () => {
 				const bad = input.value && !/^https?:\/\/[^/\s]+/.test(input.value)
-				verdict.textContent = bad ? t('✗ an address starting with https://') : ''
+				verdict.replaceChildren(...(bad ? [glyph('✗'), t('an address starting with https://')] : []))
 				verdict.classList.toggle('harvester-error', Boolean(bad))
 			}
 			input.addEventListener('input', check)

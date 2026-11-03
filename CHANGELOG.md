@@ -124,6 +124,9 @@
   Record steps they are off and say *Choose Record steps to add steps* (only a tooltip before).
   The modes are a group named *Mode* for screen readers, and the Steps list's **↑**, **↓** and
   **✕** are buttons of 34 pixels (a few pixels before), its *optional* kept with its checkbox.
+- The signs of the recorder's step marks (▶, ⏸, ↻, ✓, –, ✗, ↷, ■), of a pattern's or an
+  address's check (✓, ✗) and of *✔ will be used* are no part of their translated texts: shown
+  beside them, not read out by screen readers.
 
 ### Fixed
 
