@@ -308,9 +308,10 @@ class Remote(Source):  # pylint: disable=too-many-instance-attributes
         except ValueError as error:
             raise SourceError(f"rclone listed {self._target()} unreadably: {error}") from error
         # Newest first: a run stopped by max_items has the newest files.
-        for entry in sorted(entries, key=lambda entry: entry.get("ModTime", ""), reverse=True):
-            if entry.get("IsDir"):
-                continue
+        entries = [entry for entry in entries if not entry.get("IsDir")]
+        entries.sort(key=lambda entry: entry.get("ModTime", ""), reverse=True)
+        self.ahead([self._target(str(entry["Path"])) for entry in entries])
+        for entry in entries:
             path = str(entry["Path"])
             key = self._target(path)
             if seen(key):

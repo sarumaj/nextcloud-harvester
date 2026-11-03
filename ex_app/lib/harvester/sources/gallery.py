@@ -152,6 +152,7 @@ class Gallery(Source):
     def items(self, seen: Callable[[str], bool]) -> Iterator[Item]:
         if self.client is not None:
             cookies.to_client(self.client, self.account_cookies(self.url))
+        found = []
         for message in self.listing():
             if not (isinstance(message, list) and len(message) >= 3 and message[0] == URL_MESSAGE):
                 continue
@@ -165,6 +166,9 @@ class Gallery(Source):
                 if post
                 else f"{data.get('category', 'gallery')}:{url}"
             )
+            found.append((key, url, data))
+        self.ahead([key for key, _, _ in found])
+        for key, url, data in found:
             if seen(key):
                 continue
             yield self.item(key, url, data)

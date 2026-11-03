@@ -503,6 +503,11 @@ class Store:  # pylint: disable=too-many-public-methods
                     (job_id, key, file_id, json.dumps(values, default=str), json.dumps(tags)),
                 )
 
+    def set_placed_file(self, job_id: int, key: str, file_id: int) -> None:
+        """Records the ID of a file the job saved, found again (at its recorded path)."""
+        with self._lock, self._db:
+            self._db.execute("UPDATE placed SET file = ? WHERE job = ? AND key = ?", (file_id, job_id, key))
+
     def content(self, job_id: int, key: str) -> dict | None:
         """What the job's file of the item holds (hash, etag, modified, path, at), or None."""
         with self._lock:
@@ -535,6 +540,19 @@ class Store:  # pylint: disable=too-many-public-methods
                     "INSERT OR REPLACE INTO contents (job, key, hash, etag, modified, path, at)"
                     " VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (job_id, key, digest, etag, modified, path, time.time()),
+                )
+
+    def forget_content(self, job_id: int, key: str) -> None:
+        """Forgets what the item's file held (it is gone), and the duplicates that name that file
+        (its hash, at its path): a download of the item anew is no duplicate of it."""
+        with self._lock, self._db:
+            row = self._db.execute(
+                "SELECT hash, path FROM contents WHERE job = ? AND key = ?", (job_id, key)
+            ).fetchone()
+            if row is not None:
+                self._db.execute(
+                    "DELETE FROM contents WHERE job = ? AND (key = ? OR (hash = ? AND path = ?))",
+                    (job_id, key, row["hash"], row["path"]),
                 )
 
     def page_text(self, job_id: int, key: str) -> str | None:

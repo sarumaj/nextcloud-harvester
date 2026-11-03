@@ -248,6 +248,7 @@ class Walk:  # pylint: disable=too-many-instance-attributes,too-many-public-meth
         if not found:
             self.blocked(page, level, number)
         made = [self.item_of(link, text, number, values | groups, page) for link, text, groups in found]
+        self.site.ahead([entry.key for entry in made])
         new = [entry for entry in made if not self.known(entry)]
         outcome["found"] |= bool(found)
         outcome["new"] |= bool(new)

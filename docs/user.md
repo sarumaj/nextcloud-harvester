@@ -40,7 +40,9 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   it) and the others with *Cancel* (`DELETE /api/jobs/<id>/fetch/<fetch id>`); its waiting reason
   counts them. The log names each address (*Fetching https://...*, and the outcome after it); the
   files a job fetched before are not fetched again, from any address, and the log says how many
-  were skipped so. A job put back on a schedule drops the addresses still waiting.
+  were skipped so, and where each one is now (*Fetched before, in your files at …*); one deleted
+  in Nextcloud since, or in the trash, is fetched again, whatever *Download deleted files again*
+  says. A job put back on a schedule drops the addresses still waiting.
   **One-time:** an on-demand job may be deleted after a run that went through (once the
   addresses waiting for it are fetched; not after a stop), with its account and session; its
   files stay, and a notification says what it did. One that failed is kept, to show why.
@@ -749,13 +751,32 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   the one before among the file's **versions** (*Versions* in the file's details, as its versions
   app keeps them, and expires them as it does any), so the folder holds no second name for it;
   the log says *Changed: … saved over as its new version*, the outcome counts the changed and
-  the unchanged ones. A file its person deleted or moved is not brought back; one saved before
-  this version takes what its address gives at its first check as the measure (no change found
-  then). A known file that fails its check (gone from the site) fails nothing, a line in the log
-  says so. With the option a run goes through the whole site (known files do not end it), and
-  the known files' checks do not count against *Files per run*. Pages a job saves (as PDF, HTML or
-  Markdown) and files it captures from pages are never checked: a page saved anew differs each
-  time.
+  the unchanged ones. A file its person moved gets no new version where it is now; one deleted
+  comes back as a new file with *Download deleted files again* (below), else stays away; one
+  saved before this version takes what its address gives at its first check as the measure (no
+  change found then). A known file that fails its check (gone from the site) fails nothing, a
+  line in the log says so. With the option a run goes through the whole site (known files do not
+  end it), and the known files' checks do not count against *Files per run*. Pages a job saves
+  (as PDF, HTML or Markdown) and files it captures from pages are never checked: a page saved
+  anew differs each time.
+- **Deleted files** (*Download deleted files again*, every job; on, also for the jobs saved
+  before it existed; `deleted.py`): before a run skips a file it saved already, it asks
+  Nextcloud whether the file is still there, by the file's ID. One deleted, or in the trash, is
+  downloaded again into the job's folder, as a new one, and the log says *Deleted in Nextcloud,
+  downloaded again: …*; one moved or renamed counts as there and is not downloaded again. Only
+  the files the listing finds again are asked for (with *Stop at known files*, the known ones up
+  to where the listing ends), those of a listing's page at once: one WebDAV `SEARCH` by their IDs
+  per 100 files at most, each file once a run. A file the job has no ID of (one a pass for its
+  tags did not find) is looked for at the path it was saved at, and its ID kept when it is there.
+  When Nextcloud cannot be asked (an error), the files count as there, nothing is downloaded
+  blindly, and a line in the log says so. A deleted file's record of its content goes with it,
+  and the duplicates' that named it, so that its download anew is no duplicate of itself; a known
+  file due for its check of changes that is gone is downloaded anew too. Pages a job saves are
+  files as any. An unpacked ZIP counts as there while its archive or its folder is: a few of its
+  files deleted bring nothing back. Not asked for: a duplicate (it has no file of its own), the
+  files captured from a page and a mail's attachments once their page or message is done (it is
+  not opened again), and files saved before 0.8.1 that the job has no record of. Off: a file
+  once saved is never downloaded again.
 - **Unpacking ZIP files** (*Unpack ZIP files*, every job; off by default; `unpack.py`): a downloaded
   file whose name ends with `.zip` and that is a ZIP file has its files put into a folder of its
   name beside it (`Rechnungen.zip`: `Rechnungen/`, its folders kept), each with the job's tags.

@@ -199,10 +199,16 @@ class Media(Source):
             format=str(self.settings["format"]),
         )
         entries = listing.get("entries")
-        for entry in [listing] if entries is None else entries:
+        listed = [listing] if entries is None else list(entries)
+
+        def key_of(entry: dict) -> str:
+            return f"{entry.get('ie_key') or entry.get('extractor_key') or listing.get('extractor_key')}:{entry['id']}"
+
+        self.ahead([key_of(entry) for entry in listed if entry and entry.get("id")])
+        for entry in listed:
             if not entry or not entry.get("id"):
                 continue
-            key = f"{entry.get('ie_key') or entry.get('extractor_key') or listing.get('extractor_key')}:{entry['id']}"
+            key = key_of(entry)
             if seen(key) or entry.get("live_status") in SKIPPED:
                 continue
             page = entry.get("webpage_url") or entry.get("url")

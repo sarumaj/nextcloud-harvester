@@ -14,6 +14,23 @@
   **Pages to the on-demand job** (an on-demand website job of the person, whose recipe signs in),
   else logged as *a page, not a file*; such a page and an expired link (404, 410, 401, 403) are
   logged once and skipped for good.
+- Deleted files downloaded again: **Download deleted files again** (every job; on, also for the
+  jobs saved before) has a run ask Nextcloud, before it skips a file the job saved already,
+  whether the file is still there, by its ID: one deleted or in the trash is downloaded again
+  (*Deleted in Nextcloud, downloaded again: …*), one moved or renamed counts as there. Only the
+  files the listing finds again are asked for, a listing page's at once (one WebDAV `SEARCH` per
+  100 files at most, each once a run); a file without an ID by the path it was saved at. When
+  Nextcloud cannot be asked, nothing is downloaded and the log says so. An unpacked ZIP counts as
+  there while its archive or its folder is.
+
+### Changed
+
+- An address sent to an on-demand job again brings back its files deleted in Nextcloud since,
+  whatever the option, and the log says where each file fetched before is now (*Fetched before,
+  in your files at …*).
+- A deleted file's record of its content (and the duplicates' that named it) goes when the file
+  is found gone, so that its download anew is no duplicate of itself; a known file due for its
+  check of changes that is gone is downloaded anew instead of staying away.
 
 ### Fixed
 

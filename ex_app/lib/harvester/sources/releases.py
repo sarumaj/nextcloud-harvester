@@ -229,9 +229,10 @@ class Releases(Source):
             date = re.match(r"(\d{4})-(\d{2})-(\d{2})", published)
             if date:
                 values |= {"year": int(date[1]), "month": int(date[2]), "day": int(date[3])}
-            for asset in self.assets(release):
-                item = self.asset(asset, values)
-                if item and not seen(item.key):
+            made = [item for item in (self.asset(asset, values) for asset in self.assets(release)) if item]
+            self.ahead([item.key for item in made])
+            for item in made:
+                if not seen(item.key):
                     yield item
 
     def assets(self, release: dict) -> list[dict]:

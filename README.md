@@ -21,6 +21,8 @@ the app's browser or taken from a template, not by code.
 - **Versions and duplicates:** a file whose content the job saved already from another address
   is not saved again; a known file that changed (asked cheaply with `ETag` and `Last-Modified`) is
   saved over its own, and Nextcloud keeps the one before as a version.
+- **Deleted files back:** a file you deleted in Nextcloud (or put in the trash) is downloaded
+  again when the site lists it again; one you moved or renamed stays where you put it.
 - **ZIP files unpacked** into a folder of their name, if asked, with guards against paths out
   of the folder, links and zip bombs.
 - **Pages watched:** a page (or a part of it) compared with the last run's text, a change told

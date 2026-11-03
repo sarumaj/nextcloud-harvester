@@ -21,6 +21,7 @@ from croniter import croniter
 from nc_py_api import AsyncNextcloudApp
 
 from . import browser, needs, ondemand, runner, settings, versions
+from .deleted import Deleted
 from .l10n import Said, said, said_n
 from .schedule import zone
 from .watch import Watch, test_due
@@ -887,10 +888,12 @@ class Executor:
         if changed:
             report("info", said_n("Tags brought up to date on %n file", "Tags brought up to date on %n files", changed))
         known_before = 0
+        # A file sent again (a fetch) is downloaded again if it is gone, whatever the option.
+        deleted = Deleted(self.store, job, known, library, report, explicit=fetch is not None)
 
         def seen(key: str) -> bool:
             nonlocal known_before
-            found = self.store.seen(job_id, key)
+            found = deleted.seen(key, self.store.seen(job_id, key))
             known_before += found and not key.startswith(MARK)
             return found
 
@@ -907,6 +910,7 @@ class Executor:
             record=record,
             owners={entry["file"]: key for key, entry in known.items() if entry["file"] is not None},
             later=runner.SENT_AGAIN if fetch else runner.NEXT_RUN,
+            deleted=deleted,
         )
         if fetch and known_before:
             report(

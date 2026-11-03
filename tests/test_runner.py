@@ -271,6 +271,15 @@ class FakeFiles:
     async def by_id(self, file_id):
         return object() if file_id in range(1, len(self.stored) + 1) else None
 
+    async def find(self, req, path=""):  # pylint: disable=unused-argument
+        # The files of the IDs in the conditions (nc_py_api's "eq" "fileid" joined by "or").
+        ids = {value for value in req if isinstance(value, int)}
+        return [
+            type("Node", (), {"info": type("Info", (), {"fileid": index})(), "user_path": name.lstrip("/")})()
+            for index, name in enumerate(self.stored, 1)
+            if index in ids
+        ]
+
 
 def library_of(nc) -> NextcloudLibrary:
     """The Nextcloud library over the fake, its requests run to their end as the executor does."""

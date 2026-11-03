@@ -143,12 +143,16 @@ class Feed(Source):
 
     def items(self, seen: Callable[[str], bool]) -> Iterator[Item]:
         feed, entries = self.entries()
-        for entry in entries:
-            for url in self.files(entry):
-                key = f"feed:{entry.get('id') or entry.get('link') or ''}|{url}"
-                if seen(key):
-                    continue
-                yield self.item(key, url, entry, feed)
+        found = [
+            (f"feed:{entry.get('id') or entry.get('link') or ''}|{url}", url, entry)
+            for entry in entries
+            for url in self.files(entry)
+        ]
+        self.ahead([key for key, _, _ in found])
+        for key, url, entry in found:
+            if seen(key):
+                continue
+            yield self.item(key, url, entry, feed)
 
     def item(self, key: str, url: str, entry, feed: str) -> Item:
         """The file of an entry: its path from the entry's values."""

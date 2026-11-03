@@ -342,6 +342,9 @@ class Source(abc.ABC):
         # listing asks seen() about, e.g. a whole message handled); the runner sets both.
         self.report: Callable[[str, str], None] = lambda level, text: None
         self.remember: Callable[[str], None] = lambda key: None
+        # The keys of the items a listing asks seen() about next (a page's), told ahead so that
+        # their files are looked for in Nextcloud at once (deleted.py); the runner sets it.
+        self.ahead: Callable[[list[str]], None] = lambda keys: None
         # The job's time zone (the executor's; dates a recipe fills in are its days).
         self.timezone = "UTC"
         # Listing pages that gave nothing they should have (a sign-in, an error, a redirect): a

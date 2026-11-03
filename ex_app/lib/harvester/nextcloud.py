@@ -12,7 +12,7 @@ from typing import Any, BinaryIO
 
 from nc_py_api import AsyncNextcloudApp, NextcloudException
 
-from .runner import FileGone, Library
+from .runner import FileGone, Library, NotChecked
 
 Call = Callable[[Awaitable[Any]], Any]
 
@@ -47,6 +47,22 @@ class NextcloudLibrary(Library):
         if not file_id:
             raise NextcloudException(404, "Not Found", info=f"{path} after its upload")
         return file_id
+
+    def existing(self, file_ids: list[int]) -> dict[int, str]:
+        # One SEARCH for them all (nc_py_api's find, an "eq" of each ID joined by "or"s, as its
+        # by_id asks for one) in the user's files, of every storage they see: a file in the trash
+        # is not among them, one moved or renamed is, at its path now. Each ID is looked for once.
+        if not file_ids:
+            return {}
+        conditions: list = []
+        for file_id in file_ids[:-1]:
+            conditions += ["or", "eq", "fileid", file_id]
+        conditions += ["eq", "fileid", file_ids[-1]]
+        try:
+            nodes = self.call(self.nc.files.find(conditions))
+        except (NextcloudException, OSError) as error:
+            raise NotChecked(str(error) or type(error).__name__) from error
+        return {int(node.info.fileid): posixpath.join("/", node.user_path.rstrip("/")) for node in nodes}
 
     def _tag_ids(self) -> dict[str, int]:
         return {tag.display_name: tag.tag_id for tag in self.call(self.nc.files.list_tags())}

@@ -157,7 +157,7 @@ def test_a_file_saved_before_the_record_is_learnt_and_a_deleted_one_stays_away(t
     del library.files["/In/b.pdf"]
     server.files["/b.pdf"] = b"%PDF-1 b, changed after its deletion"
     go(store, job, source, library)
-    assert "/In/b.pdf" not in library.files, "a file its person deleted is not brought back"
+    assert "/In/b.pdf" not in library.files, "a file its person deleted is not brought back without deleted.py"
     assert store.content(job_id, "/b.pdf")["hash"] == versions.digest(_bytes(b"%PDF-1 b"))  # type: ignore[index]
 
 

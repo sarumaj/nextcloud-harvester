@@ -7,7 +7,7 @@ import posixpath
 import tempfile
 import time
 from collections.abc import Callable
-from typing import BinaryIO
+from typing import TYPE_CHECKING, BinaryIO
 
 from . import unpack, versions
 from .l10n import Said, listed, said, said_n
@@ -28,6 +28,9 @@ from .sources import (
 )
 from .store import Job
 
+if TYPE_CHECKING:
+    from .deleted import Deleted
+
 # Files that failed on their own before a run without any success gives up (the site, not the
 # files, is the trouble then).
 MAX_FAILURES = 5
@@ -37,6 +40,9 @@ MAX_FAILURES = 5
 MAX_IN_A_ROW = 10
 # Files of other items at the path an item's name gives: it takes the name with " (2)", " (3)", ...
 MAX_TWINS = 100
+
+# The option to download a file again that its person deleted in Nextcloud (deleted.py).
+AGAIN = "again_deleted"
 
 # Options every job has, whatever its source.
 COMMON_OPTIONS = {
@@ -54,6 +60,17 @@ COMMON_OPTIONS = {
         "With Unpack ZIP files: the archive is kept beside its folder. Off: only its files are saved, the folder "
         "standing for it.",
         kind="flag",
+    ),
+    # On for every job, also for those saved before it existed (before): a file deleted in the
+    # folder comes back with the next run whose listing finds it.
+    AGAIN: Option(
+        "Download deleted files again",
+        1,
+        "Before a run skips a file it saved already, it asks Nextcloud whether the file is still there: one "
+        "deleted (or in the trash) is downloaded again. A file moved or renamed counts as there, and is not "
+        "downloaded again. Off: a file once saved is never downloaded again.",
+        kind="flag",
+        before=1,
     ),
     "max_items": Option(
         "Files per run",
@@ -95,9 +112,19 @@ class Library(abc.ABC):
         """Takes the collaborative tags off the file (those it does not have are no matter);
         FileGone when there is no such file any more."""
 
+    def existing(self, file_ids: list[int]) -> dict[int, str]:
+        """The files of the IDs that are among the user's files (not in the trash), with their
+        paths now; NotChecked when that cannot be found out (by default: a library that cannot
+        tell)."""
+        raise NotChecked(f"{type(self).__name__} cannot look for {len(file_ids)} files by their IDs")
+
 
 class FileGone(Exception):
     """The file a job saved is not there any more (deleted or moved away by its user)."""
+
+
+class NotChecked(Exception):
+    """Nextcloud could not tell which files are there (Library.existing)."""
 
 
 @dataclasses.dataclass
@@ -264,8 +291,9 @@ def _recheck(  # pylint: disable=too-many-arguments,too-many-positional-argument
     """A known file's address asked again: only if it changed since (its ETag, Last-Modified),
     else downloaded and compared by its hash. A file that changed is saved over its own (UPDATED:
     Nextcloud keeps the one before as a version); one without a record (saved before the job
-    kept them) is the measure from now on (UNCHANGED); one its person deleted or moved stays
-    away."""
+    kept them) is the measure from now on (UNCHANGED); one not at its path stays away (one
+    deleted in Nextcloud comes here only where the run does not download those again:
+    deleted.py; one moved is no new version's place)."""
     contents = source.contents
     known = contents.known(item.key)
     pause()
@@ -285,7 +313,8 @@ def _recheck(  # pylint: disable=too-many-arguments,too-many-positional-argument
         if file_id is None and unpack.unpacks(job.options, path):
             file_id = library.find(unpack.folder_of(path))  # unpacked without the archive
         if file_id is None or known is None or known["hash"] == value:
-            # Gone (deleted or moved by its person): not brought back; asked again all the same.
+            # Not at its path (moved by its person, or deleted where the job does not download those
+            # again): not brought back; asked again all the same.
             contents.keep(item.key, value if file_id is not None or known is None else known["hash"], path, check)
             return UNCHANGED
         file_id, path, _ = _put(job, source, library, item, path, content, report, fresh=False)
@@ -484,13 +513,16 @@ def run(  # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
     record: Callable[[Placed], None] = lambda placed: None,
     owners: dict[int, str] | None = None,
     later: str = NEXT_RUN,
+    deleted: "Deleted | None" = None,
 ) -> str:
     """Downloads up to max_items new items (and stops at until, a time.monotonic(), or a
     function giving it) and returns what was done, in a sentence; report hears of each step
     (the page's progress log). stopped is asked before each file: it may wait while the run is
     paused, and True ends the run there (the rest comes next run, as at the limits). owners are
     the files the job saved before, by ID, with their items' keys; later says when the rest
-    comes (a fetch's: when its address is sent again)."""
+    comes (a fetch's: when its address is sent again). deleted (deleted.py) tells which known
+    files are gone from Nextcloud: seen() skips them no more, and a known file due to be asked
+    for changes that is gone is downloaded as a new one."""
     limit = int(job.options.get("max_items", COMMON_OPTIONS["max_items"].default))
     tally = Tally(later=later)
     complete = True
@@ -508,6 +540,8 @@ def run(  # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
     in_a_row = 0
     source.report = report
     source.remember = mark_seen
+    if deleted is not None:
+        source.ahead = deleted.ahead
     # The files the job saved whose addresses are asked again (Check known files for changes):
     # the listing gives them as if new, place asks whether they changed.
     again = source.contents.due(set(owners.values())) if source.contents is not None and source.rechecks() else set()
@@ -540,7 +574,7 @@ def run(  # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
             # A pause between two downloads (or asks of a known file), not before the first.
             asked = tally.downloaded + tally.updated + tally.unchanged + tally.duplicates
             pause = (lambda: sleep(source.pause)) if asked else (lambda: None)
-            rechecked = item.key in again
+            rechecked = item.key in again and not (deleted is not None and deleted.gone(item.key))
             try:
                 try:
                     done = place(job, source, library, item, pause, report, keep, owners, rechecked)
@@ -552,6 +586,8 @@ def run(  # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
                     resigned = True
                     done = place(job, source, library, item, pause, report, keep, owners, rechecked)
                 setattr(tally, done, getattr(tally, done) + 1)
+                if deleted is not None:
+                    deleted.placed(item.key, done, posixpath.join(job.target, item.path))
                 in_a_row = 0
             except (AuthError, ChallengeError):
                 raise  # the whole site refuses: no point in the next files
