@@ -137,6 +137,7 @@ def inline_html(html: str, base: str, snapshot: Snapshot, depth: int = 0) -> str
     soup = BeautifulSoup(html, "html.parser")
     for tag in soup.find_all(["script", "noscript"]):
         tag.decompose()
+    _inert(soup)
     for meta in soup.find_all("meta"):
         refused = ("content-security-policy", "content-type", "refresh")
         if str(meta.get("http-equiv") or "").lower() in refused or meta.has_attr("charset"):
@@ -198,12 +199,34 @@ def _location(snapshot: Snapshot, source: str, base: str) -> str:
     return base
 
 
+# Attributes that hold an address a script could hide in (javascript:).
+ADDRESS_ATTRIBUTES = ("href", "src", "action", "formaction", "xlink:href", "data", "poster")
+# Kept pages never run anything: their own scripts are gone, and this policy stops what is left
+# (frames as srcdoc inherit it).
+POLICY = "script-src 'none'; object-src 'none'; base-uri 'none'"
+
+
+def _inert(soup: BeautifulSoup) -> None:
+    """Takes out what runs besides <script>: event handlers (onclick, onerror, …) and
+    javascript: addresses. A saved page is opened from Nextcloud by the family; it shows, it
+    never acts."""
+    for tag in soup.find_all(True):
+        for name in [name for name in tag.attrs if name.lower().startswith("on")]:
+            del tag[name]
+        for name in ADDRESS_ATTRIBUTES:
+            value = tag.get(name)
+            if isinstance(value, str) and "".join(value.split()).lower().startswith(("javascript:", "vbscript:")):
+                del tag[name]
+
+
 def _charset(soup: BeautifulSoup) -> None:
-    """A <meta charset="utf-8"> first in the head: the file is written in UTF-8."""
+    """A <meta charset="utf-8"> first in the head (the file is written in UTF-8), then the
+    policy that no script runs."""
     head = soup.head
     if head is None:
         head = soup.new_tag("head")
         (soup.html or soup).insert(0, head)
+    head.insert(0, soup.new_tag("meta", attrs={"http-equiv": "Content-Security-Policy", "content": POLICY}))
     head.insert(0, soup.new_tag("meta", attrs={"charset": "utf-8"}))
 
 

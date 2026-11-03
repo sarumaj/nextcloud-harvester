@@ -77,7 +77,9 @@ def snapshot() -> bytes:
             f'<html><head><meta http-equiv=3D"Content-Type" content=3D"text/html; charset=3Dutf-8">'
             f'<title>Order 7</title><link rel=3D"stylesheet" href=3D"{SITE}/s.css"></head><body>'
             f'<h1>Caf=C3=A9</h1><img src=3D"{SITE}/i.png" srcset=3D"{SITE}/i.png 1x, {SITE}/big.png 2x">'
-            '<iframe src=3D"cid:frame-2@mhtml.blink"></iframe><script>x()</script></body></html>',
+            '<iframe src=3D"cid:frame-2@mhtml.blink"></iframe><script>x()</script>'
+            '<a href=3D" Java Script:x()" onclick=3D"x()">More</a><img src=3D"/none.png" onerror=3D"x()">'
+            "</body></html>",
         ),
         ("text/css", "quoted-printable", f"{SITE}/s.css", "", 'body { background: url("/i.png") }'),
         ("image/png", "base64", f"{SITE}/i.png", "", image),
@@ -101,7 +103,9 @@ def test_a_snapshot_becomes_one_html_file_with_its_resources_inside():
     html = mhtml.single_html(snapshot(), "Saved from the shop").decode()
     data = f"data:image/png;base64,{base64.b64encode(PNG).decode()}"
     assert html.startswith('<!DOCTYPE html>\n<!-- Saved from the shop -->\n<html><head><meta charset="utf-8"/>')
-    assert "Café" in html and "<script" not in html and "http-equiv" not in html
+    assert "Café" in html and "<script" not in html and "Content-Type" not in html
+    assert "x()" not in html and "<a>More</a>" in html, "no handler, no javascript: address"
+    assert f'<meta content="{mhtml.POLICY}" http-equiv="Content-Security-Policy"/>' in html
     assert f'<style>body {{ background: url("{data}") }}</style>' in html, "the stylesheet inlined, its image too"
     assert (
         f'src="{data}"' in html and f'srcset="{data} 1x, {SITE}/big.png 2x"' in html

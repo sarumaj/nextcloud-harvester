@@ -341,7 +341,8 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   stylesheets, pictures, fonts and frames inside: Chromium's snapshot (MHTML, as *Save page as*
   makes it: the page as it shows it after its scripts, without them), each resource turned into
   a `data:` address (`harvester/mhtml.py`), since MHTML opens only in Chromium's browsers and
-  Nextcloud shows none; `markdown` the main content as Readability finds it (paragraphs scored
+  Nextcloud shows none. Nothing in it runs: no event handlers (`onclick`, `onerror`, …), no
+  `javascript:` addresses, and a policy `script-src 'none'` in its head; `markdown` the main content as Readability finds it (paragraphs scored
   for their containers, menus, sidebars, forms and hidden parts left out) with its headings,
   lists, tables, links and pictures (`harvester/pagetext.py`, on BeautifulSoup: no other
   dependency), under the title and the address. The file's name may hold `{title}`, the page's
