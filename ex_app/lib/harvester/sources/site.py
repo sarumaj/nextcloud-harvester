@@ -693,6 +693,8 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
         self.listing_only = False
         # What the pages of the file links, or the start page, are saved as ("": downloaded).
         self.saving = keep.saved_as(self.recipe) or keep.saved_as(self.recipe.get("links") or {})
+        # Whether pages are kept (saved, or their files captured): {title} is their title.
+        self.keeps = bool(self.saving or (self.recipe.get("links") or {}).get("capture"))
 
     def _saw(self, shot: dict) -> None:
         self._shot = shot
@@ -863,14 +865,14 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
         until the download (fetch)."""
         values = patterns.link_values(link, text, page) | groups
         template = str(self.settings["path"])
-        keeps = self.saving or (self.recipe.get("links") or {}).get("capture")
-        pending = bool(names_in(template) & ({"disposition", "title"} if keeps else {"disposition"}))
+        pending = bool(names_in(template) & ({"disposition", "title"} if self.keeps else {"disposition"}))
         key = patterns.stable_url(link)
         try:
             url = patterns.render(str(self.settings["download_url"]), values)
-            title = {"title": values["text"] or values["stem"]} if keeps else {}
-            stand_in = values | {"disposition": values["filename"]} | title if pending else values
-            path = patterns.render_path(template, stand_in)
+            title = {"title": values["text"] or values["stem"]} if self.keeps else {}
+            path = patterns.render_path(
+                template, values | {"disposition": values["filename"]} | title if pending else values
+            )
         except (KeyError, ValueError) as error:
             problem = SourceError(str(error).strip("'\""))
             return Item(key=key, path="", url=link, values=values, problem=problem, referer=referer)
