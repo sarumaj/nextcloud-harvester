@@ -48,14 +48,16 @@ def test_pages_see_a_persons_browser():
             page = chromium.new_context(**browser.context_options(chromium.version)).new_page()
             seen = page.evaluate(
                 "() => [navigator.webdriver, navigator.userAgent, navigator.language,"
-                " Intl.DateTimeFormat().resolvedOptions().timeZone]"
+                " Intl.DateTimeFormat().resolvedOptions().timeZone, performance.memory.jsHeapSizeLimit]"
             )
         finally:
             chromium.close()
-    webdriver, agent, language, zone = seen
+    webdriver, agent, language, zone, heap = seen
     assert webdriver is False
     assert "Headless" not in agent
     assert language == browser.LOCALE and zone == browser.TIMEZONE
+    # --max-old-space-size=1024 and the young generation's (some 3.7 GB without it).
+    assert heap <= 1_300_000_000
 
 
 @needs_chromium

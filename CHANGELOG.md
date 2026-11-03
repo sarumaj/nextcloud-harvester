@@ -55,6 +55,9 @@
 - The jobs page asks for the progress log every 30 seconds while none of your jobs runs or
   waits (10 before), and not at all while the page is hidden (another tab, a minimized window):
   at once when it shows again.
+- A page's JavaScript in the job's browser and the recorder's has at most 1 GB of memory (some
+  3.7 GB before), so that a page that runs away fails by itself rather than taking the memory of
+  the other browsers and the app.
 
 ### Fixed
 

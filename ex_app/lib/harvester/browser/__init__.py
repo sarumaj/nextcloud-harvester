@@ -100,7 +100,10 @@ VIEWPORT = {"width": 1280, "height": 800}
 # The sizes a person may give the recorder's window (the page's own size, within these).
 VIEWPORT_MIN = {"width": 640, "height": 480}
 VIEWPORT_MAX = {"width": 2560, "height": 1600}
-LAUNCH_ARGS = ["--disable-dev-shm-usage"]
+# A page's JavaScript gets at most 1 GB of heap (Chromium's own is up to some 4 GB): a page that
+# runs away fails by itself instead of taking the memory of the other browsers and of the app.
+# Neither Playwright nor Patchright gives Chromium JavaScript flags of its own.
+LAUNCH_ARGS = ["--disable-dev-shm-usage", "--js-flags=--max-old-space-size=1024"]
 # Like a person's browser, not an automated one: sites behind Cloudflare and other bot
 # protection refuse a browser that says it is automated, or cut its connection
 # (ERR_HTTP2_PROTOCOL_ERROR). The person still answers any challenge; this only keeps
