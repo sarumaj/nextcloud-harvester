@@ -3,12 +3,19 @@
 
 # pylint: disable=missing-function-docstring
 
+import contextlib
+import importlib
+import inspect
 import io
 import json
+import pathlib
+import re
 import subprocess
 
+import gallery_dl
 import httpx
 import pytest
+import urllib3
 
 from harvester.sources import SourceError
 from harvester.sources.gallery import Gallery
@@ -116,3 +123,22 @@ def test_impersonation_is_gallery_dls_own_browser_emulation_in_its_config():
     finally:
         for path in files:
             __import__("os").unlink(path)
+
+
+def test_the_urllib3_names_gallery_dl_calls_exist():
+    # gallery-dl calls urllib3.connection.create_urllib3_context, which urllib3 2.8.0 dropped:
+    # every gallery job failed. Each urllib3 name its code calls (a module, then attributes) must
+    # be there.
+    used = set()
+    for path in pathlib.Path(gallery_dl.__file__).parent.rglob("*.py"):
+        used |= set(re.findall(r"\burllib3\.((?:\w+\.)*\w+)\(", path.read_text(encoding="utf-8")))
+    assert "connection.create_urllib3_context" in used
+    for name in sorted(used):
+        found: object = urllib3
+        for part in name.split("."):
+            if not hasattr(found, part) and inspect.ismodule(found):
+                # A submodule not imported yet (urllib3.util.ssl_).
+                with contextlib.suppress(ModuleNotFoundError):
+                    importlib.import_module(f"{found.__name__}.{part}")
+            assert hasattr(found, part), f"urllib3.{name}"
+            found = getattr(found, part)

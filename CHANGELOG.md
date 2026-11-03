@@ -24,6 +24,12 @@
   downloaded file's hash. A changed file is saved over its own, so that Nextcloud keeps the one
   before among its versions; a deleted file is not brought back, a failed check fails nothing.
 
+### Fixed
+
+- Gallery jobs: urllib3 is held at 2.7.0, since 2.8.0 no longer has the function gallery-dl
+  calls (every gallery job failed with `AttributeError: module 'urllib3.connection' has no
+  attribute 'create_urllib3_context'`).
+
 ## 0.13.0 - 2026-11-03
 
 ### Added
