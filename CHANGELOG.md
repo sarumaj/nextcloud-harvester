@@ -111,6 +111,9 @@
   `urllib3.connection.create_urllib3_context`.
 - *Test the recipe* in the recorder failed at a recorded click on a cookie banner that **Dismiss
   cookie banners** had answered already; it skips the click as optional, as a run does.
+- The jobs' states *OK*, *Failed*, *Sign-in refused*, *Changed*, *Needs you* and *Paused* were
+  their text colour on their full colour, hard to read in both themes: a light tint of the colour
+  behind the text now.
 
 ## 0.13.1 - 2026-11-03
 

@@ -2832,9 +2832,11 @@
 		#harvester .harvester-actions button { margin-inline-start: 4px; }
 		#harvester .harvester-chip { display: inline-block; margin: 0 4px 2px 0; padding: 0 8px; border-radius: var(--border-radius-pill, 999px); background: var(--color-background-dark); font-size: 0.9em; }
 		#harvester .harvester-status { display: inline-block; padding: 0 8px; border-radius: var(--border-radius-pill, 999px); font-size: 0.9em; background: var(--color-background-dark); }
-		#harvester .harvester-status-ok { background: var(--color-success); color: var(--color-success-text, #fff); }
-		#harvester .harvester-status-failed, #harvester .harvester-status-auth { background: var(--color-error); color: var(--color-error-text, #fff); }
-		#harvester .harvester-status-changed { background: var(--color-warning); color: var(--color-warning-text, #000); }
+		/* A state's colour as a light tint of it behind its text colour, readable in both themes
+		   (the text colours are made for the page's background, not for the full colour). */
+		#harvester .harvester-status-ok { background: color-mix(in srgb, var(--color-success) 15%, transparent); color: var(--color-success-text, var(--color-main-text)); }
+		#harvester .harvester-status-failed, #harvester .harvester-status-auth { background: color-mix(in srgb, var(--color-error) 15%, transparent); color: var(--color-error-text, var(--color-main-text)); }
+		#harvester .harvester-status-changed, #harvester .harvester-status-held, #harvester .harvester-status-challenge, #harvester .harvester-status-asking { background: color-mix(in srgb, var(--color-warning) 15%, transparent); color: var(--color-warning-text, var(--color-main-text)); }
 		#harvester .harvester-progress { margin-top: 24px; }
 		#harvester .harvester-progress-head { display: flex; gap: 12px; align-items: center; }
 		#harvester .harvester-progress-head h3 { margin: 0; }
@@ -2850,8 +2852,6 @@
 		#harvester .harvester-log-done .harvester-log-text { color: var(--color-success-text, var(--color-success)); font-weight: bold; }
 		#harvester .harvester-status-running { background: var(--color-primary-element); color: var(--color-primary-element-text); }
 		#harvester .harvester-status-queued { background: var(--color-primary-element-light); color: var(--color-primary-element-light-text, var(--color-main-text)); }
-		#harvester .harvester-status-held { background: var(--color-warning); color: var(--color-warning-text, #000); }
-		#harvester .harvester-status-challenge, #harvester .harvester-status-asking { background: var(--color-warning); color: var(--color-warning-text, #000); }
 		#harvester .harvester-asking { display: flex; flex-wrap: wrap; align-items: end; gap: 6px; margin-top: 4px; }
 		#harvester .harvester-asking label { display: flex; flex-direction: column; }
 		#harvester .harvester-asking small { flex-basis: 100%; }
