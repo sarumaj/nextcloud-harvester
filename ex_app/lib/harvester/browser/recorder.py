@@ -22,9 +22,11 @@ The messages are JSON over the page's WebSocket:
   target, level}, {type: next-kind, kind (link, number)}, {type: undo} (the last step), {type:
   undo-pick} (the last change of the picks), {type: scroll} (a step: scroll to load more),
   the Steps list's edits (steps.EDITS: optional, step-delete, step-move, step-edit, record-at,
-  mail-code, ask-code, each), {type: test, recipe, settings, as_job, job} (as_job: the app adds the
-  saved job's account, main.py), {type: test-stop}, {type: test-code, code} (what a step of the
-  test asks, {type: test-asking}, trial.py), {type: clear}, and the cookies panel's (jar.py);
+  mail-code, ask-code, each, person, person-edit: the page's address added), {type: mode, mode:
+  until, step} (an element picked for a step's until: to the page {type: until-picked}), {type:
+  test, recipe, settings, as_job, job} (as_job: the app adds the saved job's account, main.py),
+  {type: test-stop}, {type: test-code, code} (what a step of the test asks, {type: test-asking},
+  trial.py), {type: clear}, and the cookies panel's (jar.py);
 - values from the page: {type: mode, mode: value, target, level} (pick a value near the level's
   links), {type: value, target, level, index, changes (name, regex, type, attribute, closest,
   selector, field)} (one changed), {type: value-add, target, level, field} (a JSON item's field as one),
@@ -106,8 +108,8 @@ from .guard import Guard
 from .steps import EDITS, StepList
 
 # record: steps; browse: go somewhere unrecorded; follow, links, next: pick links; value: pick a
-# value near a level's links.
-MODES = ("record", "browse", "follow", "links", "next", "value")
+# value near a level's links; until: pick the element an approval or a handover waits for.
+MODES = ("record", "browse", "follow", "links", "next", "value", "until")
 # Text up to this long is typed key by key; longer (a paste) is inserted at once.
 TYPED = 200
 # Tries to start a page's screencast while it is being attached, and the pause between them.
@@ -211,6 +213,8 @@ class Recorder(LinkPicks, Popups, Trials):  # pylint: disable=too-many-instance-
         self._picked_at: dict[int, str] = {}
         # The level a value is picked for (mode value): ("links", 0) or ("follow", level).
         self.value_for: tuple[str, int] | None = None
+        # The step whose until an element is picked for (mode until).
+        self.until_for: int | None = None
         # The page's answers in JSON (Network), and the one chosen as the listing: (url, data).
         self.requests: list[dict] = []
         self._json: tuple[str, object] | None = None
@@ -555,6 +559,14 @@ class Recorder(LinkPicks, Popups, Trials):  # pylint: disable=too-many-instance-
             )
         elif action == "pick" and event.get("target") == "value":
             await self._pick_value(event)
+        elif action == "pick" and event.get("target") == "until":
+            # The element an approval or a handover waits for (steps.person_edit).
+            selector = str(event.get("selector") or "")
+            if self.until_for is not None and self.steps.edit(
+                "person-edit", {"step": self.until_for, "selector": selector}
+            ):
+                await self._update()
+            await self.send({"type": "until-picked", "step": self.until_for})
         elif action == "pick":
             await self._pick(event)
         elif action == "refused":
@@ -799,18 +811,15 @@ class Recorder(LinkPicks, Popups, Trials):  # pylint: disable=too-many-instance-
             else:
                 await page.keyboard.insert_text(text)
         elif kind == "mode" and message.get("mode") in MODES:
-            self.mode = message["mode"]
-            level = message.get("level")
-            self.repick = int(level) if self.mode == "follow" and isinstance(level, int) else None
-            self.value_for = self._value_target(message) if self.mode == "value" else None
-            await self._apply_mode()
+            await self._set_mode(message)
         elif kind == "pattern":
             await self._edit_pattern(message)
         elif kind in ("click", "save"):
             # A pick clicked or not, the file links' pages saved or not (linkpicks.py).
             await (self._set_click if kind == "click" else self._set_save)(message)
         elif kind in EDITS:
-            if self.steps.edit(kind, message):
+            # The person's steps wait for this page's address (theirs, never one the page names).
+            if self.steps.edit(kind, message | {"address": page.url}):
                 await self._update()
         elif kind in ("back", "forward", "reload"):
             await self._navigate(kind)
@@ -822,6 +831,16 @@ class Recorder(LinkPicks, Popups, Trials):  # pylint: disable=too-many-instance-
                 await self.send(answer)
         else:
             await self._handle_picks(kind, message)
+
+    async def _set_mode(self, message: dict) -> None:
+        """The mode the page chose, with what it picks for: a level's links again (follow), a
+        level's value (value), a step's until (until)."""
+        self.mode = message["mode"]
+        level, step = message.get("level"), message.get("step")
+        self.repick = int(level) if self.mode == "follow" and isinstance(level, int) else None
+        self.value_for = self._value_target(message) if self.mode == "value" else None
+        self.until_for = step if self.mode == "until" and isinstance(step, int) else None
+        await self._apply_mode()
 
     async def _handle_picks(self, kind: object, message: dict) -> None:
         """The page's messages about the picks and the recipe."""

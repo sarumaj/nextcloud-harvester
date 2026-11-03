@@ -1757,10 +1757,28 @@
 			title: t('A step: scroll to the end of the page until no more comes (a listing that loads more as it is scrolled)'),
 			onclick: () => send({ type: 'scroll' }),
 		})
+		// The steps of yours, where the recording is: an approval in your app (once you approved
+		// and the site went on: it waits for this address), and a handover (before what only you
+		// can do in the page).
+		const approve = el('button', {
+			type: 'button',
+			text: t('Add: wait for my approval'),
+			title: t('After you approved the sign-in in your app and the site went on: a step that waits for your approval when the job runs, until the page shows this address'),
+			onclick: () => send({ type: 'person', action: 'approve', label: t('Approve the sign-in in your app') }),
+		})
+		const handover = el('button', {
+			type: 'button',
+			text: t('Add: hand over to me'),
+			title: t('Before what only you can do (a passkey, a check): a step that stops the job here, for you to go on in its browser'),
+			onclick: () => send({ type: 'person', action: 'handover', label: t('Sign in yourself (a passkey)') }),
+		})
 		const radios = {}
+		let beforeUntil = null
 		const labels = [['record', t('Record steps')], ['browse', t('Browse')], ['follow', t('Pick links to follow')], ['links', t('Pick file links')], ['next', t('Pick next-page link')]]
 		const placing = el('div', { class: 'harvester-placing' })
 		let current = placed ? 'record' : 'browse'
+		// Steps are added only while recording.
+		for (const button of [scroll, approve, handover]) button.disabled = current !== 'record'
 		const choose = (mode, text, level, target) => {
 			// Picking a value has no radio of its own: it is a level's, started from its box. Recording
 			// on a recipe with steps waits for where the new ones go: the mode stays as it was.
@@ -1772,9 +1790,21 @@
 			}
 			placing.replaceChildren()
 			current = mode
+			beforeUntil = null
 			send(level === undefined ? { type: 'mode', mode } : { type: 'mode', mode, level, target })
 			modeHelp.textContent = text || help[mode]
-			scroll.disabled = mode !== 'record'
+			for (const button of [scroll, approve, handover]) button.disabled = mode !== 'record'
+			screen.focusKeys()
+		}
+		// The element an approval or a handover waits for, picked on the page: then back to the
+		// mode before (beforeUntil).
+		const pickUntil = (index) => {
+			beforeUntil = beforeUntil || current
+			for (const radio of Object.values(radios)) radio.checked = false
+			current = 'until'
+			send({ type: 'mode', mode: 'until', step: index })
+			modeHelp.textContent = t('Click the element the page shows once you are through (your accounts, your name): the job waits for it.')
+			for (const button of [scroll, approve, handover]) button.disabled = true
 			screen.focusKeys()
 		}
 		// Where the new steps of a recipe with steps go: after a step (the last, unless chosen),
@@ -1922,6 +1952,7 @@
 				details.push(el('button', { type: 'button', class: 'harvester-link', text: t('Repeat for each option'), title: t('The steps after this one and the listing are gone through once for each option of the list, its text {choice} in file names and tags', { choice: '{choice}' }), onclick: () => send({ type: 'each', step: index }) }))
 			}
 			if (step.action === 'each') details.push(eachEditor(step, index))
+			if (step.action === 'approve' || step.action === 'handover') details.push(personEditor(step, index))
 			if (step.wait && (step.wait.url || step.wait.selector)) {
 				const address = step.wait.url
 				const shown = step.wait.selector
@@ -1941,7 +1972,8 @@
 				el('span', { text: `${describe(step)} ` }),
 				mailCode(step, index),
 				phoneCode(step, index),
-				el('label', { title: t('Best effort: when it fails (not there, not visible), the job waits a few seconds at most and goes on without it') }, box, ` ${t('optional')}`),
+				// An approval or a handover is never optional: its until says when it is not needed.
+				['approve', 'handover'].includes(step.action) ? '' : el('label', { title: t('Best effort: when it fails (not there, not visible), the job waits a few seconds at most and goes on without it') }, box, ` ${t('optional')}`),
 				!step.optional && looksLikeConsent(step)
 					? el('button', { type: 'button', class: 'harvester-link harvester-hint', text: t('make optional?'), title: t('A consent banner often shows only on the first visit'), onclick: () => toggle(true) })
 					: '',
@@ -1968,6 +2000,37 @@
 			values.addEventListener('change', edit)
 			pattern.addEventListener('change', edit)
 			return el('span', {}, el('label', {}, `${t('Values')} `, values), ' ', el('label', {}, `${t('Only options matching')} `, pattern))
+		}
+
+		// An approval's or a handover's label, an approval's wait, and the address and element the
+		// page shows once the person is through (a handover's optional): typed, this page's address,
+		// or an element picked on the page.
+		function personEditor(step, index) {
+			const edit = (change) => send({ type: 'person-edit', step: index, ...change })
+			const until = step.until || {}
+			const number = { number: index + 1 }
+			const input = (value, label) => el('input', { class: 'harvester-step-value', value: value || '', placeholder: t('none'), spellcheck: 'false', 'aria-label': label })
+			const label = input(step.label, t('What you are asked, step {number}', number))
+			label.maxLength = 100
+			label.addEventListener('change', () => { if (label.value.trim()) edit({ label: label.value.trim() }) })
+			const minutes = el('input', { type: 'number', min: '0.5', max: '30', step: '0.5', class: 'harvester-step-number', value: String((step.wait || 600) / 60), 'aria-label': t('How long the job waits for you (minutes), step {number}', number) })
+			minutes.addEventListener('change', () => {
+				const seconds = Math.round(Number(minutes.value) * 60)
+				if (seconds >= 30 && seconds <= 1800) edit({ wait: seconds })
+				else minutes.value = String((step.wait || 600) / 60)
+			})
+			const address = input(until.url, t('The address it waits for (a pattern), step {number}', number))
+			address.addEventListener('change', () => edit({ url: address.value }))
+			const element = input(until.selector, t('The element it waits for, step {number}', number))
+			element.addEventListener('change', () => edit({ selector: element.value }))
+			return el('div', { class: 'harvester-person-step' },
+				el('label', {}, `${t('Asks')} `, label),
+				step.action === 'approve' ? el('label', {}, ` ${t('for up to')} `, minutes, ` ${t('min')}`) : '',
+				el('span', { class: 'harvester-muted', text: step.action === 'approve' ? t('Goes on once the page shows:') : t('Not needed once the page shows (optional):') }),
+				el('label', {}, `${t('Address')} `, address),
+				el('button', { type: 'button', class: 'harvester-link', text: t('this page’s address'), onclick: () => edit({ here: true }) }),
+				el('label', {}, `${t('Element')} `, element),
+				el('button', { type: 'button', class: 'harvester-link', text: t('Pick an element'), onclick: () => pickUntil(index) }))
 		}
 
 		// What the test did with a step: playing (its attempt, when it has more), pausing (a
@@ -2180,6 +2243,7 @@
 			else if (data.type === 'test-started') { testing = true; tested = null; played = {}; editing = null; playedShape = shape(); renderPanel() }
 			else if (data.type === 'test-step') { asking = null; stepEvent(data) }
 			else if (data.type === 'test-asking') { asking = data; renderPanel() }
+			else if (data.type === 'until-picked' && beforeUntil) { const back = beforeUntil; beforeUntil = null; choose(back) }
 			else if (data.type === 'test') {
 				testing = false
 				tested = data.result
@@ -2232,7 +2296,7 @@
 					drawer,
 					el('button', { class: 'primary', text: t('Done'), onclick: () => close(true) }),
 					el('button', { text: t('Cancel'), onclick: () => close(false) })),
-				modes, placing, el('div', { class: 'harvester-toolbar' }, modeHelp, scroll), where, network, message, cookies.box, networkBox),
+				modes, placing, el('div', { class: 'harvester-toolbar' }, modeHelp, scroll, approve, handover), where, network, message, cookies.box, networkBox),
 			el('div', { class: 'harvester-stage' }, box, panel))
 		root.replaceChildren(container)
 		renderPanel()
@@ -2632,6 +2696,7 @@
 		#harvester .harvester-steps .harvester-step-tools { margin-inline-start: 6px; white-space: nowrap; }
 		#harvester .harvester-steps .harvester-step-tools button { min-height: 0; padding: 0 4px; }
 		#harvester .harvester-steps .harvester-step-details { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; margin: 2px 0 6px; }
+		#harvester .harvester-person-step { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
 		#harvester .harvester-steps .harvester-step-details select, #harvester .harvester-steps .harvester-step-value { min-height: 0; margin: 0; }
 		#harvester .harvester-steps .harvester-step-number { width: 5em; min-height: 0; margin: 0 2px; }
 		#harvester .harvester-steps .harvester-step-timing summary { cursor: pointer; color: var(--color-text-maxcontrast); }

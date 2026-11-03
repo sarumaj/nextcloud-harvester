@@ -33,7 +33,8 @@ the app's browser or taken from a template, not by code.
 - **Recorder:** a browser in the app, shown on the page: sign in and pick the links (or the
   buttons, rows and cards without an address, which the job clicks, or a listing the page asks
   for as JSON, also with POST and GraphQL), and the app proposes their patterns, the files' names
-  and tags; *Test the recipe* shows what a run would find.
+  and tags; it adds the steps of yours (a code from the phone, an approval in an app, a
+  handover); *Test the recipe* shows what a run would find.
 - **Templates** for known sites (heise's magazines, podcasts, channels, galleries, releases, a
   page saved on demand), and recipes to export and import as files.
 - **Sign-ins:** passwords, one-time codes, codes by e-mail, cookies, OAuth2 for mail; kept

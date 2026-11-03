@@ -837,3 +837,55 @@ def test_a_job_that_waits_for_an_approval_says_so(page):
     assert row.locator(".harvester-status").inner_text() == "Needs you"
     assert "Confirm in the bank's app: approve it on your phone or in the app." in row.inner_text()
     assert row.get_by_role("textbox").count() == 0, "nothing to type"
+
+
+@needs_chromium
+def test_the_recorder_adds_an_approval_and_a_handover_and_the_steps_list_edits_them(page):
+    page.get_by_role("button", name="Edit").click()
+    page.get_by_role("button", name="Record in the browser").click()
+    page.wait_for_function("window.__sockets.length && window.__sockets[0].sent.length")
+    approve = page.get_by_role("button", name="Add: wait for my approval")
+    handover = page.get_by_role("button", name="Add: hand over to me")
+    assert approve.is_disabled() and handover.is_disabled(), "steps: only while recording"
+    page.locator("input[value=record]").click()
+    page.get_by_role("button", name="Append").click()
+    approve.click()
+    handover.click()
+    assert sent(page)[-2:] == [
+        {"type": "person", "action": "approve", "label": "Approve the sign-in in your app"},
+        {"type": "person", "action": "handover", "label": "Sign in yourself (a passkey)"},
+    ]
+
+    steps = [
+        {"action": "goto", "url": "https://bank.example/login"},
+        {"action": "approve", "label": "Approve the sign-in in your app", "until": {"url": "^https://bank/x$"}},
+        {"action": "handover", "label": "Sign in yourself (a passkey)"},
+    ]
+    receive(page, {"type": "recipe", "recipe": {**RECIPE, "steps": steps}, "proposals": {}})
+    item = page.locator(".harvester-steps ol > li").nth(1)
+    assert "Wait for your approval: Approve the sign-in in your app" in item.inner_text()
+    assert item.get_by_role("checkbox").count() == 0, "never optional"
+    assert item.get_by_role("textbox", name="The address it waits for (a pattern), step 2").input_value() == (
+        "^https://bank/x$"
+    )
+    item.get_by_role("textbox", name="What you are asked, step 2").fill("Confirm in the bank's app")
+    item.get_by_role("textbox", name="What you are asked, step 2").press("Enter")
+    assert sent(page)[-1] == {"type": "person-edit", "step": 1, "label": "Confirm in the bank's app"}
+    item.get_by_role("spinbutton", name="How long the job waits for you (minutes), step 2").fill("5")
+    item.get_by_role("spinbutton", name="How long the job waits for you (minutes), step 2").press("Enter")
+    assert sent(page)[-1] == {"type": "person-edit", "step": 1, "wait": 300}
+    item.get_by_role("button", name="this page’s address").click()
+    assert sent(page)[-1] == {"type": "person-edit", "step": 1, "here": True}
+    item.get_by_role("button", name="Pick an element").click()
+    assert sent(page)[-1] == {"type": "mode", "mode": "until", "step": 1}
+    assert approve.is_disabled(), "picking: no steps added meanwhile"
+    receive(page, {"type": "until-picked", "step": 1})
+    assert sent(page)[-1] == {"type": "mode", "mode": "record"}, "back to recording"
+    assert page.locator("input[value=record]").is_checked()
+
+    item = page.locator(".harvester-steps ol > li").nth(2)
+    assert "Hand the page over to you: Sign in yourself (a passkey)" in item.inner_text()
+    assert item.get_by_role("spinbutton").count() == 0, "a handover does not wait"
+    item.get_by_role("textbox", name="The element it waits for, step 3").fill("#accounts")
+    item.get_by_role("textbox", name="The element it waits for, step 3").press("Enter")
+    assert sent(page)[-1] == {"type": "person-edit", "step": 2, "selector": "#accounts"}

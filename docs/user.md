@@ -568,6 +568,15 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   Picking a number of a numbered pagination as the next page proposes numbered pages, showing
   this page's number and the next one's (**Use the picked link alone** switches back).
   **Add: scroll to load more** (while recording) adds that step and scrolls the page.
+  **Add: wait for my approval** (while recording; once you approved the sign-in in your app and
+  the site went on) adds an approval where the recording is, until the page shows the address it
+  is at now (a click before it waits no longer for that address); **Add: hand over to me** (before
+  what only you can do in the page) adds a handover. In the Steps list each shows what it asks
+  (its label), an approval its wait (minutes), and what the page shows once you are through: an
+  address's pattern (**this page’s address** takes the page's) and an element (**Pick an
+  element**, then a click on it in the page, a list of accounts say: the recorder goes back to
+  the mode before), both an approval's to go on, a handover's optional (to skip it); an
+  approval keeps one of the two.
   **Pick a value** (with each pick of links), then a click on a text near one of its links (a
   date in its row, a title in its card), adds a value: where it is from the link, and a type and
   pattern proposed from what it reads beside every link (a date's form recognised); the examples

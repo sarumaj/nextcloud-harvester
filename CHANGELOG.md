@@ -28,6 +28,10 @@
   older CookieLawInfo, Complianz, Osano, Iubenda, consentmanager.net, Cookie Script, Termly,
   Axeptio, Cookie Notice and Google's Funding Choices (*Do not consent*); a recorded click on
   one of their banners is optional then.
+- The recorder adds approvals and handovers: **Add: wait for my approval** (once the approval
+  went through, until the page's address then) and **Add: hand over to me** where the recording
+  is; the Steps list changes their label, an approval's wait and their `until` (an address's
+  pattern, **this page’s address**, an element typed or picked with **Pick an element**).
 - Cookie banners dismissed in the progress log: an info line on the page where it happened,
   naming the consent manager (or *a cookie banner*) and the button clicked, once a manager in a
   run.

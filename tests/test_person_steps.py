@@ -3,7 +3,9 @@
 from the phone (ask-code), asked on the jobs page and in a notification, typed into its field in
 Chromium (route-served pages, no network); its wait's end, a stop, no desk to ask on (a weekly
 test); the desk that takes a code only for a job that asks for one, the API's endpoint for the
-job's person only; the recorder's Steps list's "code from the phone?"; the checks of a recipe."""
+job's person only; the recorder's Steps list's "code from the phone?"; the checks of a recipe;
+approvals and handovers in a run, and as the recorder adds them, changes them and picks the
+element they wait for."""
 
 # pylint: disable=missing-function-docstring,protected-access
 
@@ -13,8 +15,9 @@ import threading
 
 import pytest
 from fastapi import HTTPException
-from test_browser import FREE, needs_chromium
+from test_browser import FREE, Driver, needs_chromium
 from test_on_demand import Nextcloud, status_of
+from test_recorder_events import run
 from test_runner import FakeNextcloud, FakeSource
 
 import main
@@ -410,3 +413,89 @@ def test_the_teller_asks_for_an_approval():
         sent[0][3]
         == "{label}: approve it within {minutes} minutes, the job goes on once the site shows it went through."
     )
+
+
+def test_the_recorder_adds_an_approval_and_a_handover_where_it_records():
+    track = StepList()
+    password = {"action": "fill", "selector": "#pw", "credential": "password"}
+    click = {"action": "click", "selector": "#go", "wait": {"url": r"^https://bank\.example/accounts(?:[?#].*)?$"}}
+    track.load([GOTO, password, click, {"action": "click", "selector": "a.tab"}])
+    assert track.edit("record-at", {"after": 3})
+    assert track.edit("person", {"action": "approve", "label": " ", "address": ACCOUNTS})
+    approve = {
+        "action": "approve",
+        "label": "Approve the sign-in in your app",
+        "until": {"url": r"^https://bank\.example/accounts(?:[?#].*)?$"},
+    }
+    steps = track.all()
+    assert steps[3] == approve, "after the click, before the later step; the label of its own"
+    assert steps[2] == {"action": "click", "selector": "#go"}, "the click waits no longer for the approval's address"
+    assert steps[4] == {"action": "click", "selector": "a.tab"}
+    assert track.edit("person", {"action": "handover", "label": "Use your passkey", "address": ACCOUNTS})
+    assert track.all()[4] == {"action": "handover", "label": "Use your passkey"}
+    assert not track.edit("person", {"action": "approve", "address": "about:blank"}), "no address to wait for"
+    assert not track.edit("person", {"action": "goto", "address": ACCOUNTS})
+    assert not check_recipe({"steps": track.all(), "start": ACCOUNTS, "links": LINKS})
+
+
+def test_the_steps_list_changes_an_approval_and_a_handover():
+    track = StepList()
+    track.load([GOTO, APPROVE, HANDOVER, {"action": "click", "selector": "#go"}])
+
+    def edited(index: int, **change) -> dict:
+        assert track.edit("person-edit", {"step": index, "address": ACCOUNTS + "/7?x=1"} | change)
+        return track.all()[index]
+
+    assert edited(1, label=" Confirm it ", wait=300)["label"] == "Confirm it"
+    assert edited(1, wait=10)["wait"] == 300, "out of bounds: as it was"
+    assert "wait" not in edited(1, wait=600), "the default"
+    assert edited(1, here=True)["until"] == {
+        "url": r"^https://bank\.example/accounts/\d+(?:[?#].*)?$",
+        "selector": "#accounts",
+    }
+    assert edited(1, selector="")["until"] == {"url": r"^https://bank\.example/accounts/\d+(?:[?#].*)?$"}
+    assert edited(1, url="")["until"] == {"url": r"^https://bank\.example/accounts/\d+(?:[?#].*)?$"}, "never without"
+    assert edited(1, url="(")["until"]["url"].startswith("^https"), "no pattern: as it was"
+    assert edited(2, selector="#accounts")["until"] == {"selector": "#accounts"}
+    assert "until" not in edited(2, selector=""), "a handover's is optional"
+    assert edited(3, label="x") == {"action": "click", "selector": "#go"}, "another step as it is"
+    assert not check_recipe({"steps": track.all(), "start": ACCOUNTS, "links": LINKS})
+
+
+@needs_chromium
+def test_the_recorder_picks_the_element_an_approval_waits_for():
+    async def fulfill(route) -> None:
+        path = "/" + route.request.url.split("://", 1)[1].split("/", 1)[1]
+        body = f"<html><body>{BANK.get(path, 'nothing here')}</body></html>"
+        await route.fulfill(status=200, headers={"content-type": "text/html"}, body=body)
+
+    async def scenario():
+        driver = Driver()
+        recorder = Recorder(driver.send)
+        driver.recorder = recorder
+        recorder._guard = fulfill  # type: ignore[method-assign]
+        await recorder.start()
+        try:
+            await recorder.handle({"type": "goto", "url": ACCOUNTS})
+            await recorder.handle({"type": "person", "action": "approve", "label": "Confirm in the bank's app"})
+            await recorder.handle({"type": "mode", "mode": "until", "step": 1})
+            await driver.click("#accounts")
+            for _ in range(100):
+                if any(message["type"] == "until-picked" for message in driver.sent):
+                    break
+                await asyncio.sleep(0.05)
+            told = [message for message in driver.sent if message["type"] == "until-picked"]
+            return driver.last()["recipe"]["steps"], told
+        finally:
+            await recorder.close()
+
+    steps, told = run(scenario)
+    assert steps == [
+        {"action": "goto", "url": ACCOUNTS},
+        {
+            "action": "approve",
+            "label": "Confirm in the bank's app",
+            "until": {"url": r"^https://bank\.example/accounts(?:[?#].*)?$", "selector": "#accounts"},
+        },
+    ], "nothing recorded of the pick"
+    assert told == [{"type": "until-picked", "step": 1}]

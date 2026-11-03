@@ -27,6 +27,10 @@
 // the link, as the job finds it beside every link: the closest ancestor of the link that is the
 // row or card (one that holds that link alone), then the element in it, and its text.
 //
+// In the mode until the person clicks the element an approval or a handover waits for (a list of
+// accounts after the sign-in): the pick is a CSS selector that document.querySelector finds it
+// by, as the job looks for it (harvester.sources.attend).
+//
 // It runs in every frame too (a consent banner's, a sign-in's), cross-origin ones included: the
 // recorder learns from the report itself which frame it came from, and asks the frame's parent
 // for its element's selector (frameSelector). A frame reports when the mouse or the focus comes
@@ -606,7 +610,7 @@
 	let hovered = null
 	const TYPING = 'textarea, select, input:not([type=submit]):not([type=button]):not([type=checkbox]):not([type=radio]):not([type=image]):not([type=reset])'
 	const SUBMIT = 'button:not([type]), button[type=submit], input[type=submit], input[type=image]'
-	const picking = () => ['follow', 'links', 'next', 'value'].includes(state.mode)
+	const picking = () => ['follow', 'links', 'next', 'value', 'until'].includes(state.mode)
 
 	// An element by its tag and stable classes: alike in every row or card, unlike an id.
 	function generic(el) {
@@ -669,7 +673,7 @@
 			return
 		}
 		if (hovered) hovered.style.boxShadow = ''
-		hovered = state.mode === 'value' ? event.target : state.mode === 'next' ? link(event.target) : pickable(event.target)
+		hovered = ['value', 'until'].includes(state.mode) ? event.target : state.mode === 'next' ? link(event.target) : pickable(event.target)
 		hovered.style.boxShadow = 'inset 0 0 0 9999px rgba(0, 130, 201, 0.15)'
 	}, true)
 
@@ -718,6 +722,12 @@
 		if (!picking()) return
 		event.preventDefault()
 		event.stopImmediatePropagation()
+		if (state.mode === 'until') {
+			// Plain CSS only (no role or text selector of Playwright's): the first that finds it.
+			const shown = (selector) => { try { return document.querySelector(selector) === event.target } catch (e) { return false } }
+			report({ action: 'pick', target: 'until', selector: candidates(event.target).find(shown) || unique(event.target) })
+			return
+		}
 		if (state.mode === 'value') {
 			const found = valuePick(event.target)
 			report(found ? { action: 'pick', target: 'value', ...found } : { action: 'pick', target: 'value', none: true })
