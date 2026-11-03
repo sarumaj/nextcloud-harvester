@@ -34,13 +34,13 @@ from playwright.sync_api import Error as PlaywrightError, Route, WebSocketRoute
 
 from .. import browser
 from .. import cookies as cookie_jar
-from .. import images, jsonlist, otp, pagination, patterns, selectors
+from .. import choices, images, jsonlist, otp, pagination, patterns, selectors
 from .. import recipe as recipes
 from ..l10n import said
 from ..browser import engine
 from ..browser.guard import Guard
 from ..schedule import zone
-from . import base, clicks, download, keep, near, survey
+from . import base, choose, clicks, download, keep, near, survey
 from .base import AuthError, ChallengeError, IMPERSONATE, Item, Option, Source, SourceError, Stopped, nap
 from .base import pattern_search
 from .download import Response
@@ -98,6 +98,8 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes,too
     # more, say), once; other pages open in tabs of their own.
     _start = ""
     _reused = False
+    # The step "each" the steps stop before, and the steps after it (choose.each).
+    chooser: choose.Chooser | None = None
     # What a sign-in anew needs: the steps, the account, its cookies (sign_in_again).
     _steps: list[dict] = []
     _secrets: dict[str, str] = {}
@@ -194,6 +196,11 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes,too
         self._start = start
         self.skipped = []
         self.repaired = []
+        # The steps from a step "each" on are done per choice (choose.each: replay_rest).
+        cut = choices.each_index(steps)
+        if cut is not None:
+            self.chooser = choose.Chooser(cut + 1, steps[cut], todo[cut + 1 :])
+            todo = todo[:cut]
         signing = recipes.sign_in_steps(steps)
         if session and start and signing:
             self.main.goto(start, wait_until="domcontentloaded")
@@ -203,6 +210,11 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes,too
                     self._tell(step_event(number, step, "session"))
                 todo = todo[signing:]
         self._replay(self.main, todo, secrets)
+
+    def replay_rest(self, todo: list[tuple[int, dict]]) -> None:
+        """The numbered steps after a choice, in the first tab; the listing is read where they end."""
+        self._replay(self.main, todo, self._secrets)
+        self._reused = False
 
     def _tell(self, event: dict) -> None:
         tell = self.told
@@ -275,8 +287,9 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes,too
         if self._cookies:
             self.context.add_cookies(self._cookies)  # type: ignore[arg-type]
         page = self.context.new_page()
+        cut = choices.each_index(self._steps)
         try:
-            self._replay(page, list(enumerate(self._steps, 1)), self._secrets)
+            self._replay(page, list(enumerate(self._steps, 1))[:cut], self._secrets)
         finally:
             page.close()
         return True
@@ -703,6 +716,8 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
         self.listing_only = False
         # What the pages of the file links, or the start page, are saved as ("": downloaded).
         self.saving = keep.saved_as(self.recipe) or keep.saved_as(self.recipe.get("links") or {})
+        # The texts of the choices the walk went through (a step "each"; choose.each).
+        self.choices: list[str] = []
         # Whether pages are kept (saved, or their files captured): {title} is their title.
         self.keeps = bool(self.saving or (self.recipe.get("links") or {}).get("capture"))
 
@@ -805,7 +820,17 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
                 raise
 
     def _walk(self, seen: Callable[[str], bool]) -> Iterator[Item]:
-        yield from Walk(self, self._driver(), seen).items()
+        driver = self._driver()
+        for number, values in enumerate(choose.each(self, driver, STEP_TIMEOUT)):
+            try:
+                yield from Walk(self, driver, seen, values).items()
+            except StartEmpty:
+                # The first choice's empty listing may be a sign-in; a later one's is its own.
+                if number == 0:
+                    raise
+                self.report(
+                    "info", said("“{choice}”: the listing has none of the recipe's links", choice=values["choice"])
+                )
 
     def listed(self, driver: Driver, page: Any, spec: dict, what: str) -> tuple[list, dict]:
         """A level's links on the page (address, text and, where the level has values, their

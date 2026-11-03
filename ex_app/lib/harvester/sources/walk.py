@@ -18,6 +18,9 @@ A recipe that saves its start page ("save" of its own) yields that page alone, o
 File links that capture what their pages load ("capture") yield the files of each page instead of
 the page (keep.capture), a page whose files were all placed marked as done (keep.CAPTURED); the
 recipe's test (listing_only) lists the pages without opening them.
+
+A walk of one choice (harvester.choices) starts with its values ({choice}), its listing's address
+filled in with them; its files are keyed by the choice too, and known only by their keys.
 """
 
 import dataclasses
@@ -26,7 +29,7 @@ from typing import Any
 
 from playwright.sync_api import Error as PlaywrightError
 
-from .. import jsonlist, patterns
+from .. import choices, jsonlist, patterns
 from ..l10n import said
 from . import keep, near
 from .base import ChallengeError, Item, SourceError, pattern_search
@@ -44,8 +47,11 @@ class StartEmpty(SourceError):
 class Walk:  # pylint: disable=too-many-instance-attributes,too-many-public-methods
     """One walk of the site's listing with its driver, yielding the items seen() does not know."""
 
-    def __init__(self, site: Any, driver: Any, seen: Callable[[str], bool]):
+    def __init__(self, site: Any, driver: Any, seen: Callable[[str], bool], values: dict | None = None):
         self.site = site
+        # The values the walk starts with: a choice's (choose.each), whose files are its own.
+        self.values = values or {}
+        self.choice = str(self.values.get("choice", ""))
         self.driver = driver
         self.seen = seen
         self.recipe: dict = site.recipe
@@ -67,7 +73,10 @@ class Walk:  # pylint: disable=too-many-instance-attributes,too-many-public-meth
         if self.recipe.get("save"):
             yield from self.start_page()
             return
-        yield from self.listing(self.recipe.get("start") or None, 0, {}, {"found": False, "new": False})
+        start = self.recipe.get("start") or None
+        if start and self.choice:
+            start = choices.uses_choice(start, self.choice, str(self.values.get("choice_value", "")))
+        yield from self.listing(start, 0, dict(self.values), {"found": False, "new": False})
 
     def start_page(self) -> Iterator[Item]:
         """The start page to save, as the item of its address, open while it is saved."""
@@ -118,7 +127,7 @@ class Walk:  # pylint: disable=too-many-instance-attributes,too-many-public-meth
         """Whether the item is known; a key recorded before keys were made stable (or before the
         recipe had a key template) still counts: the link as it was. A page to capture files of
         is known once it is done."""
-        if item.key.startswith(keep.CAPTURED):
+        if item.key.startswith(keep.CAPTURED) or self.choice:
             return self.seen(item.key)
         link = item.values["url"]
         return self.seen(item.key) or self.seen(patterns.stable_url(link)) or self.seen(link)
@@ -138,7 +147,7 @@ class Walk:  # pylint: disable=too-many-instance-attributes,too-many-public-meth
         links, event = self.candidates(page, spec, clicked, where[0])
         found = [entry for index, link in enumerate(links) if (entry := self.take(spec, link, values, clicked, index))]
         kind = "follow" if spec is not self.recipe["links"] else "links"
-        event |= {"level": where[0], "page": where[1], "kind": kind}
+        event |= {"level": where[0], "page": where[1], "kind": kind} | ({"choice": self.choice} if self.choice else {})
         what = self.site.observe(event | {"found": len(links), "matching": len(found)})
         # A JSON listing has no page to picture.
         if what and not isinstance(page, jsonlist.JsonPage):
@@ -222,6 +231,9 @@ class Walk:  # pylint: disable=too-many-instance-attributes,too-many-public-meth
                 made = dataclasses.replace(made, key="key:" + patterns.render(self.key_template, made.values))
             except (KeyError, ValueError, IndexError):
                 pass  # a value the link lacks: its address tells it, as without a template
+        if self.choice:
+            # Each choice's files are its own (an account's statement may have another's address).
+            made = dataclasses.replace(made, key=f"choice:{self.choice}#{made.key}")
         # A page to capture files of is no file: its key marks it as done (captured).
         return dataclasses.replace(made, key=keep.CAPTURED + made.key) if self.capture else made
 

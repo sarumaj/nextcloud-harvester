@@ -219,6 +219,10 @@
 		if (step.action === 'press') return t('Press {key} in {selector}', { key: step.key, selector })
 		if (step.action === 'select') return t('Choose “{choice}” in {selector}', { choice: step.label || [].concat(step.value).join(', '), selector })
 		if (step.action === 'hover') return t('Hover over {selector}', { selector })
+		if (step.action === 'each') {
+			if (!Array.isArray(step.values)) return t('Repeat for each option of {selector}', { selector })
+			return selector ? t('Repeat for each of {values} in {selector}', { values: step.values.join(', '), selector }) : t('Repeat for each of {values}', { values: step.values.join(', ') })
+		}
 		if (step.action === 'popup') return t('Go on in the popup it opened')
 		if (step.action === 'opener') return t('Back to the page that opened the popup (once it closed)')
 		if (step.action === 'mail-code') {
@@ -1159,6 +1163,8 @@
 		const box = el('div', { class: 'harvester-test', 'aria-live': 'polite' },
 			el('h3', { text: t('Test') }),
 			el('p', { text: `${n('%n file link on {pages}.', '%n file links on {pages}.', result.files, { pages: found })} ${ended}`.trim() }))
+		const choices = result.choices || []
+		if (choices.length) box.append(el('p', { text: n('It goes through %n choice: {choices}', 'It goes through %n choices: {choices}', choices.length, { choices: choices.join(', ') }) }))
 		if (result.as_job) box.append(el('p', { class: 'harvester-muted', text: t('As the job runs: a new browser with the job’s stored account, in the recipe’s window.') }))
 		if (result.probe) {
 			const probe = result.probe
@@ -1185,6 +1191,7 @@
 		box.append(el('ol', { class: 'harvester-test-pages' }, ...result.pages.map((page) => el('li', {},
 			el('span', { text: `${page.kind === 'follow' ? t('{level}, page {page}: {matching} of {found} links to follow', counts(page)) : t('{level}, page {page}: {matching} of {found} file links', counts(page))} ` }),
 			el('code', { text: page.url }),
+			page.choice ? el('small', { class: 'harvester-muted', text: ` ${t('(choice “{choice}”)', { choice: page.choice })}` }) : '',
 			page.files.length ? el('ul', {}, ...page.files.map((file) => el('li', {},
 				file.problem ? el('span', { class: 'harvester-error', text: `${file.url}: ${file.problem}` }) : el('span', { text: file.path, title: file.url }),
 				file.click ? el('small', { class: 'harvester-muted', text: ` ${t('(clicked: “{text}”)', { text: file.text })}` }) : '',
@@ -1874,6 +1881,10 @@
 				value.addEventListener('change', () => edit({ value: value.value }))
 				details.push(value)
 			}
+			if (step.action === 'select') {
+				details.push(el('button', { type: 'button', class: 'harvester-link', text: t('Repeat for each option'), title: t('The steps after this one and the listing are gone through once for each option of the list, its text {choice} in file names and tags', { choice: '{choice}' }), onclick: () => send({ type: 'each', step: index }) }))
+			}
+			if (step.action === 'each') details.push(eachEditor(step, index))
 			if (step.wait && (step.wait.url || step.wait.selector)) {
 				const address = step.wait.url
 				const shown = step.wait.selector
@@ -1908,6 +1919,17 @@
 				})
 			}
 			return item
+		}
+
+		// A step that goes through choices: its fixed values (empty: the options the page offers)
+		// and a pattern on the options' texts.
+		function eachEditor(step, index) {
+			const values = el('input', { class: 'harvester-step-value', value: Array.isArray(step.values) ? step.values.join(', ') : '', placeholder: t('every option'), 'aria-label': t('The values of step {number}, separated by commas', { number: index + 1 }) })
+			const pattern = el('input', { class: 'harvester-step-value', value: step.pattern || '', placeholder: t('all of them'), spellcheck: 'false', 'aria-label': t('Only the options whose text matches (a pattern)') })
+			const edit = () => send({ type: 'each', step: index, values: values.value.trim() ? values.value.split(',').map((value) => value.trim()).filter(Boolean) : 'options', pattern: pattern.value })
+			values.addEventListener('change', edit)
+			pattern.addEventListener('change', edit)
+			return el('span', {}, el('label', {}, `${t('Values')} `, values), ' ', el('label', {}, `${t('Only options matching')} `, pattern))
 		}
 
 		// What the test did with a step: playing (its attempt, when it has more), pausing (a

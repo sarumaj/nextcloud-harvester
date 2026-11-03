@@ -78,4 +78,6 @@ def survey(
     result["skipped"] = list(driver.skipped if driver else [])
     # The selectors alternatives stood in for (the recipe unchanged).
     result["repaired"] = [*(driver.repaired if driver else []), *site.repairs]
+    # The choices it went through (a step "each"), by their texts.
+    result["choices"] = list(site.choices)
     return result

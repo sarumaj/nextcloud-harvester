@@ -10,6 +10,8 @@ the app's browser or taken from a template, not by code.
 - **Sources:** websites by a recipe, mailbox attachments (IMAP), feeds and podcasts, videos and
   audio (yt-dlp), galleries (gallery-dl), file stores and cloud drives (rclone), release
   downloads (GitHub, GitLab, Codeberg, Forgejo, Gitea).
+- **Choices:** one recipe for every account or contract, every year, every child: the steps
+  after a choice and the listing are gone through for each option of a list.
 - **Pages as files:** what a site offers as no file of its own: pages saved as PDF, HTML (one
   file) or Markdown (the main text), such as receipts and articles, also a page you send it; the
   PDFs and pictures a page only shows (a viewer, an `<embed>`, a `blob:`); pictures at their

@@ -8,10 +8,11 @@ edits, and the click or press just recorded, whose page may navigate (its addres
 import copy
 import time
 
+from ..choices import CHOICES_MAX
 from ..recipe import edit_step, steps_from_events
 
 # The page's messages that change the steps.
-EDITS = frozenset({"undo", "optional", "step-delete", "step-move", "step-edit", "record-at", "mail-code"})
+EDITS = frozenset({"undo", "optional", "step-delete", "step-move", "step-edit", "record-at", "mail-code", "each"})
 # How long after a click or a press a navigation of the page counts as its (s): a page that
 # reloads itself much later is none of the step's doing.
 NAVIGATION_SECONDS = 5
@@ -60,8 +61,8 @@ class StepList:
     def edit(self, kind: str, message: dict) -> bool:
         """Undo (the last event, else the last step before the new ones), and the Steps list's
         edits: a step removed, moved, changed (optional, what a fill fills in, its value, its wait),
-        where new steps go (record-at), and a filled code that comes by e-mail (mail-code); whether
-        the steps changed."""
+        where new steps go (record-at), a filled code that comes by e-mail (mail-code), and a list's
+        choice repeated for each of its options (each); whether the steps changed."""
         if kind == "undo":
             if self.events:
                 self.events.pop()
@@ -80,6 +81,8 @@ class StepList:
             return False
         if kind == "mail-code":
             steps[index] = mail_code(steps[index], message)
+        elif kind == "each":
+            steps[index] = each(steps[index], message)
         elif kind == "step-delete":
             del steps[index]
             point -= 1 if index < point else 0
@@ -104,3 +107,25 @@ def mail_code(step: dict, message: dict) -> dict:
         return step
     code = {key: str(message.get(key) or "") for key in ("from", "subject")}
     return {"action": "mail-code", **kept, **code} | ({"regex": str(message["regex"])} if message.get("regex") else {})
+
+
+def each(step: dict, message: dict) -> dict:
+    """A list's choice (a step "select") as the step "each" that goes through every option
+    (harvester.choices); a step "each" with the message's values (a list of texts, or "options")
+    and pattern on the options' texts. Another step as it is."""
+    kept = {key: step[key] for key in ("selector", "alternatives", "frame") if key in step}
+    if step.get("action") == "select":
+        return {"action": "each", **kept, "values": "options"}
+    if step.get("action") != "each":
+        return step
+    changed = dict(step)
+    values = message.get("values")
+    if values == "options" or (isinstance(values, list) and not values):
+        changed["values"] = "options"
+    elif isinstance(values, list) and all(isinstance(value, str) for value in values):
+        changed["values"] = [value.strip() for value in values if value.strip()][:CHOICES_MAX] or "options"
+    if isinstance(message.get("pattern"), str):
+        changed["pattern"] = message["pattern"]
+        if not changed["pattern"]:
+            changed.pop("pattern")
+    return changed

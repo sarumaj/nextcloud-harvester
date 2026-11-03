@@ -95,6 +95,10 @@ keeps the files of those types that each page loads or shows (a PDF in a viewer 
 images, blob: addresses) (harvester.sources.keep). A recipe's own "save" (beside start, without
 file links) saves the start page itself, where the steps end (a page sent to an on-demand job).
 
+A step {"action": "each", "selector": "select#account", "values": "options"} goes through choices
+(harvester.choices): the steps after it and the walk are done once per option of a <select> or a
+custom dropdown, or per value of a list, the choice's text {choice} in the file names and tags.
+
 "viewport": {"width": 1280, "height": 800} is the browser window's size the recipe was recorded
 at, which the job's browser takes too (pages lay out for it); without one, 1280 × 800.
 """
@@ -107,12 +111,12 @@ import re
 import string
 from urllib.parse import urlsplit
 
-from . import jsonrequest, patterns
+from . import choices, jsonrequest, patterns
 from .browser import VIEWPORT_MAX, VIEWPORT_MIN, allowed_url
 from .l10n import Said, listed, said
 from .patterns import token_parameters
 
-ACTIONS = {"goto", "click", "fill", "press", "scroll", "select", "hover", "popup", "opener", "mail-code"}
+ACTIONS = {"goto", "click", "fill", "press", "scroll", "select", "hover", "popup", "opener", "mail-code", "each"}
 # A scroll step's rounds: by default, and at most.
 SCROLL_ROUNDS = 20
 SCROLL_ROUNDS_MAX = 100
@@ -120,7 +124,7 @@ SCROLL_ROUNDS_MAX = 100
 LOAD_MORE_MAX = 50
 NEXT_KINDS = ("link", "number")
 # The actions that act on an element, and so may do it inside a frame.
-ON_ELEMENTS = ("click", "fill", "press", "mail-code", "select", "hover")
+ON_ELEMENTS = ("click", "fill", "press", "mail-code", "select", "hover", "each")
 # The actions that switch the tab the steps act in, and so have no element.
 SWITCHES = ("popup", "opener")
 # What a fill step may fill in instead of a value of its own: the job's account's.
@@ -213,6 +217,7 @@ def _action_label(step: dict) -> str:
         "select": f"choose “{step.get('label') or step.get('value', '')}” in {selector}",
         "hover": f"hover over {selector}",
         "popup": "go on in the popup",
+        "each": f"go through the choices {choices.label(step)}",
         "opener": "go back to the page that opened the popup",
     }
     return labels.get(str(action), str(action))
@@ -514,6 +519,8 @@ def _check_key(spec: dict, recipe: dict) -> list[str]:
     except ValueError as error:
         return [f"file links: the key {key} is no template ({error})"]
     groups = set(LINK_VALUES)
+    if choices.each_index(recipe.get("steps") or []) is not None:
+        groups |= {"choice", "choice_value"}
     for level in [*(recipe.get("follow") or []), spec]:
         # Values read from the page count too, a date's year, month and day with them.
         for value in (level.get("values") or []) if isinstance(level, dict) else []:
@@ -575,6 +582,13 @@ def _mail_code_problem(step: dict) -> str:
     return ""
 
 
+def _action_problem(step: dict) -> str:
+    """What is wrong with a step "mail-code" or "each" in particular, or ""."""
+    if step["action"] == "mail-code":
+        return _mail_code_problem(step)
+    return choices.step_problem(step) if step["action"] == "each" else ""
+
+
 def _seconds(value: object) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
@@ -628,13 +642,13 @@ def _check_steps(steps: list) -> list[str]:
             problems.append(f"step {number}: the browser may not open {step.get('url')}")
         elif step["action"] == "scroll" and not _rounds_ok(step.get("rounds", SCROLL_ROUNDS)):
             problems.append(f"step {number}: rounds of scrolling from 1 to {SCROLL_ROUNDS_MAX}")
-        elif step["action"] not in ("goto", "scroll", *SWITCHES) and not step.get("selector"):
+        elif step["action"] not in ("goto", "scroll", "each", *SWITCHES) and not step.get("selector"):
             problems.append(f"step {number}: no element")
         elif step["action"] != "mail-code" and "wait" in step and not _wait_ok(step["wait"]):
             problems.append(f"step {number}: wait is an address's pattern (url) and an element (selector)")
         elif not _alternatives_ok(step):
             problems.append(f"step {number}: the alternatives are a list of selectors")
-        elif step["action"] == "mail-code" and (problem := _mail_code_problem(step)):
+        elif problem := _action_problem(step):
             problems.append(f"step {number}: {problem}")
         elif problem := _timing_problem(step):
             problems.append(f"step {number}: {problem}")
@@ -718,6 +732,7 @@ def check_recipe(recipe: dict) -> list[str]:
     if not isinstance(steps, list):
         return ["the steps are not a list"]
     problems = _check_steps(steps)
+    problems += choices.check(steps, sign_in_steps(steps)) if not problems else []
     start = recipe.get("start", "")
     if not isinstance(start, str):
         return problems + ["the listing (start) is an address"]

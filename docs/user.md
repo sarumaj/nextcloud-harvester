@@ -311,6 +311,24 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   walk goes on. The limits: a listing opened again starts at its address, so pages reached by
   buttons without an address (`"buttons": true`) and steps after its address are not done
   again; an element needs a text (or an `aria-label`, a `title`).
+- **Choices** (`harvester/choices.py`, `harvester/sources/choose.py`): one recipe for every
+  account or contract at a bank, every year, every child at a school portal. The step
+  `{"action": "each", "selector": "select#account", "values": "options"}` is a choice point:
+  the steps after it and the walk of the listing are done once for each option of the
+  `<select>` (those that can be chosen, without an empty placeholder), the option chosen first.
+  A custom dropdown has `"option"`: its entries' element, shown by a click on `"selector"` and
+  each chosen by its text. `"values": ["2024", "2025"]` is a fixed list instead (a `<select>`'s
+  option by its value, else its text; without `"selector"` nothing is chosen, the value is only
+  used), and `"pattern"` keeps the options whose text it matches (at most 100 choices). The
+  choice's text is `{choice}` (its value `{choice_value}`) in the file names, tags and the file
+  links' key, in the listing's address (`"start": "https://…/years/{choice}"`) and a JSON
+  listing's (its address, a body's `"{choice}"`), and in the steps after it (a value filled in,
+  an address opened). Files are told apart per choice: the same address may give each account
+  its own statement. For the next choice the job opens the address the page had at the step and
+  chooses again there. A choice that fails (an option gone) is a gap of the run, said in the log
+  (`the choice “Savings” failed: …`); a later choice whose listing is empty is said too, not
+  taken for a sign-out. One step `each` a recipe, after the sign-in, and only in the first tab;
+  it needs the browser.
 - **Values from the page** (`patterns.page_values`): a level of links to follow or the file
   links may take `"values"` from the page around each link, not only from its address: the
   link's text, an attribute, or an element near it (`{"name": "date", "closest": "tr",
@@ -468,7 +486,10 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   change: a POST's body (editable), a page counter in the body or a cursor the answer gives, and
   the headers with where each token is read from (the cookie or `<meta>` whose value it is); a
   token found nowhere is named, and left out. In the Steps list a code typed into a field offers
-  **code from e-mail?** (its sender and subject), which makes it the step above. The window's
+  **code from e-mail?** (its sender and subject), which makes it the step above, and a choice in
+  a list (a step `select`) offers **Repeat for each option**, which makes it the step `each`:
+  its **Values** (empty: every option, else a list separated by commas) and **Only options
+  matching** (a pattern on their texts) can be changed there. The window's
   size the steps were recorded and the links picked in is the recipe's `"viewport"`; the job's
   browser takes it (1280 × 800 without one).
   **Test the recipe** runs it as a job would (the site source's own walk, `Site.survey`, in a
@@ -477,6 +498,8 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   links with the names the job's *File name* gives them, and the problems: a step that failed
   (with the page it was on), a selector that matched nothing, a pattern none matched. It reads
   at most 30 listing pages and three minutes; **Stop the test** ends it, and its context closes.
+  A recipe with choices shows the choices it goes through, and each page the choice it was read
+  for.
   Meanwhile the Steps list follows it: the step playing is outlined (`▶ playing`, `attempt 2 of
   3`, `⏸ pausing 4 s` counting down), each step done marked `✓ passed`, `– skipped (optional)`,
   `✗ failed` or `↷ not played (signed in)` (the recorder's session skips the sign-in). A failed

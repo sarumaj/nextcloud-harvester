@@ -4,6 +4,11 @@
 
 ### Added
 
+- Choices: the step `each` goes through every option of a `<select>` or a custom dropdown, or a
+  fixed list of values (every account, year, child), doing the steps after it and the walk for
+  each, the choice's text `{choice}` in the file names, tags, key and addresses. The recorder's
+  Steps list offers **Repeat for each option** on a recorded choice, and *Test the recipe* lists
+  the choices it goes through.
 - JSON listings asked for with POST: a form's or a JSON body (GraphQL with its variables), whose
   pages are counted in the body or chained by a cursor the answer gives (`endCursor` with
   `hasNextPage`, `nextCursor`, an answer's next page's address); the headers the page sent that

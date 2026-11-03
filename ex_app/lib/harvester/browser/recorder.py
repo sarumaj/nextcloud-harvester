@@ -22,7 +22,7 @@ The messages are JSON over the page's WebSocket:
   target, level}, {type: next-kind, kind (link, number)}, {type: undo} (the last step), {type:
   undo-pick} (the last change of the picks), {type: scroll} (a step: scroll to load more),
   the Steps list's edits (steps.EDITS: optional, step-delete, step-move, step-edit, record-at,
-  mail-code), {type: test, recipe, settings, as_job, job} (as_job: the app adds the saved job's
+  mail-code, each), {type: test, recipe, settings, as_job, job} (as_job: the app adds the saved job's
   account, main.py), {type: test-stop}, {type: clear}, and the cookies panel's (jar.py);
 - values from the page: {type: mode, mode: value, target, level} (pick a value near the level's
   links), {type: value, target, level, index, changes (name, regex, type, attribute, closest,
