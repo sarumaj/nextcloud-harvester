@@ -7,6 +7,7 @@ import asyncio
 import datetime
 import io
 import json
+import posixpath
 import sqlite3
 import time
 
@@ -15,6 +16,7 @@ import pytest
 from nc_py_api import NextcloudException, NextcloudExceptionNotFound
 
 from harvester import executor as executor_module
+from harvester import nextcloud as nextcloud_module
 from harvester import runner
 from harvester.executor import is_due
 from harvester.patterns import render_tags
@@ -226,26 +228,50 @@ class FakeFiles:
     """Nextcloud's files as nc_py_api's async client reaches them: by_path raises for a missing
     path, as 0.30.3 does, a plain NextcloudException with status 404 (check_error, not its
     NextcloudExceptionNotFound); assigning a tag twice and creating an existing one answer 409
-    Conflict; "hidden" exists but is not visible to the user. upload_stream's node has no id
-    (0), as nc_py_api's, and tagging a file that does not exist answers 404."""
+    Conflict; "hidden" exists but is not visible to the user. An upload's node has the id only
+    as the OC-FileId header's text (its file_id, the id padded to 8 digits and the instance's id;
+    info.fileid 0), as nc_py_api's, and a file put into a folder that is not there answers 409;
+    tagging a file that does not exist answers 404. requests counts what was asked, by kind."""
 
     def __init__(self):
         self.stored: dict[str, bytes] = {}
+        self.folders: set[str] = set()
         self.tags: dict[str, int] = {}
         self.assigned: set[tuple[int, int]] = set()
+        self.requests: dict[str, int] = {}
+
+    def asked(self, kind: str) -> None:
+        self.requests[kind] = self.requests.get(kind, 0) + 1
 
     async def by_path(self, path):
+        self.asked("PROPFIND")
         if path not in self.stored:
             raise NextcloudException(404, "Not Found", info=f"list: u, {path}, [...]")
         return type("Node", (), {"info": type("Info", (), {"fileid": list(self.stored).index(path) + 1})()})()
 
     async def makedirs(self, path, exist_ok=False):  # pylint: disable=unused-argument
+        # One MKCOL for each part of the path, as nc_py_api's.
+        parts = path.strip("/").split("/")
+        for depth in range(1, len(parts) + 1):
+            self.asked("MKCOL")
+            self.folders.add("/" + "/".join(parts[:depth]))
         return None
 
+    def stored_node(self, path, content: bytes):
+        if posixpath.dirname(path) not in self.folders | {"/"}:
+            raise NextcloudException(409, "Conflict", info=f"upload: {path}")
+        self.stored[path] = content
+        file_id = list(self.stored).index(path) + 1
+        return type("Node", (), {"file_id": f"{file_id:08d}ocinstance", "info": type("Info", (), {"fileid": 0})()})()
+
+    async def upload(self, path, content):
+        self.asked("PUT")
+        return self.stored_node(path, content)
+
     async def upload_stream(self, path, content):
-        # As nc_py_api's: the node's info.fileid is 0, only by_path gives the id.
-        self.stored[path] = content.read()
-        return type("Node", (), {"info": type("Info", (), {"fileid": 0})()})()
+        # In chunks: MKCOL, a PUT a chunk, MOVE and DELETE, as nc_py_api's first kind.
+        self.requests["chunked"] = self.requests.get("chunked", 0) + 1
+        return self.stored_node(path, content.read())
 
     async def list_tags(self):
         return [type("Tag", (), {"display_name": name, "tag_id": i})() for name, i in self.tags.items()]
@@ -331,6 +357,55 @@ def test_tagging_survives_tags_already_there_and_hidden_ones():
     # A run that broke off after a file was tagged: it is found again and tagged again.
     library.tag(1, ["mine"])
     assert library_of(nc).find("/x/a.txt") == 1
+
+
+def test_a_small_file_is_one_put_its_folder_made_once_a_run_and_its_id_from_the_answer():
+    nc = FakeNextcloud()
+    nc.files = FakeFiles()
+    job = Job(user="u", name="n", source="fake", target="/Zeitschriften/ix", schedule="* * * * *")
+    seen: set[str] = set()
+    runner.run(job, FakeSource({}, {}, None), library_of(nc), seen.__contains__, seen.add, lambda s: None)
+    # Before: 2 MKCOLs, a chunked upload (4 requests) and a PROPFIND for its id, a file.
+    assert nc.files.requests == {"PROPFIND": 3, "MKCOL": 2, "PUT": 3}, "only the look whether each is there"
+    assert nc.files.stored["/Zeitschriften/ix/c.txt"] == b"c"
+
+
+def test_a_large_file_goes_in_chunks_and_a_put_reads_the_file_from_its_start():
+    nc = FakeNextcloud()
+    nc.files = FakeFiles()
+    library = library_of(nc)
+    small = io.BytesIO(b"small")
+    small.seek(0, io.SEEK_END)
+    assert library.put("/x/small.txt", small) == 1 and nc.files.stored["/x/small.txt"] == b"small"
+    large = b"x" * nextcloud_module.SINGLE_PUT
+    assert library.put("/x/large.bin", io.BytesIO(large)) == 2
+    assert nc.files.stored["/x/large.bin"] == large
+    assert nc.files.requests == {"MKCOL": 1, "PUT": 1, "chunked": 1}
+
+
+def test_a_folder_deleted_during_the_run_is_made_again():
+    nc = FakeNextcloud()
+    nc.files = FakeFiles()
+    library = library_of(nc)
+    library.put("/In/Sub/a.txt", io.BytesIO(b"a"))
+    nc.files.folders.clear()  # deleted by its person meanwhile
+    assert library.put("/In/Sub/b.txt", io.BytesIO(b"b")) == 2
+    assert nc.files.requests == {"MKCOL": 4, "PUT": 3}, "the PUT answered 409, the folders made again"
+
+
+def test_an_upload_without_the_ids_text_looks_the_file_up():
+    class Unnumbered(FakeFiles):
+        """An answer without OC-FileId's text."""
+
+        async def upload(self, path, content):
+            node = await super().upload(path, content)
+            node.file_id = ""
+            return node
+
+    nc = FakeNextcloud()
+    nc.files = Unnumbered()
+    assert library_of(nc).put("/In/a.txt", io.BytesIO(b"a")) == 1
+    assert nc.files.requests["PROPFIND"] == 1
 
 
 class PartlyBroken(FakeSource):

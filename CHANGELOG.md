@@ -44,6 +44,10 @@
 - A deleted file's record of its content (and the duplicates' that named it) goes when the file
   is found gone, so that its download anew is no duplicate of itself; a known file due for its
   check of changes that is gone is downloaded anew instead of staying away.
+- Saving a file asks Nextcloud less: a file under 5 MB is one `PUT` (larger ones still go in
+  chunks), its ID comes from the answer instead of a lookup, and a job's folders are made once a
+  run, not for each file (one made again if it is deleted meanwhile): some 2 requests a file
+  instead of about 9.
 
 ### Fixed
 
