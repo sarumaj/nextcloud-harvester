@@ -6,6 +6,8 @@ confirm()."""
 
 # pylint: disable=missing-function-docstring
 
+import json
+
 import main
 from test_browser import needs_chromium
 from test_page import fixture_page, sent  # pylint: disable=unused-import
@@ -56,3 +58,32 @@ def test_the_job_forms_groups_open_where_an_option_differs_and_count_the_changes
     assert files.locator("summary").inner_text() == "Files and sizes (1 changed)"
     # Save stays in sight at the window's foot.
     assert page.locator(".harvester-form-actions").evaluate("node => getComputedStyle(node).position") == "sticky"
+
+
+@needs_chromium
+def test_live_regions_and_errors_are_announced_once(page):
+    log = page.locator(".harvester-log")
+    assert log.get_attribute("role") == "log" and log.get_attribute("aria-live") == "off", "not each poll"
+    assert page.locator(".harvester-load").get_attribute("role") is None
+    # A refusal of Save naming a field: the field marked invalid and described by the error.
+    page.route(
+        "**/api/jobs/1",
+        lambda route: (
+            route.fulfill(
+                status=422,
+                content_type="application/json",
+                body=json.dumps({"detail": "Files per run must be a number of at least 1 (or -1: no limit)"}),
+            )
+            if route.request.method == "PUT"
+            else route.fallback()
+        ),
+    )
+    page.get_by_role("button", name="Edit").click()
+    page.get_by_role("button", name="Save", exact=True).click()
+    error = page.locator("#harvester-form-error")
+    error.wait_for()
+    assert error.get_attribute("role") == "alert"
+    field = page.locator('[aria-invalid="true"]')
+    assert field.count() == 1 and field.get_attribute("aria-describedby") == "harvester-form-error"
+    assert field.evaluate("node => node === document.activeElement")
+    assert field.evaluate("node => node.closest('label').textContent.startsWith('Files per run')")

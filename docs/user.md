@@ -32,6 +32,9 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   stay when the list is drawn again, and only newer ones are asked for. On a phone (narrower than
   700 pixels) each job is a card, its columns one below the other with their names and its
   buttons on a line of their own, and the log's text goes below its time.
+  A screen reader hears the log's errors and outcomes as they come, not each line, and a test's
+  outcome in the recorder; an error is announced as it shows, and a refused Save marks the field
+  it names (and opens its group).
 - **On-demand jobs** (`ex_app/lib/harvester/ondemand.py`): a job of a source with an address
   (`site`: its recipe's listing; `feed`, `media`, `gallery`: their page or feed) may be **On
   demand**: no schedule (it is never due; the list says *On demand*), and it runs when you send it

@@ -106,9 +106,31 @@
 		const data = await response.json().catch(() => ({}))
 		if (!response.ok) {
 			const detail = Array.isArray(data.detail) ? data.detail.map((d) => d.msg).join(', ') : data.detail
-			throw new Error(said(detail) || response.statusText)
+			const error = new Error(said(detail) || response.statusText)
+			// The fields a refusal names (FastAPI's checks: ["body", field, …], an option's key
+			// after "options"), and its text as sent (an option's refusal starts with its title).
+			error.fields = Array.isArray(data.detail)
+				? data.detail.map((d) => (d.loc || [])[1] === 'options' ? d.loc[2] : (d.loc || [])[1]).filter((name) => typeof name === 'string')
+				: []
+			error.sent = typeof data.detail === 'string' ? data.detail : ''
+			throw error
 		}
 		return data
+	}
+
+	// The page's one live region, outside the views it draws (each would be a new region, which
+	// screen readers do not announce): what happened that the person did not just do.
+	let announcer = null
+	function announce(text) {
+		if (!announcer || !announcer.isConnected) {
+			announcer = document.createElement('div')
+			announcer.setAttribute('aria-live', 'polite')
+			announcer.style.cssText = 'position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap'
+			document.body.append(announcer)
+		}
+		// Emptied first, so that the same text again is announced again.
+		announcer.textContent = ''
+		setTimeout(() => { announcer.textContent = text }, 50)
 	}
 
 	function el(tag, attributes = {}, ...children) {
@@ -346,7 +368,7 @@
 		for (const id of Object.keys(notices)) delete notices[id]
 		table.append(body)
 		// Everyone's load, so a job that waits is understood; updated by the progress log's polls.
-		const load = el('p', { class: 'harvester-muted harvester-load', role: 'status', title: t('All people’s jobs and recordings'), text: statusText(status) })
+		const load = el('p', { class: 'harvester-muted harvester-load', title: t('All people’s jobs and recordings'), text: statusText(status) })
 		root.replaceChildren(
 			el('div', { class: 'harvester-header' },
 				el('div', {},
@@ -532,7 +554,8 @@
 			const kept = localStorage.getItem('harvester-log-job') || ''
 			if (jobs.some((job) => String(job.id) === kept)) select.value = kept
 		} catch (e) { /* no storage: all jobs */ }
-		const list = el('ol', { class: 'harvester-log', 'aria-live': 'polite' })
+		// A log, not announced line by line (a run writes many): its errors and outcomes are.
+		const list = el('ol', { class: 'harvester-log', role: 'log', 'aria-live': 'off', 'aria-label': t('Progress') })
 		const panel = el('section', { class: 'harvester-progress' },
 			el('div', { class: 'harvester-progress-head' }, el('h3', { text: t('Progress') }), select), list)
 		let after = 0
@@ -576,6 +599,7 @@
 			if (document.hidden) return
 			busy = true
 			try {
+				const before = after
 				const data = await api('GET', `/log?after=${after}${select.value ? `&job=${select.value}` : ''}`)
 				// Another view opened while the log was asked for (a job's form): it is not replaced.
 				if (!document.body.contains(panel)) return
@@ -595,6 +619,12 @@
 					if (message) message.textContent = shown(reason, (data.waiting_l10n || {})[id])
 				}
 				const stick = list.scrollHeight - list.scrollTop - list.clientHeight < 24
+				// Not the lines of before, which the first answer brings.
+				if (before) {
+					const told = data.lines.filter((entry) => ['error', 'done'].includes(entry.level))
+						.map((entry) => `${entry.name}: ${shown(entry.message, entry.message_l10n)}`)
+					if (told.length) announce(told.join('. '))
+				}
 				for (const entry of data.lines) {
 					list.append(line(entry))
 					const message = root.querySelector(`[data-job-message="${entry.job}"]`)
@@ -636,7 +666,7 @@
 
 	// A new job: blank (recorded in the browser) or from a template with its parameters.
 	function renderStart(root) {
-		const error = el('p', { class: 'harvester-error' })
+		const error = el('p', { class: 'harvester-error', role: 'alert' })
 		const cards = presets.map((preset) => {
 			const inputs = {}
 			const fields = Object.entries(preset.parameters).map(([name, spec]) => {
@@ -768,7 +798,7 @@
 		container.save = async () => false
 		if (!source.credentials.length) return
 		const status = el('p', { class: 'harvester-muted', role: 'status', text: notice })
-		const error = el('p', { class: 'harvester-error' })
+		const error = el('p', { class: 'harvester-error', role: 'alert' })
 		container.append(el('h3', { text: t('The account this job signs in with') }),
 			el('p', { text: `${ACCOUNT_USE()[source.name] || t('What the job signs in with where its source asks for it.')} ${t('Stored encrypted in Nextcloud; never shown again.')}` }))
 		let stored = {}
@@ -843,7 +873,7 @@
 		let session = null
 		// The sign-in's connection, if one runs: the wizard's end ends it (and frees its browser).
 		let signIn = null
-		const error = el('p', { class: 'harvester-error' })
+		const error = el('p', { class: 'harvester-error', role: 'alert' })
 		const close = () => {
 			if (signIn) signIn.close()
 			if (session) api('DELETE', `/rclone/wizard/${session}`).catch(() => {})
@@ -1569,7 +1599,7 @@
 		const values = {}
 		const key = (cookie) => JSON.stringify([cookie.name, cookie.domain, cookie.path])
 		const status = el('p', { class: 'harvester-muted', role: 'status' })
-		const error = el('p', { class: 'harvester-error' })
+		const error = el('p', { class: 'harvester-error', role: 'alert' })
 		const list = el('div', { class: 'harvester-cookie-groups' })
 		const form = el('div', { class: 'harvester-cookie-form' })
 		const scope = el('select', { 'aria-label': t('Which cookies') },
@@ -1728,7 +1758,7 @@
 		try {
 			shot = await api('GET', `/jobs/${job.id}/shot`)
 		} catch (e) {
-			view.replaceChildren(el('p', { class: 'harvester-error', text: e.message }),
+			view.replaceChildren(el('p', { class: 'harvester-error', role: 'alert', text: e.message }),
 				el('button', { text: t('Back'), onclick: () => show(root) }))
 			return
 		}
@@ -1864,7 +1894,7 @@
 		const send = (message) => socket.readyState === WebSocket.OPEN && socket.send(JSON.stringify(message))
 		const screen = el('img', { class: 'harvester-screen', alt: t('The recorder’s browser') })
 		const url = el('input', { class: 'harvester-url', placeholder: t('https://… the site’s first page'), 'aria-label': t('Address') })
-		const message = el('p', { class: 'harvester-error' })
+		const message = el('p', { class: 'harvester-error', role: 'alert' })
 		const network = networkLine()
 		const panel = el('div', { class: 'harvester-steps' })
 		const modes = el('div', { class: 'harvester-modes' })
@@ -2350,7 +2380,7 @@
 				recipe.next && recipe.next.selector
 					? renderLevel(t('Next page'), recipe.next, proposals.next, send, 'next', Number(recipe.next.level || 0), suggestions, repick)
 					: el('p', { text: t('Next page: none.') }),
-				testing ? el('p', { class: 'harvester-muted', 'aria-live': 'polite', text: t('Testing: the browser shows the job’s way through the site…') }) : '',
+				testing ? el('p', { class: 'harvester-muted', text: t('Testing: the browser shows the job’s way through the site…') }) : '',
 				askingLine(),
 				tested && !testing ? renderTest(tested) : '')
 		}
@@ -2380,7 +2410,7 @@
 			else if (data.type === 'error') { message.textContent = shown(data.message, data.message_l10n); screen.say(message.textContent) }
 			else if (data.type === 'viewport') screen.resized(data)
 			else if (data.type === 'network') network.show(data)
-			else if (data.type === 'test-started') { testing = true; tested = null; played = {}; editing = null; playedShape = shape(); renderPanel() }
+			else if (data.type === 'test-started') { testing = true; tested = null; played = {}; editing = null; playedShape = shape(); renderPanel(); announce(t('Testing: the browser shows the job’s way through the site…')) }
 			else if (data.type === 'test-step') { asking = null; stepEvent(data) }
 			else if (data.type === 'test-asking') { asking = data; renderPanel() }
 			else if (data.type === 'until-picked' && beforeUntil) { const back = beforeUntil; beforeUntil = null; choose(back) }
@@ -2398,6 +2428,7 @@
 				container.classList.add('harvester-drawer-open')
 				const result = panel.querySelector('.harvester-test')
 				if (result) result.scrollIntoView({ block: 'nearest' })
+				announce(testSummary(data.result).textContent)
 			}
 			else if (data.type === 'where') showWhere(data.frame)
 			else if (data.type === 'warning') leaks.append(el('p', { text: shown(data.message, data.message_l10n) }))
@@ -2600,9 +2631,11 @@
 		once.checked = Boolean(value.once)
 		const options = el('fieldset', {})
 		const credentials = el('div', { class: 'harvester-credentials' })
-		const error = el('p', { class: 'harvester-error' })
+		const error = el('p', { class: 'harvester-error', role: 'alert', id: 'harvester-form-error' })
 		const chosen = sources.find((s) => s.name === value.source) || sources[0]
 		const optionInputs = {}
+		// Each option's own element (a checkbox, a list, a field), to mark one a refusal names.
+		const optionFields = {}
 		const demanded = () => Boolean(chosen.address) && onDemandBox.checked
 		let page
 
@@ -2648,6 +2681,7 @@
 				const textarea = el('textarea', { rows: '10', class: 'harvester-recipe' })
 				textarea.value = current
 				optionInputs[key] = textarea
+				optionFields[key] = textarea
 				const leaks = el('div', { class: 'harvester-warning', 'aria-live': 'polite' })
 				const checkLeaks = () => {
 					let parsed = {}
@@ -2672,6 +2706,7 @@
 					const box = el('input', { type: 'checkbox', 'data-option': key })
 					box.checked = Number(current) === 1
 					optionInputs[key] = { get value() { return box.checked ? 1 : 0 } }
+					optionFields[key] = box
 					into.append(el('label', { class: 'harvester-check' }, box,
 						el('span', {}, el('strong', { text: optionTitle(key, option) }), el('br'), el('small', { class: 'harvester-muted', text: said(option.description) }))))
 					continue
@@ -2690,6 +2725,7 @@
 						listed = true
 					}).catch(() => {})
 					optionInputs[key] = { get value() { return Number(listed ? select.value : current) || 0 } }
+					optionFields[key] = select
 					into.append(field(optionTitle(key, option), select, said(option.description)))
 					continue
 				}
@@ -2705,10 +2741,12 @@
 					optionInputs[key] = {
 						get value() { return [...select.selectedOptions].map((item) => item.value).join(',') || option.default },
 					}
+					optionFields[key] = select
 					into.append(field(optionTitle(key, option), select, said(option.description)))
 					continue
 				}
 				optionInputs[key] = optionInput(option, current)
+				optionFields[key] = optionInputs[key]
 				into.append(field(optionTitle(key, option), optionInputs[key], said(option.description)))
 				const extra = optionHelp(option, optionInputs[key])
 				if (extra) optionInputs[key].after(extra)
@@ -2742,6 +2780,20 @@
 			options: Object.fromEntries(Object.entries(optionInputs).map(([key, input]) =>
 				[key, typeof chosen.options[key].default === 'number' ? Number(input.value) : input.value])),
 		})
+		// The field a refusal names, if it names one: marked invalid, described by the error, its
+		// group opened and the keyboard in it.
+		const invalid = (refusal) => {
+			const fields = { name, target, schedule, tags, ...optionFields }
+			const titled = Object.keys(chosen.options).find((key) => (refusal.sent || '').startsWith(`${key === 'home' ? `Through ${chosen.options[key].proxy}` : chosen.options[key].title} `))
+			const named = [...(refusal.fields || []), titled].find((key) => key && fields[key])
+			if (!named) return
+			const node = fields[named]
+			node.setAttribute('aria-invalid', 'true')
+			node.setAttribute('aria-describedby', error.id)
+			const group = node.closest('details')
+			if (group) group.open = true
+			node.focus()
+		}
 		const heading = el('span', { text: job ? t('Edit {name}', { name: job.name }) : t('New job: {source}', { source: said(chosen.title) }) })
 		const form = el('form', {
 			id: 'harvester-job-form',
@@ -2752,12 +2804,17 @@
 				const body = formBody()
 				save.disabled = true
 				error.textContent = ''
+				for (const node of form.querySelectorAll('[aria-invalid]')) {
+					node.removeAttribute('aria-invalid')
+					node.removeAttribute('aria-describedby')
+				}
 				try {
 					current = await api(current ? 'PUT' : 'POST', current ? `/jobs/${current.id}` : '/jobs', body)
 					heading.textContent = t('Edit {name}', { name: current.name })
 				} catch (e) {
 					error.textContent = e.message
 					save.disabled = false
+					invalid(e)
 					return
 				}
 				// The account typed with it is saved too, never left behind; if that fails, the form
@@ -2864,7 +2921,7 @@
 		try {
 			await renderJobs(root, known)
 		} catch (e) {
-			root.replaceChildren(el('p', { class: 'harvester-error', text: `Harvester: ${e.message}` }))
+			root.replaceChildren(el('p', { class: 'harvester-error', role: 'alert', text: `Harvester: ${e.message}` }))
 		}
 	}
 
@@ -2971,6 +3028,7 @@
 		#harvester .harvester-group { margin: 12px 0; border-top: 1px solid var(--color-border); padding-top: 8px; }
 		#harvester .harvester-group > summary { cursor: pointer; font-weight: bold; padding: 4px 0; }
 		#harvester .harvester-error { color: var(--color-error-text, var(--color-error)); }
+		#harvester [aria-invalid="true"] { border-color: var(--color-error); }
 		#harvester .harvester-credentials { margin-top: 24px; max-width: 760px; }
 		#harvester .harvester-load { margin: -8px 0 12px; font-variant-numeric: tabular-nums; }
 		#harvester .harvester-fetches { list-style: none; margin: 4px 0 0; padding: 0; max-width: 420px; overflow-wrap: anywhere; }
@@ -3086,7 +3144,7 @@
 			;[sources, presets] = await Promise.all([api('GET', '/sources'), api('GET', '/presets')])
 		} catch (e) {
 			// Without the sources no form can be drawn: say why instead of an empty page.
-			root.replaceChildren(el('p', { class: 'harvester-error', text: `Harvester: ${e.message}` }))
+			root.replaceChildren(el('p', { class: 'harvester-error', role: 'alert', text: `Harvester: ${e.message}` }))
 			return
 		}
 		// Opened by the bookmarklet: the address is asked about once, and the page's own address
@@ -3099,7 +3157,7 @@
 			try {
 				await renderSend(root, sent)
 			} catch (e) {
-				root.replaceChildren(el('p', { class: 'harvester-error', text: `Harvester: ${e.message}` }))
+				root.replaceChildren(el('p', { class: 'harvester-error', role: 'alert', text: `Harvester: ${e.message}` }))
 			}
 			return
 		}

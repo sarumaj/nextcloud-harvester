@@ -134,6 +134,11 @@
   no way out but the mouse. Escape twice within a second leaves it for the page's next control,
   which a hint says while the screen has the keyboard; the screen's picture is no longer a stop
   of its own for Tab (its hidden keyboard field is).
+- Screen readers: the progress log was a live region read out at every poll, and the queue's
+  load line a status; the log's errors and outcomes are announced through one region now, as is
+  the recorder's test (its start and outcome), whose result was a new live region each time.
+  Errors are alerts, and a refused Save marks the field it names invalid, described by the
+  error, its group opened and the keyboard in it.
 
 ## 0.13.1 - 2026-11-03
 
