@@ -284,8 +284,11 @@
 			}
 			await show(root)
 		}
+		// On a phone each row is a card: its cells one below the other, each with its column's name
+		// (data-label), the actions on a line of their own.
+		const columns = [t('Job'), t('Folder'), t('Schedule'), t('Tags'), t('Last run')]
 		const table = el('table', { class: 'harvester-jobs' },
-			el('thead', {}, el('tr', {}, ...[t('Job'), t('Folder'), t('Schedule'), t('Tags'), t('Last run'), ''].map((h) => el('th', { text: h })))))
+			el('thead', {}, el('tr', {}, ...columns.map((h) => el('th', { text: h })), el('th', {}, el('span', { class: 'harvester-hidden', text: t('Actions') })))))
 		const body = el('tbody', {})
 		for (const job of jobs) {
 			const state = job.running && job.asking ? 'asking' : job.running ? (job.paused ? 'held' : 'running') : job.queued ? 'queued' : job.last_status || 'never'
@@ -295,13 +298,13 @@
 					icon(job.source), el('strong', { text: job.name }),
 					// Not "paused": that is a running job held by Pause.
 					job.enabled ? '' : el('span', { class: 'harvester-chip', text: t('off'), title: t('Not enabled: runs only with Run now') })),
-				el('td', { class: 'harvester-muted', text: job.target }),
-				el('td', {}, onDemand(job)
+				el('td', { class: 'harvester-muted', 'data-label': columns[1], text: job.target }),
+				el('td', { 'data-label': columns[2] }, onDemand(job)
 					? el('span', { class: 'harvester-chip harvester-on-demand', text: t('On demand'), title: t('No schedule: runs when you send it an address') })
 					: el('code', { text: job.schedule }),
 				job.once ? el('span', { class: 'harvester-chip', text: t('once'), title: t('Deleted after a run that went through; its files stay') }) : ''),
-				el('td', {}, ...job.tags.map((tag) => el('span', { class: 'harvester-chip', text: tag }))),
-				el('td', {},
+				el('td', { 'data-label': columns[3] }, ...job.tags.map((tag) => el('span', { class: 'harvester-chip', text: tag }))),
+				el('td', { 'data-label': columns[4] },
 					el('span', { class: `harvester-status harvester-status-${state}`, text: label }),
 					el('div', {
 						class: 'harvester-muted harvester-message',
@@ -549,7 +552,7 @@
 		const fetches = sorted(Object.fromEntries(jobs.filter((job) => (job.fetches || []).length).map((job) => [String(job.id), job.fetches.map((fetch) => fetch.id)])))
 		const clock = (at) => {
 			const date = new Date(at * 1000)
-			return date.toDateString() === new Date().toDateString() ? date.toLocaleTimeString() : date.toLocaleString()
+			return date.toDateString() === new Date().toDateString() ? date.toLocaleTimeString() : date.toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })
 		}
 		const line = (entry) => el('li', { class: `harvester-log-${entry.level}` },
 			el('time', { text: clock(entry.at) }),
@@ -2891,6 +2894,8 @@
 		#harvester .harvester-sent { overflow-wrap: anywhere; }
 		#harvester .harvester-send-kinds { display: flex; flex-wrap: wrap; gap: 8px; }
 		#harvester [hidden] { display: none !important; }
+		/* Read by screen readers, not shown. */
+		#harvester .harvester-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 		#harvester .harvester-wizard h3 { margin-top: 0; }
 		#harvester .harvester-wizard-help { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--color-text-maxcontrast); }
 		#harvester .harvester-wizard pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px 12px; background: var(--color-background-dark); border-radius: var(--border-radius); }
@@ -2942,6 +2947,27 @@
 		#harvester .harvester-test-pages { padding-inline-start: 20px; }
 		#harvester .harvester-shot-image { display: block; max-width: 100%; height: auto; border: 1px solid var(--color-border); border-radius: var(--border-radius); }
 		#harvester .harvester-link { border: none; background: none; min-height: 0; padding: 0 0 0 8px; color: var(--color-primary-element); text-decoration: underline; cursor: pointer; }
+		/* A phone: the jobs as cards, a header's parts one below the other, the log's lines wrapped. */
+		@media (max-width: 700px) {
+			#harvester { padding: 16px 12px; }
+			#harvester .harvester-header { flex-direction: column; align-items: stretch; gap: 8px; }
+			#harvester .harvester-jobs thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+			#harvester .harvester-jobs, #harvester .harvester-jobs tbody, #harvester .harvester-jobs tr, #harvester .harvester-jobs td { display: block; }
+			#harvester .harvester-jobs tr { padding: 10px 0; border-bottom: 1px solid var(--color-border); }
+			#harvester .harvester-jobs td { padding: 2px 0; border: 0; }
+			#harvester .harvester-jobs td:empty { display: none; }
+			#harvester .harvester-jobs td[data-label]::before { content: attr(data-label) ": "; color: var(--color-text-maxcontrast); }
+			#harvester .harvester-jobs td.harvester-with-icon { display: flex; white-space: normal; }
+			#harvester .harvester-jobs td.harvester-with-icon .harvester-icon { margin: 0; }
+			#harvester .harvester-jobs td code { white-space: normal; overflow-wrap: anywhere; }
+			#harvester .harvester-jobs .harvester-actions { display: flex; flex-wrap: wrap; gap: 4px; padding-top: 6px; text-align: start; }
+			#harvester .harvester-jobs .harvester-actions button { margin: 0; }
+			#harvester .harvester-message { max-width: none; }
+			#harvester .harvester-fetch { flex-wrap: wrap; }
+			#harvester .harvester-log { padding: 8px; }
+			#harvester .harvester-log li { flex-wrap: wrap; gap: 0 8px; padding: 2px 0; }
+			#harvester .harvester-log-text { flex-basis: 100%; }
+		}
 		#harvester .harvester-value { background: var(--color-primary-element-light); border-radius: 4px; padding: 0 4px; margin-inline-end: 4px; font-family: var(--font-face-monospace, monospace); }
 	`))
 

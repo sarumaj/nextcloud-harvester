@@ -102,6 +102,11 @@
   each time, for the container's whole life): a deploy waits some 15 seconds for *healthy*
   (HaRP waits up to 90); failures in the first five minutes do not count, then four in a row
   make the container *unhealthy*.
+- The jobs' page on a phone (narrower than 700 pixels): each job a card, its columns one below
+  the other with their names and its buttons on a line of their own, instead of a table wider
+  than the screen; the header's parts one below the other, the progress log's text below its
+  time, and a line of an earlier day with a short date and no seconds. The table's last column
+  is named *Actions* for screen readers.
 
 ### Fixed
 

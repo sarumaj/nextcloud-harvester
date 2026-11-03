@@ -57,6 +57,7 @@ OC.L10N.register(
         "Schedule": "Harmonogram",
         "Tags": "Tagi",
         "Last run": "Ostatni przebieg",
+        "Actions": "Akcje",
         "Needs you": "Czeka na Ciebie",
         "Running": "W toku",
         "Paused": "Wstrzymane",

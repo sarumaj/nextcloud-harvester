@@ -53,6 +53,7 @@ OC.L10N.register(
         "Schedule": "Zeitplan",
         "Tags": "Schlagworte",
         "Last run": "Letzter Durchlauf",
+        "Actions": "Aktionen",
         "Needs you": "Braucht dich",
         "Running": "Läuft",
         "Paused": "Pausiert",
