@@ -259,6 +259,45 @@ def retag_earlier(  # pylint: disable=too-many-arguments
     return tagged, True
 
 
+def earlier_tags(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    job: Job,
+    source: Source,
+    library: Library,
+    earlier: set[str],
+    previous: list[str],
+    changed: int,
+    report: Report,
+    record: Callable[[Placed], None],
+    stopped: Callable[[], bool],
+) -> tuple[Said, bool]:
+    """A pass for the tags after their change: those of the files saved before the job
+    recorded them (earlier, their keys), found by a listing without downloads; changed
+    recorded files were brought up to date already. Returns what it did, and whether it went
+    through."""
+    tagged, whole = 0, True
+    if earlier:
+        report(
+            "info",
+            said_n(
+                "Looking for %n file saved before its tags were kept (nothing is downloaded)",
+                "Looking for %n files saved before their tags were kept (nothing is downloaded)",
+                len(earlier),
+            ),
+        )
+        tagged, whole = retag_earlier(
+            job, source, library, earlier.__contains__, record, previous=previous, report=report, stopped=stopped
+        )
+    count = changed + tagged
+    if whole:
+        return said_n("Tags brought up to date on %n file", "Tags brought up to date on %n files", count), True
+    stopped_at = said_n(
+        "Tags brought up to date on %n file; stopped, the others get them at the job's next turn",
+        "Tags brought up to date on %n files; stopped, the others get them at the job's next turn",
+        count,
+    )
+    return stopped_at, False
+
+
 def signed_in_again(source: Source, error: WebPage, report: Report) -> bool:
     """Signs the source in anew after a web page came instead of a file (the session ended);
     False when it has no sign-in to repeat, or that failed (said in the log: the file's own
