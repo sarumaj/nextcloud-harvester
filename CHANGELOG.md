@@ -13,9 +13,14 @@
   that open an entry. A run clicks each, reads the next level where it lands (another address, a
   new tab or popup, a single-page app's route, a dialog) and returns to the listing (Back,
   Escape, else the listing opened again with its loading of more); a click that fails is a gap.
+- The recorder picks elements without an address (buttons, links to `javascript:`, rows and cards
+  a script opens) as file links or links to follow that are clicked: their pattern proposed on
+  their texts, the panel saying the job clicks them, **Click in the browser** to switch it; *Test
+  the recipe* walks such levels by clicking and lists clicked file links by their text.
 
 ### Changed
 
+- A level's pick tells a link's address apart from `#` and `javascript:` (no address).
 - Releases through the shared action `nextcloud-app-release` of `dawid/ci-actions`: the release's
   text is the version's section of this changelog, and a tag without one fails.
 

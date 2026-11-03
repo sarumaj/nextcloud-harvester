@@ -950,9 +950,19 @@
 			box.append(el('p', { class: 'harvester-muted', text: t('Alternatives, tried in this order when it finds nothing: {alternatives}', { alternatives: spec.alternatives.join('  ·  ') }) }))
 		}
 		if (target === 'next') return renderNext(box, spec, proposal, send)
+		// Elements without an address (buttons, rows, cards): the job clicks them in the browser.
+		const click = el('input', { type: 'checkbox' })
+		click.checked = Boolean(spec.click)
+		click.addEventListener('change', () => send({ type: 'click', target, level, click: click.checked }))
+		box.append(el('label', { class: 'harvester-click' }, click, ` ${t('Click in the browser')}`))
+		if (spec.click) {
+			box.append(el('p', { class: 'harvester-muted', text: target === 'links'
+				? t('These have no address: the job clicks each in the browser and keeps the file it gives (a download, or a tab that shows the file). The pattern is on their texts.')
+				: t('These have no address: the job clicks each in the browser, reads the next level where it lands (a page, a new tab, a dialog) and goes back to this listing. The pattern is on their texts.') }))
+		}
 		const pattern = el('input', { class: 'harvester-pattern', value: spec.pattern || '', spellcheck: 'false' })
 		pattern.addEventListener('change', () => send({ type: 'pattern', target, level, pattern: pattern.value }))
-		box.append(field(t('Pattern (named groups become values)'), pattern))
+		box.append(field(spec.click ? t('Pattern on their texts (named groups become values)') : t('Pattern (named groups become values)'), pattern))
 		if (!proposal) return box
 		if (proposal.error) box.append(el('p', { class: 'harvester-error', text: proposal.error }))
 		box.append(el('p', { text: n('On this page: {matching} of %n link matches (solid outline; dashed: left out).', 'On this page: {matching} of %n links match (solid outline; dashed: left out).', proposal.found, { matching: proposal.matching }) }))
@@ -1123,7 +1133,11 @@
 			el('span', { text: `${page.kind === 'follow' ? t('{level}, page {page}: {matching} of {found} links to follow', counts(page)) : t('{level}, page {page}: {matching} of {found} file links', counts(page))} ` }),
 			el('code', { text: page.url }),
 			page.files.length ? el('ul', {}, ...page.files.map((file) => el('li', {},
-				file.problem ? el('span', { class: 'harvester-error', text: `${file.url}: ${file.problem}` }) : el('span', { text: file.path, title: file.url })))) : ''))))
+				file.problem ? el('span', { class: 'harvester-error', text: `${file.url}: ${file.problem}` }) : el('span', { text: file.path, title: file.url }),
+				file.click ? el('small', { class: 'harvester-muted', text: ` ${t('(clicked: “{text}”)', { text: file.text })}` }) : ''))) : ''))))
+		if (result.pages.some((page) => page.files.some((file) => file.click))) {
+			box.append(el('p', { class: 'harvester-muted', text: t('File links that are clicked are listed, not clicked: the test downloads nothing (a run clicks each).') }))
+		}
 		if (result.shot) {
 			box.append(el('p', { text: `${result.shot.what}: ${result.shot.title || ''} ` }, el('code', { text: result.shot.url })),
 				el('img', { class: 'harvester-shot-image', src: `data:image/jpeg;base64,${result.shot.image}`, alt: t('What the browser showed then') }))
@@ -2569,6 +2583,7 @@
 		#harvester .harvester-level { border-inline-start: 3px solid var(--color-primary-element); padding-inline-start: 8px; margin: 8px 0; }
 		#harvester .harvester-level-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
 		#harvester .harvester-level-head h3, #harvester .harvester-level-head h4 { margin-inline-end: auto; }
+		#harvester .harvester-click { display: block; margin: 4px 0; }
 		#harvester .harvester-test-pages { padding-inline-start: 20px; }
 		#harvester .harvester-shot-image { display: block; max-width: 100%; height: auto; border: 1px solid var(--color-border); border-radius: var(--border-radius); }
 		#harvester .harvester-link { border: none; background: none; min-height: 0; padding: 0 0 0 8px; color: var(--color-primary-element); text-decoration: underline; cursor: pointer; }

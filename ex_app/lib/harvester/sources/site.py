@@ -953,7 +953,9 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
             begin()
             for item in items:
                 problem = str(item.problem) if item.problem else ""
-                result["pages"][-1]["files"].append({"url": item.url, "path": item.path, "problem": problem})
+                # A file link that is clicked is told by its text (its address is the listing's).
+                entry = {"url": item.url, "path": item.path, "problem": problem, "text": item.values.get("text", "")}
+                result["pages"][-1]["files"].append(entry | {"click": item.trigger is not None})
                 result["files"] += 1
                 if result["files"] >= files:
                     result["ended"] = "files"

@@ -4,7 +4,10 @@
 // anywhere unrecorded. In a picking mode the element clicked becomes a selector: for links to
 // follow and file links one that matches the similar links too (with all of them, for the
 // recorder to propose a pattern), for the next page's link one that matches only it (and, when
-// it is a number among numbers, 1 2 3 …, the numbers' container: numbered pages).
+// it is a number among numbers, 1 2 3 …, the numbers' container: numbered pages). A pick may be
+// an element without an address (a button, a row or card a script opens, an <a> without href or
+// with javascript:): its similar ones are reported with no address, and the recorder makes the
+// level one that is clicked (matched by the elements' texts).
 // highlight(selector, pattern, hits) outlines the selector's links: solid where the pattern
 // matches their URL (or Python found it to, hits), dashed where it does not. Everything goes to
 // the recorder through window.__harvesterReport.
@@ -366,6 +369,32 @@
 		return el.closest('a[href], [onclick], button') || el
 	}
 
+	// What a click picks: a link or a control around the element, else the outermost element
+	// with the hand cursor around it (a row or card a script opens shows one), else the element.
+	const PICKABLE = 'a, button, [onclick], [role=button], [role=link], input[type=button], input[type=submit], summary'
+	function pickable(el) {
+		const found = el.closest(PICKABLE)
+		if (found) return found
+		const pointer = (node) => node && node.nodeType === 1 && getComputedStyle(node).cursor === 'pointer'
+		if (!pointer(el)) return el
+		let top = el
+		while (top.parentElement && top.parentElement !== document.body && pointer(top.parentElement)) top = top.parentElement
+		return top
+	}
+
+	// An element's address a job can open: an http(s) link's that goes elsewhere than this page
+	// (not href="#", not javascript:), else '' (an element the job clicks).
+	function addressOf(el) {
+		const href = typeof el.href === 'string' ? el.href : ''
+		if (!/^https?:/i.test(href) || (el.getAttribute('href') || '').trim().startsWith('#')) return ''
+		return href
+	}
+
+	// An element's text as the job tells it by: its text, a button's value, else its label.
+	function labelOf(el) {
+		return (el.innerText || el.value || el.getAttribute('aria-label') || el.getAttribute('title') || '').trim()
+	}
+
 	// The elements of the container whose own text is a number (1 2 3, not "Page 2 of 9").
 	function numbersIn(box) {
 		return [...box.querySelectorAll('*')].filter((node) => {
@@ -626,7 +655,7 @@
 			return
 		}
 		if (hovered) hovered.style.boxShadow = ''
-		hovered = state.mode === 'value' ? event.target : link(event.target)
+		hovered = state.mode === 'value' ? event.target : state.mode === 'next' ? link(event.target) : pickable(event.target)
 		hovered.style.boxShadow = 'inset 0 0 0 9999px rgba(0, 130, 201, 0.15)'
 	}, true)
 
@@ -669,7 +698,7 @@
 			recordClick(event)
 			return
 		}
-		const el = link(event.target)
+		const el = state.mode === 'next' ? link(event.target) : pickable(event.target)
 		if (!picking()) return
 		event.preventDefault()
 		event.stopImmediatePropagation()
@@ -681,8 +710,7 @@
 		const next = state.mode === 'next' ? candidates(el, true) : []
 		const selector = state.mode === 'next' ? next[0] || unique(el) : similar(el)
 		const alternatives = state.mode === 'next' ? next.slice(1) : similarAlternatives(el, selector)
-		const matches = query(selector).slice(0, 300)
-			.map((match) => [match.href || '', (match.innerText || '').trim().slice(0, 80)])
+		const matches = query(selector).slice(0, 300).map((match) => [addressOf(match), labelOf(match).slice(0, 80)])
 		if (state.mode === 'next') highlight(selector, '')
 		const numbered = state.mode === 'next' ? pagination(el) : null
 		report({ action: 'pick', target: state.mode, selector, alternatives, found: count(selector), matches, numbered })

@@ -16,7 +16,8 @@ The messages are JSON over the page's WebSocket:
   url}, {type: back}, {type: forward}, {type: reload}, {type: mouse, event (move, down, up), x,
   y, button}, {type: wheel, dx, dy}, {type: key, key}, {type: text, text}, {type: mode, mode,
   level (a level's links to pick again)}, {type: pattern, target (follow, links), level,
-  pattern}, {type: selector, target (follow, links, next), level, selector}, {type: remove,
+  pattern}, {type: selector, target (follow, links, next), level, selector}, {type: click, target,
+  level, click} (a pick clicked or not, linkpicks.py), {type: remove,
   target, level}, {type: next-kind, kind (link, number)}, {type: undo} (the last step), {type:
   undo-pick} (the last change of the picks), {type: scroll} (a step: scroll to load more),
   the Steps list's edits (steps.EDITS: optional, step-delete, step-move, step-edit, record-at,
@@ -84,7 +85,8 @@ from ..recipe import SCROLL_ROUNDS, frame_address, in_this_recipe, leaked_passwo
 from ..sources import site
 from ..sources.base import SourceError
 from . import jar, trial
-from .datapicks import DATA_MESSAGES, DataPicks, search_all
+from .datapicks import DATA_MESSAGES
+from .linkpicks import HIGHLIGHT, LinkPicks, link_proposal
 from .engine import disguised, guard_routes_async, main_world, start_async
 from .popups import Popups
 from . import (
@@ -130,12 +132,6 @@ TRIAL_SETTINGS = (
     "max_size",
     "wait_pattern",
 )
-# The links' outlines: the pattern as JavaScript reads it (patterns.js_regex) or, where it cannot,
-# the matches Python found (one per element, in their order).
-HIGHLIGHT = (
-    "([selector, pattern, hits]) => window.__harvester ? window.__harvester.highlight(selector, pattern, hits) : null"
-)
-MATCHES = "els => els.map(e => [e.href || '', (e.innerText || '').trim().slice(0, 80)])"
 FRAME_SELECTOR = (
     "el => window.__harvester && window.__harvester.frameSelector ? window.__harvester.frameSelector(el) : ''"
 )
@@ -196,7 +192,7 @@ def frame_place(frame) -> dict | None:
     return {"host": urlparse(frame.url).hostname or "", "url": frame_address(frame.url), "level": level}
 
 
-class Recorder(DataPicks, Popups):  # pylint: disable=too-many-instance-attributes
+class Recorder(LinkPicks, Popups):  # pylint: disable=too-many-instance-attributes
     """One recording: a browser, the page shown and the recipe so far."""
 
     def __init__(self, send: Callable[[dict], Awaitable[None]]):
@@ -231,6 +227,8 @@ class Recorder(DataPicks, Popups):  # pylint: disable=too-many-instance-attribut
         # The picks before each change (Undo), and the level of links to follow being picked again.
         self._picks: list[tuple] = []
         self.repick: int | None = None
+        # The address each level to follow was picked on (one clicked has no pattern on addresses).
+        self._picked_at: dict[int, str] = {}
         # The level a value is picked for (mode value): ("links", 0) or ("follow", level).
         self.value_for: tuple[str, int] | None = None
         # The page's answers in JSON (Network), and the one chosen as the listing: (url, data).
@@ -522,8 +520,14 @@ class Recorder(DataPicks, Popups):  # pylint: disable=too-many-instance-attribut
 
     def depth(self, url: str) -> int:
         """How deep the page is: 0 for the listing, n for a page the nth level's links lead to (a
-        pattern that is none, or takes too long, matches nothing)."""
+        pattern that is none, or takes too long, matches nothing); below a level that is clicked,
+        any address but the one it was picked on (a dialog on that address is not below it)."""
         for level in range(len(self.follow), 0, -1):
+            if self.follow[level - 1].get("click"):
+                picked = self._picked_at.get(level - 1, self.start_url if level == 1 else "")
+                if picked and url != picked:
+                    return level
+                continue
             pattern = self.follow[level - 1].get("pattern", "")
             try:
                 if regex.search(pattern, url, timeout=DEPTH_TIMEOUT):
@@ -581,9 +585,12 @@ class Recorder(DataPicks, Popups):  # pylint: disable=too-many-instance-attribut
             return
         if level == 0:
             self.start_url = "" if self._starts_at_steps_end(url) else url
-        matches = event.get("matches", [])
-        proposal = patterns.propose([href for href, _ in matches], [text for _, text in matches])
+        # Elements without an address (buttons, rows a script opens): the job clicks them.
+        proposal, clicked = link_proposal(event.get("matches", []), str(target))
         spec = {"selector": event["selector"], "pattern": proposal["pattern"]} | self._alternatives(event)
+        spec |= {"click": True} if clicked else {}
+        if target == "follow":
+            self._picked_at[self.repick if self.repick is not None else level] = url
         if target == "follow" and self.repick is not None and self.repick < len(self.follow):
             # Picked again: this level's links change, the levels after it stay.
             level, self.repick = self.repick, None
@@ -851,47 +858,6 @@ class Recorder(DataPicks, Popups):  # pylint: disable=too-many-instance-attribut
         except Exception:  # pylint: disable=broad-exception-caught
             pass  # closed at once (a page the walk read quickly): the next one is shown
 
-    async def _describe(self, key: str) -> None:
-        """Outlines what the level's pattern matches on the page and lists examples with their values."""
-        spec = self.links if key == "links" else self.follow[int(key.removeprefix("follow"))]
-        page = self._page
-        assert page is not None
-        proposal = self.proposals.setdefault(key, {})
-        if spec.get("kind") == "json":
-            await self._describe_json(proposal)
-            return
-        try:
-            pattern = re.compile(spec.get("pattern", ""))
-        except re.error as error:
-            proposal.update(error=f"not a regular expression: {error}", examples=[], matching=0)
-            await self._update()
-            return
-        found = await page.eval_on_selector_all(spec["selector"], MATCHES)
-        try:
-            matches = await asyncio.to_thread(search_all, pattern.pattern, [href for href, _ in found])
-        except TimeoutError:
-            proposal.update(
-                error="the pattern takes too long on this page's links (it backtracks): make it simpler",
-                examples=[],
-                matching=0,
-            )
-            await self._update()
-            return
-        examples, problem = await self._examples(page, spec, found, matches)
-        matching = sum(1 for match in matches if match)
-        proposal.update(error=problem, examples=examples, matching=matching, found=len(found), pattern=pattern.pattern)
-        proposal["groups"] = list(pattern.groupindex)
-        # JavaScript outlines by the pattern where it reads it as Python does, else by Python's
-        # matches (a page that changed meanwhile may then be outlined slightly off).
-        hits = [bool(match) for match in matches]
-        try:
-            await page.evaluate(
-                HIGHLIGHT, [spec["selector"], patterns.js_regex(pattern.pattern), hits], **main_world(page)
-            )
-        except Exception:  # pylint: disable=broad-exception-caught
-            pass  # the page navigated meanwhile
-        await self._update()
-
     async def handle(self, message: dict) -> None:  # pylint: disable=too-many-branches
         """Does what the page asks for."""
         page = self._page
@@ -935,6 +901,8 @@ class Recorder(DataPicks, Popups):  # pylint: disable=too-many-instance-attribut
             await self._apply_mode()
         elif kind == "pattern":
             await self._edit_pattern(message)
+        elif kind == "click":
+            await self._set_click(message)
         elif kind in EDITS:
             if self.steps.edit(kind, message):
                 await self._update()

@@ -373,8 +373,19 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   edit (a selector edited drops its alternatives), **Pick again**
   and **Remove** (a removed level's later levels move up); **Undo pick** takes back the last
   change of the picks. The recorder starts with the form's recipe, so its picks can be changed
-  there. Picking a number of a numbered pagination as the next page proposes numbered pages,
-  showing this page's number and the next one's (**Use the picked link alone** switches back).
+  there. Elements without an address (a button, a link to `javascript:` or `#`, a row or card a
+  script opens: the outermost element under the hand cursor) picked as file links or as links to
+  follow make a pick that is clicked (`"click": true`): its pattern is proposed on their texts,
+  their common words around a value `label` (`^Invoice\ (?P<label>.+)`, else `.`, any text), its
+  examples are their texts, the file links' name is `{disposition}`, and the panel says that the
+  job clicks them in the browser; **Click in the browser** switches a pick between the two (its
+  pattern proposed anew from the page). Below a level that is clicked, a page at another address
+  than the one it was picked on is its entry's (its file links are picked there); a dialog or
+  panel on the listing's own address is not, so pick the file links in it, not another level.
+  **Test the recipe** clicks such levels as a run does; it lists file links that are clicked by
+  their text (`(clicked: “Get A”)`) without clicking them, and as the job runs it probes none.
+  Picking a number of a numbered pagination as the next page proposes numbered pages, showing
+  this page's number and the next one's (**Use the picked link alone** switches back).
   **Add: scroll to load more** (while recording) adds that step and scrolls the page.
   **Pick a value** (with each pick of links), then a click on a text near one of its links (a
   date in its row, a title in its card), adds a value: where it is from the link, and a type and
