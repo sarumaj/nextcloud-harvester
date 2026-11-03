@@ -430,8 +430,11 @@ def test_the_network_panel_lists_json_answers_and_makes_one_the_listing():
                     break
                 await asyncio.sleep(0.05)
             listed = [message for message in driver.sent if message["type"] == "requests"][-1]["items"]
+
             # Other messages (the page's recipe) may come after an answer: the answer itself.
-            bodies = lambda: [message for message in driver.sent if message["type"] == "request-body"]
+            def bodies() -> list[dict]:
+                return [message for message in driver.sent if message["type"] == "request-body"]
+
             await recorder.handle({"type": "json-preview", "id": listed[0]["id"]})
             previewed = bodies()[-1]
             await recorder.handle({"type": "json-preview", "id": 999})
