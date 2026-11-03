@@ -333,28 +333,28 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   with the browser's cookies when it has a browser (not the browser's own `context.request`,
   which passes by its routes); at most 16 MB, 64 levels deep and 1000 items a page.
 - **Pages saved as files** (`harvester/sources/keep.py`): for what exists only as a web page (a
-  receipt, an order's confirmation, a payslip, an article), the file links may have `"save":
-  "pdf"`, `"html"` or `"markdown"`: each page a link leads to (its address, or what an element
-  that is clicked shows) is opened in the job's browser, settled (the network quiet, scrolled to
-  its end so that lazy pictures load: the level's `"scroll"` rounds, else 3) and saved, not
-  downloaded. `pdf` is Chromium's print (A4, with backgrounds); `html` one file with the page's
-  stylesheets, pictures, fonts and frames inside: Chromium's snapshot (MHTML, as *Save page as*
-  makes it: the page as it shows it after its scripts, without them), each resource turned into
-  a `data:` address (`harvester/mhtml.py`), since MHTML opens only in Chromium's browsers and
-  Nextcloud shows none. Nothing in it runs: no event handlers (`onclick`, `onerror`, …), no
-  `javascript:` addresses, and a policy `script-src 'none'` in its head; `markdown` the main content as Readability finds it (paragraphs scored
-  for their containers, menus, sidebars, forms and hidden parts left out) with its headings,
-  lists, tables, links and pictures (`harvester/pagetext.py`, on BeautifulSoup: no other
-  dependency), under the title and the address. The file's name may hold `{title}`, the page's
+  receipt, an order's confirmation, a payslip, an article), the file links may have `"save": "pdf"`,
+  `"html"` or `"markdown"`: each page a link leads to (its address, or what an element that is
+  clicked shows) is opened in the job's browser, settled (the network quiet, scrolled to its end so
+  that lazy pictures load: the level's `"scroll"` rounds, else 3) and saved, not downloaded. `pdf`
+  is Chromium's print (A4, with backgrounds); `html` one file with the page's stylesheets, pictures,
+  fonts and frames inside: Chromium's snapshot (MHTML, as *Save page as* makes it: the page as it
+  shows it after its scripts, without them), each resource turned into a `data:` address
+  (`harvester/mhtml.py`), since MHTML opens only in Chromium's browsers and Nextcloud shows none.
+  Nothing in it runs: no event handlers (`onclick`, `onerror`, …), no `javascript:` addresses, and a
+  policy `script-src 'none'` in its head; `markdown` the main content as Readability finds it
+  (paragraphs scored for their containers, menus, sidebars, forms and hidden parts left out) with
+  its headings, lists, tables, links and pictures (`harvester/pagetext.py`, on BeautifulSoup: no
+  other dependency), under the title and the address. The file's name may hold `{title}`, the page's
   title (a stand-in, the link's text, until it is saved; `{disposition}` is the title with the
-  extension), and gets the extension where it lacks it. Pages are told apart by their address
-  or the recipe's key, as files are. A page that shows a sign-in is a web page instead of the
-  file (*signed out?*), one that answers an error fails alone; a saved page passes the size
-  checks (200 MB at most) and the job's file types, which must take what is saved (`any`, or
-  `pdf`, `html` or `markdown`; else the job is not saved). A recipe's own `"save"`, beside its
-  `start` and without levels or file links (`{"start": "https://…", "save": "pdf"}`), saves the
-  start page itself, where the steps end: the template `save-page` is such an on-demand job,
-  whose start is each page sent to it.
+  extension), and gets the extension where it lacks it. Pages are told apart by their address or the
+  recipe's key, as files are. A page that shows a sign-in is a web page instead of the file (*signed
+  out?*), one that answers an error fails alone; a saved page passes the size checks (200 MB at
+  most) and the job's file types, which must take what is saved (`any`, or `pdf`, `html` or
+  `markdown`; else the job is not saved). A recipe's own `"save"`, beside its `start` and without
+  levels or file links (`{"start": "https://…", "save": "pdf"}`), saves the start page itself, where
+  the steps end: the template `save-page` is such an on-demand job, whose start is each page sent to
+  it.
 - **Files a page only shows:** the file links may have `"capture": ["application/pdf"]` (media
   types, `image/*` for any picture, at most 10; never `text/html`): each page a link leads to is
   opened and the job keeps the files of those types that it loads (its own requests, its frames'
