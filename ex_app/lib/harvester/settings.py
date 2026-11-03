@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The admin's settings (Administration settings > Additional settings > Harvester): how many jobs
 run at once, how many browsers may be open, the proxy the jobs may choose, and whether the
 browsers go through their network guard. Their defaults come from the environment

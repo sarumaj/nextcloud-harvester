@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Pausing, resuming and stopping a running job."""
 
 # pylint: disable=missing-function-docstring,protected-access

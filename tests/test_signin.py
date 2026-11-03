@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Sign-ins without a password form: one-time codes (TOTP), cookies and HTTP Basic."""
 
 # pylint: disable=missing-function-docstring

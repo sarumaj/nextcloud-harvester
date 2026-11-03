@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The recorder and the site source in a real Chromium, against the fake archive.
 
 The site is served by Playwright's request interception (no network). The tests are skipped

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """A run (with a fake source and a fake Nextcloud), the schedule and the database."""
 
 # pylint: disable=missing-function-docstring

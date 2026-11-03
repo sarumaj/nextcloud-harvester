@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The recorder's picks of data beside the links: values from the page near a level's links
 ("Pick a value"), the page's answers in JSON (the Network panel) and one of them as the file links
 (harvester.jsonlist), and a code typed into a field that comes by e-mail instead (a step

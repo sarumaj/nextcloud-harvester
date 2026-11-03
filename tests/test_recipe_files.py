@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Recipes as files: the export of a job's form (no account, session or folder), the import's
 checks (size, JSON, format and version, the schema's fields, the source's options, the checks a
 saved job passes) and the form it fills; a person's own templates. In Chromium, the page: Export

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Test the recipe as the job runs: a fresh browser context (the recorder's session does not sign
 it in), the saved job's account resolved by the app (never from the page), its one-time code,
 the recipe's window, the form's file type and naming settings, and the first bytes of the first

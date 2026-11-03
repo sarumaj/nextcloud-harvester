@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Link patterns: proposed from picked links, and the values their named groups give a file.
 
 A pattern is a regular expression searched in a link's absolute URL. Its named groups

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The recipe's numbered pages, its step "scroll to load more", the step's label in the log, and
 what the job's browser saw at a failed step (kept per job, read only by its owner). Over HTTP
 and in the store, no browser: test_recorder_features.py has the browser's side."""

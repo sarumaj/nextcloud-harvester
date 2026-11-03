@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The rclone source: what its configuration may hold, and its runs with a fake rclone (no network).
 
 One test runs the real rclone (HARVESTER_RCLONE or rclone on the PATH) on the configuration the

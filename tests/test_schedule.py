@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """A job's schedule in words and its next runs, as the form shows them while it is typed."""
 
 # pylint: disable=missing-function-docstring

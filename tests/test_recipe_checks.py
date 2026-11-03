@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The recipe's checks when a job is saved: the types of its parts, the actions, credentials and
 keys a step may name, the key template, the levels' loading of more; and the dates a fill step
 may hold, filled in at each replay."""

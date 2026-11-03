@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Selectors with alternatives: how a replay finds a recorded element again when the site changed.
 
 The recorder (recorder.js) finds an element by several selectors, each matching it alone when it

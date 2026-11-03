@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """What a source is: it lists the items a site offers and downloads one of them."""
 
 import abc

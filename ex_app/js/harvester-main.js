@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // The app's page in Nextcloud: the user's jobs, a job's form (blank or from a template) with
 // its account, the recorder (the app's browser, shown and driven from here), which proposes
 // the links' patterns and shows what they match, and the addresses sent to on-demand jobs (Fetch

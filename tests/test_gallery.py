@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The gallery source (gallery-dl) with a stand-in for gallery-dl and a fake site: no network."""
 
 # pylint: disable=missing-function-docstring

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The assets of a repository's releases, on GitHub, on GitLab or on a Forgejo or Gitea server.
 
 The releases come from the forge's API, newest first; drafts never, prereleases when the job asks.

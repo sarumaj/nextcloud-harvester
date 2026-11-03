@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Warnings that "the site changed": what each run of a website job found, level by level, and a
 warning when a level that found links in the job's last good runs finds none now (or its links no
 longer match its pattern). A site that is redesigned breaks a recipe quietly: its runs go on, find

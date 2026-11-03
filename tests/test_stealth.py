@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The disguised browser (the website source's option "Disguise the browser", browser/engine.py):
 offered for website jobs alone, started with Patchright instead of Playwright and otherwise alike
 (the guard with its credentials, the launch and context options, the routes), refused without

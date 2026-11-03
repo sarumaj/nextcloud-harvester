@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The browser's guard (harvester.browser.guard): what it lets through and what not, its tunnels
 and plain requests, the home connection behind it, rclone's exception for one browser, its limits,
 its lookups kept and its families remembered, and its life with the browser (started and

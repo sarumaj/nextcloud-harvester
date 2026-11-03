@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """On-demand jobs: no schedule, they run when their person sends them an address (a page, a video,
 a feed), which takes the place of the job's own for that run alone; its options stay as they are.
 Only sources with an address (Source.address_option) offer them."""

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Values from the page around a link (dates in English, German and Polish forms, a row's or a
 card's text, an attribute) and JSON listings (items, fields, pages, caps): the recipe's checks,
 the walk over HTTP (httpx's MockTransport) and in Chromium (route fulfilment), and the recorder's

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The feed source against a fake podcast (RSS) and a fake Atom feed (httpx's MockTransport)."""
 
 # pylint: disable=missing-function-docstring

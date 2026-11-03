@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The browser's side of the recorder's features against the fake site (routed, no network):
 numbered pages that are buttons, the step "scroll to load more", what the browser saw at a
 failed step, and in the recorder: Back, Forward and Reload, removing and undoing picks, picking

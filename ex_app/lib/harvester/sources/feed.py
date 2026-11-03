@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """A news feed (RSS or Atom): its podcast episodes and other attached files, or each entry's link.
 
 The entries are taken newest first. An entry's file is known by the entry's id (or link) and the

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Videos and audio from the sites yt-dlp knows (YouTube, Vimeo, podcasts' pages, ...): a video, or
 the newest entries of a playlist or channel.
 

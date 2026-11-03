@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Listings in JSON: the file links of a site whose listing the page fetches as JSON (an XHR or
 fetch() of a single-page app) instead of showing them as links in its HTML.
 

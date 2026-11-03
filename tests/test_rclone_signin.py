@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The rclone wizard's sign-in in the app's browser: `rclone authorize` faked by a script (its link
 on stderr, the token on stdout as rclone prints them), the app's one sign-in at a time, and the
 browser's exception for rclone's listener (that recorder's alone, that port alone, while it runs).

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Any website, described by a recipe (harvester.recipe): the generic source.
 
 The pages are fetched over HTTP, or in Chromium when the recipe has steps (a login, a site that

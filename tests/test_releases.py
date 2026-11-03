@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The releases source against fake GitHub and Forgejo APIs (httpx's MockTransport): no network."""
 
 # pylint: disable=missing-function-docstring

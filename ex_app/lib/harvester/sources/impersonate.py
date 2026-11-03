@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Requests that present themselves as Chrome does (its TLS handshake, HTTP/2 settings and
 headers), for a job's own downloads with "Impersonate a browser" (base.IMPERSONATE): sites behind
 Cloudflare and similar checks answer a plain HTTP client's TLS with 403.

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The cookies panel of the browser views (the recorder, Continue in the browser): the browser
 context's cookies to look at, change, delete, add and take over.
 

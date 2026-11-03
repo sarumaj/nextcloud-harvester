@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """A file's download, checked the same way for every source: the pauses a site asks for, never a
 web page instead of the file (a sign-in or a challenge), the type and size the job expects.
 

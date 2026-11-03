@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The guards: where the app may connect, what child processes see, how much a file may be, and
 what keeps the executor going (retries, one notification per failure, a run's time limit)."""
 

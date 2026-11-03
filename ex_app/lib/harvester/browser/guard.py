@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The guard: a proxy of the app's that each browser's connections go through, every one of them.
 
 Playwright's routes see a page's requests and its own WebSockets, not those of its workers, and

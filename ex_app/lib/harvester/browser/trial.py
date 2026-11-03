@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The recipe's test in the recorder: the site source's own walk (Site.survey) in the recorder's
 browser, on the person's screen, downloading nothing.
 

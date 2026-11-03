@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Downloads that impersonate a browser (curl_cffi under httpx): the transport only when the job
 asks, the guarded client's check on every redirect, cookies and headers kept by httpx, the answer
 in chunks under the size limit, the job's proxy; with a fake curl session (no network), and one

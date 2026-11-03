@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The browser's settings: like a person's Chrome (for sites' bot protection), the recorder's
 window sizes, and a clearer word for a refused connection."""
 

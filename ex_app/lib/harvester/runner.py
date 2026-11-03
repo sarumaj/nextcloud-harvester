@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """One run of a job: the source's new items, downloaded into the user's folder and tagged."""
 
 import abc

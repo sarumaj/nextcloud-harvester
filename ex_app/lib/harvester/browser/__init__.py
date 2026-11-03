@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The browser: what the recorder and the browser source share.
 
 A few Chromiums at a time (SLOTS: HARVESTER_BROWSERS, 3 by default, or the admin's setting):

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Part of the site source's replay (harvester.sources.site): how long a step settles, what a
 replayed step waits for (arrived), and the tabs the steps act in (Tabs): the first, and a
 sign-in's popup a step went on in.

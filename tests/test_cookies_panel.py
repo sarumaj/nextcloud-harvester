@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The browser views' cookies panel (harvester.browser.jar): the listing grouped by domain with
 values masked, a value shown on asking, adding, changing and deleting cookies in a live browser
 context with their checks (a foreign domain, control characters, sizes), the cookies.txt for the

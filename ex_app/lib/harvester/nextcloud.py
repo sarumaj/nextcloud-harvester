@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The user's files and tags in Nextcloud, through the app's access as that user.
 
 nc_py_api's client is asynchronous; the runner and the sources are not (Playwright's sync API,

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """A fake magazine archive like heise's, for the site source and the recorder (no network).
 
 /login (and /sso/login, heise's): a login form with heise's field names.

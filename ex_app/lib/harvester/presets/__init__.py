@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Templates of jobs for known sites (presets/<id>.json), with a few parameters.
 
 A template has a title, a description, its parameters ({name: {title, default, check (a

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """What a run does with the files it cannot or should not take, names that collide, a changed
 account, tags changed in the meantime and schedules in a time zone."""
 

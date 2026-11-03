@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Runs that meet a site's trouble, over HTTP (httpx's MockTransport, no network): pages that are
 gone, refused or ask for a pause, a next page that loops or is a button, links shown on other
 listings, addresses that change from visit to visit, pages standing in for files, names the site

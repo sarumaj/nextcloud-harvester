@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The recorder's steps: those before what is recorded now (the form's, and each edit's), the
 events recorded since (made steps by recipe.steps_from_events), and the steps after them (new
 steps go in after step "after" of the page's record-at, before the later ones); the Steps list's

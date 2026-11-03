@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The README and the guides in docs/ keep up with the app: every source and template is described
 in the user's guide, the README links each guide, lines wrap at 100.
 

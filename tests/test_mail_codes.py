@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The step "type the code from e-mail" against a fake IMAP server whose messages arrive as the
 step waits: the newest message of the sender and subject after the step began, its code from the
 subject, the text or the HTML; old messages and other senders left alone until the wait is over;

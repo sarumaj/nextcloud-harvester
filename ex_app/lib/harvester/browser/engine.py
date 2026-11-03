@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """What starts the browsers: Playwright, or Patchright for the jobs that disguise their browser
 (the website source's option STEALTH, sources.base).
 

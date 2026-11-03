@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The browser's guard in its process (harvester.browser.guard.Guard): without the app's
 secrets, relaying and stopped with its browser, ended with the app, failing closed when it
 crashes, and serving its own browser alone (its credentials: another browser that reaches its

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The fixes of a security review: what a job's options may be, where the browser's downloads and
 WebSockets may go, ids never used again, tokens kept to their host, pages read within limits,
 patterns that cannot hold the app, and the app's secrets out of its helpers' reach."""

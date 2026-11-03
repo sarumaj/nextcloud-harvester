@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """File stores and cloud drives through rclone: WebDAV (a Nextcloud's public share too), SFTP, FTP,
 SMB, S3, Google Drive, Dropbox, OneDrive and the other storage services rclone speaks
 (ALLOWED_TYPES; REFUSED_TYPES says why the rest are not).

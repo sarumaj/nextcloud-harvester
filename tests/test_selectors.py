@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Robust selectors and better proposals: the recorder's candidate selectors (each must find its
 element alone in Playwright), their replay with repair (steps, levels, the next page; in the
 browser and over HTTP), the next page's link on a pager without classes, the listing where the

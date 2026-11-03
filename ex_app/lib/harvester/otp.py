@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """One-time codes (TOTP, RFC 6238), as an authenticator app shows them, for a recorded sign-in.
 
 The job's account holds the secret an authenticator would be given: its base32 text (as sites

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Images (and other files) of galleries on the sites gallery-dl knows (Flickr, Imgur, DeviantArt,
 ...): gallery-dl lists them, Harvester downloads them with its own checks.
 

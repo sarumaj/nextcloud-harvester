@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The app's page (harvester-main.js) in Chromium against a stubbed API and WebSocket: the
 recorder's navigation, the same controls for every pick (Pick again, the element, Remove), Undo
 of a pick, numbered pages, scroll to load more and the recipe's test; a failed step's picture

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """How the site source reads pages and asks for files (harvester.sources.site): the driver's
 interface, and the driver over HTTP (BeautifulSoup) for recipes without the browser.
 

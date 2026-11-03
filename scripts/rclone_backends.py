@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Writes tests/data/rclone-backends.json: the remotes of the rclone the image pins (Dockerfile's
 RCLONE_VERSION) with their settings' names and defaults, which test_remote.py checks the app's
 lists against. Run it with that rclone after raising the version:

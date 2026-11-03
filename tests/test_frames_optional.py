@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Steps inside frames and optional (best-effort) steps: the frame's path in the recipe, its
 label, recording in a same-origin, a cross-origin and a nested frame (served by route
 fulfilment, no network), where the person acts, picks refused inside a frame, replay in nested

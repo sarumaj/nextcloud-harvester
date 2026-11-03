@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """What the recorder records, as steps, and their replay: pages served by route fulfilment (no
 network) to recorder.js in Chromium, and the steps it made replayed in a fresh page.
 

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Replays in the browser: the sign-in a kept session skips and the steps to the listing it does
 not, a session that no longer signs in given up for a new sign-in, one that ends in the middle of
 a run, dates typed into a field, file links that are clicked to download, and levels that load

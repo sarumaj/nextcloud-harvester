@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The walk of a website's listing (harvester.sources.site): from the start page through the
 recipe's levels of links to the file links, page after page, and the files not known yet.
 

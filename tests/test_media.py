@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The media source (yt-dlp) with a stand-in for yt-dlp: no network."""
 
 # pylint: disable=missing-function-docstring

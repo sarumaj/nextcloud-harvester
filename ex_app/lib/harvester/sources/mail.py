@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Email attachments: the files attached to the messages of an IMAP mailbox, e.g. a supplier's invoices.
 
 The mailbox is only read: the folder is selected read-only and the messages are fetched with

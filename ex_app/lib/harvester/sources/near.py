@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The website source's data beside the links (harvester.sources.site): the texts of a level's
 values near each link (in the browser, VALUES; over HTTP, soup_value), the pages of a JSON
 listing (json_pages, read_json), and the code of a step "mail-code" (mail_code).

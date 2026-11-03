@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Cookies a job's account holds: a browser's cookies.txt export (Netscape's format, as
 extensions such as "Get cookies.txt" write it) or a Cookie header's name=value; ... pairs.
 

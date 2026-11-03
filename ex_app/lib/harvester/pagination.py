@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Numbered pages: a listing's pagination of numbers (‹ 1 [2] 3 … 9 ›) instead of one "next" link.
 
 The recipe's next is then {"kind": "number", "selector": <the pagination's container>}: on each

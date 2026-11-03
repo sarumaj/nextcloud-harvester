@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Recipes as files: a job's recipe and settings exported as JSON, to keep or to share, and a job
 made from such a file (its person chooses the folder and the account; nothing is saved until
 Save). A person's own templates are such files too, kept in the app's database for them alone.

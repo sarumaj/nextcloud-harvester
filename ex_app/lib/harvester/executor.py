@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Runs the jobs when their schedule says, and when a user asks (an on-demand job: with the
 address they sent it); a few at once (RUNNERS, or the admin's setting), never one twice, and one
 per site at a time."""

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Runs in every page of the recorder's browser (an init script). In the mode record it turns
 // what the person does into steps (click, fill, press Enter); in browse it lets them go
 // anywhere unrecorded. In a picking mode the element clicked becomes a selector: for links to

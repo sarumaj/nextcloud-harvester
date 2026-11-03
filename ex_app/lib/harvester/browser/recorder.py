@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The recorder: a browser in the app that a person drives from the Harvester page.
 
 The page shows the browser's screen (Chromium's screencast, JPEG frames) and sends the

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """A job's schedule (cron, in the job's time zone) in words, and its next runs, for the job's form.
 
 The next runs come from croniter, as the executor's do; the words cover the usual forms

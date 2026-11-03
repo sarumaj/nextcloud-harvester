@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The recorder's tabs: a tab the site opens (a sign-in's popup) is shown, and while recording a
 step "popup"; when it closes, the page that opened it comes back, a step "opener". And
 recorder.js in each document of the recorder's own pages, which the context's script misses in a

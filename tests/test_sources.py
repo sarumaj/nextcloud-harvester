@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The site source over HTTP against the fake archive (httpx's MockTransport): no network."""
 
 # pylint: disable=missing-function-docstring

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The jobs, what each has downloaded and its runs, in SQLite in the app's persistent storage."""
 
 import json

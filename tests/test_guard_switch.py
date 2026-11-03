@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The browsers' network guard switched on and off (the admin's setting, HARVESTER_GUARD): its
 words, the admin's form and its warning (the executor takes it: test_controls), and the browsers
 launched with their guard or without (the home connection given to Chromium then, rclone's

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Recipes: how to get from a site's front door to its files, as the recorder makes them.
 
     {

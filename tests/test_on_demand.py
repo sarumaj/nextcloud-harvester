@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """On-demand jobs: never due, only of sources with an address; a fetch's address checked as the
 source checks its own (and kept to the site of the job's account); the addresses queued in order,
 each once, kept across a restart and taken one per turn; a fetch's run with its address while

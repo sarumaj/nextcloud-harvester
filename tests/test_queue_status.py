@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The queue's status for everyone (runners, browsers by jobs and recordings, the jobs queued) and
 why a person's own job waits, naming nobody else's jobs or sites; jobs are their owner's alone
 (another person gets 404 for everything, as for a job that does not exist), also in a database

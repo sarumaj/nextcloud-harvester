@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The rclone wizard: rclone's questions one at a time, with a fake rclone (its state machine as
 `rclone config ... --non-interactive` answers), and once with the real one where it is installed
 (HARVESTER_RCLONE or rclone on the PATH).

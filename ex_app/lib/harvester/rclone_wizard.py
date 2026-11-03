@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The job form's rclone wizard: rclone's own configuration questions, one at a time, for the remote
 source's account, instead of a configuration written on another computer and pasted.
 

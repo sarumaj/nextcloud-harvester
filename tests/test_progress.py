@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The runs' progress log: what the runner reports, how the store keeps it, and a new run's start."""
 
 # pylint: disable=missing-function-docstring

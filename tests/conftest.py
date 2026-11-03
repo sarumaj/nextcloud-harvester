@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """What every test shares: names of the test sites (*.example, RFC 2606) resolve to a public
 address at once, without asking the network's DNS (browser.reachable looks names up)."""
 

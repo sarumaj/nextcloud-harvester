@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """The mail source against a fake IMAP server holding real messages: no network."""
 
 # pylint: disable=missing-function-docstring
