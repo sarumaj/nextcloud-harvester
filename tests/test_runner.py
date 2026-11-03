@@ -10,6 +10,7 @@ import json
 import posixpath
 import sqlite3
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -195,6 +196,9 @@ class FakePreferences:
 
     async def get_value(self, key, default=None):
         return self.values.get(key, default)
+
+    async def get_values(self, keys):
+        return [SimpleNamespace(key=key, value=self.values[key]) for key in keys if key in self.values]
 
     async def set_value(self, key, value, sensitive=None):  # pylint: disable=unused-argument
         self.values[key] = value

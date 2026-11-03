@@ -430,6 +430,12 @@ class Store:  # pylint: disable=too-many-public-methods
             row = self._db.execute("SELECT tested FROM jobs WHERE id = ?", (job_id,)).fetchone()
         return row["tested"] if row else None
 
+    def tested_all(self) -> dict[int, float | None]:
+        """When each job's recipe was last tested by the schedule (tested), all in one query."""
+        with self._lock:
+            rows = self._db.execute("SELECT id, tested FROM jobs").fetchall()
+        return {row["id"]: row["tested"] for row in rows}
+
     def set_tested(self, job_id: int, at: float) -> None:
         """The job's weekly test counts from then."""
         with self._lock, self._db:

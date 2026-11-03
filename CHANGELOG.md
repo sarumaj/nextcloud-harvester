@@ -43,6 +43,10 @@
 
 ### Changed
 
+- The app asks Nextcloud and its database less: the admin's settings are read each minute with
+  one client (a new one each minute before, never closed), a job's account in one request (one
+  per field before, twice a run), the weekly tests' times in one query a minute (one per job),
+  and the progress log's poll and the jobs' list read the waiting addresses once (twice).
 - The jobs page asks for less: the list comes without the jobs' options (`GET /api/jobs?brief=1`
   gives each job's own address instead; a recipe may be 100 KB), a job's form asks for its own
   (the new `GET /api/jobs/<id>`), and the progress log keeps its lines when the list is drawn

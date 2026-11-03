@@ -7,10 +7,10 @@ import contextlib
 import threading
 import time
 
-from test_runner import FakeLibrary, FakeSource
+from test_runner import FakeLibrary, FakeNextcloud, FakeSource
 
 from harvester import runner
-from harvester.executor import Control, Executor, site_of
+from harvester.executor import Control, Executor, credential_key, site_of
 from harvester.store import Job, Store
 
 
@@ -223,7 +223,8 @@ def test_the_admins_settings_change_the_runners_and_browsers(tmp_path, monkeypat
     monkeypatch.setattr(settings, "DEFAULT_PROXY", "http://10.0.0.1:3128")
     monkeypatch.setattr(browser, "GUARD", True)
     monkeypatch.setattr(settings, "DEFAULT_GUARD", True)
-    executor = Executor(Store(str(tmp_path / "db")), connect=Nc, runners=2)
+    clients: list[Nc] = []
+    executor = Executor(Store(str(tmp_path / "db")), connect=lambda: clients.append(Nc()) or clients[-1], runners=2)
     executor.read_settings()
     assert (executor.runners, browser.SLOTS.limit) == (2, browser.BROWSERS), "unset: the environment's"
     assert browser.PROXY == "http://10.0.0.1:3128", "unset: the environment's proxy"
@@ -252,6 +253,29 @@ def test_the_admins_settings_change_the_runners_and_browsers(tmp_path, monkeypat
     Config.values = {}
     executor.read_settings()
     assert browser.GUARD is False, "HARVESTER_GUARD=off and no setting"
+    assert len(clients) == 1, "one client for the settings, read each minute"
+
+
+def test_the_schedule_reads_the_tests_times_at_once_and_an_account_in_one_request(tmp_path):
+    store = Store(str(tmp_path / "db"))
+    first = store.save(Job(user="anna", name="a", source="site", target="/a", schedule="0 6 * * *"))
+    second = store.save(Job(user="anna", name="b", source="site", target="/b", schedule="0 6 * * *"))
+    store.set_tested(first.id or 0, 1000.0)
+    assert store.tested_all() == {first.id: 1000.0, second.id: None}
+
+    nc = FakeNextcloud()
+    asked: list[list[str]] = []
+    reading = nc.preferences_ex.get_values
+
+    async def get_values(keys):
+        asked.append(list(keys))
+        return await reading(keys)
+
+    nc.preferences_ex.get_values = get_values  # type: ignore[method-assign]
+    nc.preferences_ex.values[credential_key(first, "username")] = "anna"
+    account = Executor(store)._credentials(nc, first)  # type: ignore[arg-type]
+    assert account == {"username": "anna", "password": "", "totp": "", "cookies": "", "code_mailbox": ""}
+    assert len(asked) == 1 and len(asked[0]) == 5, "the account's fields in one request"
 
 
 def test_a_runner_beyond_the_setting_waits(tmp_path, monkeypatch):

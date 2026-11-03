@@ -27,6 +27,9 @@ class Preferences:
     async def get_value(self, _key):
         return None
 
+    async def get_values(self, _keys):
+        return []
+
     async def delete(self, _keys):
         pass
 
@@ -159,6 +162,17 @@ def test_the_brief_list_has_each_jobs_address_not_its_options_and_a_job_has_them
     rest = {key: value for key, value in brief[0].items() if key != "address"}
     assert rest == {key: value for key, value in full[0].items() if key != "options"}
     assert run(main.get_job(job.id or 0, Nextcloud("anna")))["options"] == job.options
+
+
+def test_the_list_and_the_log_read_the_waiting_addresses_once(app, monkeypatch):
+    store, executor, job = app
+    executor.request(job.id or 0)
+    reads: list[object] = []
+    reading = store.fetches
+    monkeypatch.setattr(store, "fetches", lambda jobs=None: reads.append(jobs) or reading(jobs))
+    run(main.list_jobs(Nextcloud("anna"), brief=True))
+    run(main.progress_log(Nextcloud("anna")))
+    assert reads == [[job.id], [job.id]], "once for the reasons and the addresses together"
 
 
 def test_the_recorder_refused_says_what_holds_the_browsers(app, monkeypatch):

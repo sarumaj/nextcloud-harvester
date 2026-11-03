@@ -213,6 +213,9 @@ class Executor:
         self._tests: set[int] = set()
         self._lock = threading.Lock()
         self._events: asyncio.AbstractEventLoop | None = None
+        # The client the admin's settings are read with each minute: one, kept (a new one each
+        # minute was never closed, its connections left open).
+        self._settings_client: AsyncNextcloudApp | None = None
         self._events_lock = threading.Lock()
         # What the running jobs ask their people (a code from the phone), and their answers.
         self.desk = needs.Desk()
@@ -245,18 +248,20 @@ class Executor:
             "queued": queued,
         }
 
-    def waits(self, jobs: list[Job]) -> dict[int, Said]:
+    def waits(self, jobs: list[Job], fetches: list[dict] | None = None) -> dict[int, Said]:
         """Why each of the jobs (those a user may see) waits, if it does: its place in the queue
         and what it waits for (a runner, its own site, a browser), and how many addresses an
-        on-demand job has to fetch. Nothing of other people's jobs but how many there are: the
-        site named is the job's own (or its next address's). The reasons are said() texts (the
-        page translates them)."""
+        on-demand job has to fetch (fetches: store.fetches of the jobs, if read already).
+        Nothing of other people's jobs but how many there are: the site named is the job's own
+        (or its next address's). The reasons are said() texts (the page translates them)."""
         with self._lock:
             order = list(self._queued)
             busy_sites = set(self._sites.values())
             running = {job_id: control.thread for job_id, control in self.controls.items()}
         waiting: dict[int, list[str]] = {}
-        for fetch in self.store.fetches([job.id or 0 for job in jobs]):
+        if fetches is None:
+            fetches = self.store.fetches([job.id or 0 for job in jobs])
+        for fetch in fetches:
             waiting.setdefault(fetch["job"], []).append(fetch["url"])
         reasons: dict[int, Said] = {}
         for job in jobs:
@@ -308,7 +313,9 @@ class Executor:
     def read_settings(self) -> None:
         """Takes the admin's settings (runners, browsers, the proxy, the browsers' guard); unset,
         the environment's stay."""
-        nc = self.connect()
+        if self._settings_client is None:
+            self._settings_client = self.connect()
+        nc = self._settings_client
         values = {record.key: record.value for record in self.call(nc.appconfig_ex.get_values(list(settings.KEYS)))}
         runners = settings.number(values.get(settings.RUNNERS), RUNNERS, settings.MAX_RUNNERS)
         browsers = settings.number(values.get(settings.BROWSERS), browser.BROWSERS, settings.MAX_BROWSERS)
@@ -429,12 +436,13 @@ class Executor:
     def schedule_turn(self, now: float) -> None:
         """Queues the jobs that are due (unless running or queued), and the recipe tests that are
         (watch.test_due)."""
+        tested = self.store.tested_all()
         for job in self.store.jobs():
             if job.id is None or job.id in self.controls:
                 continue
             if is_due(job, now):
                 self.request(job.id)
-            elif test_due(job, self.store.tested(job.id), now):
+            elif test_due(job, tested.get(job.id), now):
                 # Counted from now: a test that waits for its turn is not asked for again.
                 self.store.set_tested(job.id, now)
                 self.request_test(job.id)
@@ -785,11 +793,10 @@ class Executor:
         )
 
     def _credentials(self, nc: AsyncNextcloudApp, job: Job) -> dict[str, str]:
-        """The job's account, as its user set it."""
-        return {
-            name: self.call(nc.preferences_ex.get_value(credential_key(job, name))) or ""
-            for name in SOURCES[job.source].credentials
-        }
+        """The job's account, as its user set it: its fields in one request."""
+        names = {credential_key(job, name): name for name in SOURCES[job.source].credentials}
+        found = {record.key: record.value for record in self.call(nc.preferences_ex.get_values(list(names)))}
+        return {name: found.get(key) or "" for key, name in names.items()}
 
     def _retag_turn(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,

@@ -10,6 +10,7 @@ run that went through, kept after one that failed; and the API's fetch and cance
 import asyncio
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -61,6 +62,9 @@ class Preferences:  # pylint: disable=too-few-public-methods
 
     async def get_value(self, key):
         return self.values.get(key)
+
+    async def get_values(self, keys):
+        return [SimpleNamespace(key=key, value=self.values[key]) for key in keys if key in self.values]
 
 
 class Nextcloud:  # pylint: disable=too-few-public-methods

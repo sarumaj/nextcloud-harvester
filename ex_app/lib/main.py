@@ -284,8 +284,9 @@ async def list_jobs(nc: NC, brief: bool = False) -> list[dict]:
     # Queued first: a job taken in between is then running too (and shown so), not neither.
     queued = executor.queued
     running = executor.running
-    waits = executor.waits(jobs)
-    fetches = fetches_of(jobs)
+    fetched = store().fetches([job.id or 0 for job in jobs])
+    waits = executor.waits(jobs, fetched)
+    fetches = fetches_of(jobs, fetched)
     return [
         (listed(job) if brief else vars(job))
         | {
@@ -316,12 +317,12 @@ async def get_job(job_id: int, nc: NC) -> dict:
     return vars(await own_job(job_id, nc))
 
 
-def fetches_of(jobs: list[Job]) -> dict[int, list[dict]]:
-    """The addresses waiting for the jobs, by job, oldest first; the one each runs now is marked
-    running."""
+def fetches_of(jobs: list[Job], fetched: list[dict] | None = None) -> dict[int, list[dict]]:
+    """The addresses waiting for the jobs (fetched: store.fetches of them, if read already), by
+    job, oldest first; the one each runs now is marked running."""
     executor = STATE["executor"]
     found: dict[int, list[dict]] = {}
-    for fetch in store().fetches([job.id or 0 for job in jobs]):
+    for fetch in store().fetches([job.id or 0 for job in jobs]) if fetched is None else fetched:
         running = executor.fetching(fetch["job"]) == fetch["id"]
         found.setdefault(fetch["job"], []).append(
             {"id": fetch["id"], "url": fetch["url"], "at": fetch["at"], "running": running}
@@ -348,7 +349,8 @@ async def progress_log(nc: NC, job: int | None = None, after: int = 0) -> dict:
     mine = {listed.id for listed in jobs}
     executor = STATE["executor"]
     queued = executor.queued
-    waits = executor.waits(jobs)
+    fetched = store().fetches([job.id or 0 for job in jobs])
+    waits = executor.waits(jobs, fetched)
     return {
         "lines": store().log_lines(user, job, max(after, 0)),
         "running": [job_id for job_id in executor.running if job_id in mine],
@@ -360,7 +362,9 @@ async def progress_log(nc: NC, job: int | None = None, after: int = 0) -> dict:
         "status": executor.status(),
         # The on-demand jobs' waiting addresses (their ids): the page draws the list again
         # when they change.
-        "fetches": {str(job_id): [fetch["id"] for fetch in found] for job_id, found in fetches_of(jobs).items()},
+        "fetches": {
+            str(job_id): [fetch["id"] for fetch in found] for job_id, found in fetches_of(jobs, fetched).items()
+        },
     }
 
 
