@@ -722,6 +722,26 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   the known files' checks do not count against *Files per run*. Pages a job saves (as PDF, HTML or
   Markdown) and files it captures from pages are never checked: a page saved anew differs each
   time.
+- **Unpacking ZIP files** (*Unpack ZIP files*, every job; off by default; `unpack.py`): a downloaded
+  file whose name ends with `.zip` and that is a ZIP file has its files put into a folder of its
+  name beside it (`Rechnungen.zip`: `Rechnungen/`, its folders kept), each with the job's tags.
+  *Keep the ZIP files* (on by default) keeps the archive beside the folder: it is what the site
+  gave, and what a check for changes compares; off, only its files are saved, the folder standing
+  for the archive (it gets the job's tags too). A folder of that name that is there already gives
+  the archive a numbered name (`Rechnungen (2).zip`, `Rechnungen (2)/`). A changed archive (*Check
+  known files for changes*) is unpacked again into its folder, each file saved over its own (a
+  version in Nextcloud); files no longer in it stay. An archive is unpacked only when nothing in it
+  is suspect, else it is saved as it is and the log says why (*… is not unpacked: …*): a path out of
+  its folder (`..`) or an absolute one (`/…`, `C:\…`), a symbolic link, an encrypted file, two files
+  of one name (also differing only in case) or a file named as a folder, a name with control
+  characters, more than 1000 files, more than the job's *Largest file* unpacked in all, or a file
+  (or the whole archive) unpacking to more than 100 times its packed size (a zip bomb); the bytes
+  unpacked are counted as they come, so an archive that says less than it holds is caught too. The
+  files never touch the server's disk by their names (numbered scratch files, then Nextcloud).
+  Hidden files (`.DS_Store`, `__MACOSX/`) are left out, the characters Windows refuses in a name
+  (`:*?"<>|`) become `_`, archives in the archive stay archives (no nested unpacking), and other
+  files that are ZIPs inside (`.epub`, `.docx`, `.jar`) stay files. Neither are the job's file types
+  applied to the unpacked files. `.tar.gz` and other archives are not unpacked.
 - **Runs that meet trouble:** a link's address is known without what changes from visit to
   visit (`patterns.VOLATILE`: a session in the path or query, `;jsessionid=`, `sid`, `PHPSESSID`;
   a presigned address's signature and expiry, S3's `X-Amz-*`, Google's `X-Goog-*`, CloudFront's

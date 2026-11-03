@@ -9,7 +9,7 @@ import time
 from collections.abc import Callable
 from typing import BinaryIO
 
-from . import versions
+from . import unpack, versions
 from .l10n import Said, listed, said, said_n
 from .patterns import render_tags, stable_url
 from .sources import download
@@ -40,6 +40,21 @@ MAX_TWINS = 100
 
 # Options every job has, whatever its source.
 COMMON_OPTIONS = {
+    "unpack": Option(
+        "Unpack ZIP files",
+        0,
+        "A downloaded .zip file's files go into a folder of its name beside it (not an archive in it again). "
+        "Unpacked only when nothing in it is suspect (a path out of the folder, a link, a zip bomb, more than 1000 "
+        "files, more than the largest file in all): else it is saved as it is.",
+        kind="flag",
+    ),
+    "unpack_keep": Option(
+        "Keep the ZIP files",
+        1,
+        "With Unpack ZIP files: the archive is kept beside its folder. Off: only its files are saved, the folder "
+        "standing for it.",
+        kind="flag",
+    ),
     "max_items": Option(
         "Files per run",
         10,
@@ -156,6 +171,25 @@ def _tagged(job: Job, library: Library, item, file_id: int, record: Callable[[Pl
     record(Placed(item.key, file_id, dict(item.values), tags))
 
 
+def _put(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    job: Job, source: Source, library: Library, item, path: str, content: BinaryIO, report: Report, fresh: bool
+) -> tuple[int, str, bool]:
+    """The downloaded file put at path, or a ZIP the job unpacks (unpack.py) into a folder of its
+    name; the ID the job records of it, its path (a new archive's numbered where its folder's name
+    is taken; fresh: it is new, not a known one's new version), and whether the file itself was
+    saved (not an archive unpacked without it)."""
+    if not unpack.wanted(job.options, path, content):
+        return library.put(path, content), path, True
+    if fresh:
+        try:
+            path = unpack.free(path, lambda taken: library.find(taken) is not None, numbered)
+        except unpack.NotUnpacked as error:
+            report("info", said("{path} is not unpacked: {error}", path=path, error=str(error)))
+            return library.put(path, content), path, True
+    file_id, kept = unpack.saved(library, job, item.values, path, content, download.largest(source.settings), report)
+    return file_id, path, kept
+
+
 def place(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     job: Job,
     source: Source,
@@ -208,8 +242,9 @@ def place(  # pylint: disable=too-many-arguments,too-many-positional-arguments,t
             report("info", said("A duplicate of {path}, not saved again: {file}", path=twin["path"], file=item.url))
             source.contents.keep(item.key, value, twin["path"], check)
             return DUPLICATE
-        file_id = library.put(path, content)
-        report("info", said("Saved {path} ({size})", path=path, size=size_text(size)))
+        file_id, path, kept = _put(job, source, library, item, path, content, report, fresh=True)
+        if kept:
+            report("info", said("Saved {path} ({size})", path=path, size=size_text(size)))
         if source.contents is not None:
             source.contents.keep(item.key, value, path, check)
     _tagged(job, library, item, file_id, record)
@@ -247,11 +282,13 @@ def _recheck(  # pylint: disable=too-many-arguments,too-many-positional-argument
         size = content.tell()
         value = versions.digest(content)
         file_id = library.find(path)
+        if file_id is None and unpack.unpacks(job.options, path):
+            file_id = library.find(unpack.folder_of(path))  # unpacked without the archive
         if file_id is None or known is None or known["hash"] == value:
             # Gone (deleted or moved by its person): not brought back; asked again all the same.
             contents.keep(item.key, value if file_id is not None or known is None else known["hash"], path, check)
             return UNCHANGED
-        file_id = library.put(path, content)
+        file_id, path, _ = _put(job, source, library, item, path, content, report, fresh=False)
         report("info", said("Changed: {path} saved over as its new version ({size})", path=path, size=size_text(size)))
         contents.keep(item.key, value, path, check)
     _tagged(job, library, item, file_id, record)

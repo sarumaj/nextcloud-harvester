@@ -589,6 +589,10 @@ OC.L10N.register(
         "At most this many pages of a listing.": "Najwyżej tyle stron jednej listy.",
         "Stop at known files": "Zatrzymaj na znanych plikach",
         "Once the site went through completely, a listing of known files ends the run. It assumes the newest come first, or last: of the links to follow, the first and last are looked at, the new ones taken from the end that has them. A listing over several pages is taken to start with its newest page: for one whose first page is its oldest, turn this off.": "Gdy strona została już raz przejrzana w całości, lista znanych plików kończy przebieg. Zakłada się, że najnowsze są pierwsze albo ostatnie: z linków do odwiedzenia sprawdzane są pierwszy i ostatni, a nowe są brane od końca, który je ma. Lista na wielu stronach jest traktowana jako zaczynająca się od najnowszej strony: dla takiej, której pierwsza strona jest najstarsza, wyłącz to.",
+        "Unpack ZIP files": "Rozpakowuj pliki ZIP",
+        "A downloaded .zip file's files go into a folder of its name beside it (not an archive in it again). Unpacked only when nothing in it is suspect (a path out of the folder, a link, a zip bomb, more than 1000 files, more than the largest file in all): else it is saved as it is.": "Pliki z pobranego pliku .zip trafiają do folderu o jego nazwie obok niego (archiwum w nim już nie). Rozpakowywany tylko wtedy, gdy nic w nim nie jest podejrzane (ścieżka poza folder, dowiązanie, bomba ZIP, ponad 1000 plików, łącznie więcej niż największy plik): w przeciwnym razie zapisywany jest taki, jaki jest.",
+        "Keep the ZIP files": "Zachowuj pliki ZIP",
+        "With Unpack ZIP files: the archive is kept beside its folder. Off: only its files are saved, the folder standing for it.": "Z „Rozpakowuj pliki ZIP”: archiwum zostaje obok swojego folderu. Wyłączone: zapisywane są tylko jego pliki, a folder zastępuje archiwum.",
         "Files per run": "Plików na przebieg",
         "The rest comes in the next runs (a first run may find hundreds); -1: no limit (a run still ends after two hours, and goes on in the next).": "Reszta przyjdzie w następnych przebiegach (pierwszy przebieg może znaleźć setki); -1: bez limitu (przebieg i tak kończy się po dwóch godzinach i jest kontynuowany w następnym).",
         "The site sees the proxy's address instead of the server's (some sites refuse servers, or ask them to prove they are human more often). Slower: the files come through the proxy.": "Strona widzi adres proxy zamiast adresu serwera (niektóre strony odrzucają serwery albo częściej każą im udowodnić, że są ludźmi). Wolniej: pliki przychodzą przez proxy.",
@@ -836,7 +840,6 @@ OC.L10N.register(
         "Looking for new files": "Szukanie nowych plików",
         "{outcome}; stopped, the rest comes {later}": "{outcome}; zatrzymano, reszta {later}",
         "Already in the folder, tagged: {path}": "Już w folderze, otagowano: {path}",
-        "Saved {path} ({size})": "Zapisano {path} ({size})",
         "Changed: {path} saved over as its new version ({size})": "Zmieniony: {path} zapisany jako nowa wersja ({size})",
         "_Looking for %n file saved before its tags were kept (nothing is downloaded)_::_Looking for %n files saved before their tags were kept (nothing is downloaded)_": [
             "Szukanie %n pliku zapisanego, zanim zapamiętywano jego tagi (nic nie jest pobierane)",
@@ -857,6 +860,7 @@ OC.L10N.register(
             "%n strony listy nic nie dało: przebieg nie liczy się jako pełny"
         ],
         "A duplicate of {path}, not saved again: {file}": "Duplikat {path}, nie zapisano ponownie: {file}",
+        "Saved {path} ({size})": "Zapisano {path} ({size})",
         "Tagged: {path}": "Otagowano: {path}",
         "Signing in anew failed: {error}": "Ponowne logowanie nie powiodło się: {error}",
         "_%n changed (a new version)_::_%n changed (new versions)_": [
@@ -896,6 +900,7 @@ OC.L10N.register(
             "%n nieudanego (ponowna próba {later}): {error}"
         ],
         "Stopped: the rest comes {later}": "Zatrzymano: reszta {later}",
+        "{path} is not unpacked: {error}": "{path} nie zostaje rozpakowany: {error}",
         "_%n file this run (Files per run): the rest comes {later}_::_%n files this run (Files per run): the rest comes {later}_": [
             "%n plik w tym przebiegu (Plików na przebieg): reszta {later}",
             "%n pliki w tym przebiegu (Plików na przebieg): reszta {later}",
@@ -1016,6 +1021,12 @@ OC.L10N.register(
         "the next page {address} was read already (a loop): its listing ends": "następna strona {address} była już czytana (pętla): jej lista się tu kończy",
         "level {level}: clicking “{element}” failed: {why}": "poziom {level}: kliknięcie „{element}” nie powiodło się: {why}",
         "waiting for {selector} to show, at most {seconds} s": "czekam, aż pojawi się {selector}, najwyżej {seconds} s",
+        "_Unpacked %n file of {path} into {folder}_::_Unpacked %n files of {path} into {folder}_": [
+            "Rozpakowano %n plik z {path} do {folder}",
+            "Rozpakowano %n pliki z {path} do {folder}",
+            "Rozpakowano %n plików z {path} do {folder}",
+            "Rozpakowano %n pliku z {path} do {folder}"
+        ],
         "level {level} found nothing (it found {found} before)": "poziom {level} nic nie znalazł (wcześniej: {found})",
         "level {level}: the pattern no longer matches (none of {found} links; {matched} matched before)": "poziom {level}: wzorzec już nie pasuje (do żadnego z linków: {found}; wcześniej pasowało: {matched})",
         "the listing found nothing (it found {found} before)": "lista nic nie znalazła (wcześniej: {found})",

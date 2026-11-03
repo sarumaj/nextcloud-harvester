@@ -4,6 +4,13 @@
 
 ### Added
 
+- ZIP files unpacked: **Unpack ZIP files** (every job, off by default) puts a downloaded `.zip`
+  file's files into a folder of its name beside it, tagged; **Keep the ZIP files** (on by default)
+  keeps the archive too. A suspect archive is saved as it is, the log saying why: a path out of
+  its folder or an absolute one, a symbolic link, an encrypted file, two files of one name, more
+  than 1000 files, more than the job's largest file in all, more than 100 times its packed size
+  (counted as it unpacks). No nested unpacking; `.epub`, `.docx` and other ZIPs of another name
+  stay files.
 - Duplicates by content: a job keeps the SHA-256 of each file it saves; a file whose content one
   of its files from another address has is not saved again, and the log and the run's outcome
   say so (*A duplicate of …*, *1 duplicate (not saved again)*).

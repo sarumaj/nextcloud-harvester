@@ -570,6 +570,10 @@
         "At most this many pages of a listing.": "Höchstens so viele Seiten einer Übersicht.",
         "Stop at known files": "Bei bekannten Dateien aufhören",
         "Once the site went through completely, a listing of known files ends the run. It assumes the newest come first, or last: of the links to follow, the first and last are looked at, the new ones taken from the end that has them. A listing over several pages is taken to start with its newest page: for one whose first page is its oldest, turn this off.": "Sobald die Website einmal vollständig durchgegangen ist, beendet eine Übersicht aus bekannten Dateien den Durchlauf. Angenommen wird, dass die neuesten zuerst oder zuletzt kommen: Von den zu folgenden Links werden der erste und der letzte betrachtet, die neuen von dem Ende genommen, an dem sie stehen. Bei einer Übersicht über mehrere Seiten wird angenommen, dass sie mit ihrer neuesten Seite beginnt: Bei einer, deren erste Seite die älteste ist, schalte dies aus.",
+        "Unpack ZIP files": "ZIP-Dateien entpacken",
+        "A downloaded .zip file's files go into a folder of its name beside it (not an archive in it again). Unpacked only when nothing in it is suspect (a path out of the folder, a link, a zip bomb, more than 1000 files, more than the largest file in all): else it is saved as it is.": "Die Dateien einer heruntergeladenen .zip-Datei kommen in einen Ordner ihres Namens daneben (ein Archiv darin nicht noch einmal). Entpackt nur, wenn nichts darin verdächtig ist (ein Pfad aus dem Ordner hinaus, ein Link, eine ZIP-Bombe, mehr als 1000 Dateien, insgesamt mehr als die größte Datei): sonst wird sie gespeichert, wie sie ist.",
+        "Keep the ZIP files": "ZIP-Dateien behalten",
+        "With Unpack ZIP files: the archive is kept beside its folder. Off: only its files are saved, the folder standing for it.": "Mit „ZIP-Dateien entpacken“: Das Archiv bleibt neben seinem Ordner. Aus: Nur seine Dateien werden gespeichert, der Ordner steht für es.",
         "Files per run": "Dateien pro Durchlauf",
         "The rest comes in the next runs (a first run may find hundreds); -1: no limit (a run still ends after two hours, and goes on in the next).": "Der Rest kommt in den nächsten Durchläufen (ein erster Durchlauf findet vielleicht Hunderte); -1: keine Grenze (ein Durchlauf endet trotzdem nach zwei Stunden und macht im nächsten weiter).",
         "The site sees the proxy's address instead of the server's (some sites refuse servers, or ask them to prove they are human more often). Slower: the files come through the proxy.": "Die Website sieht die Adresse des Proxys statt der des Servers (manche Websites weisen Server ab oder lassen sie öfter beweisen, dass sie Menschen sind). Langsamer: Die Dateien kommen über den Proxy.",
@@ -805,7 +809,6 @@
         "Looking for new files": "Suche nach neuen Dateien",
         "{outcome}; stopped, the rest comes {later}": "{outcome}; gestoppt, der Rest kommt {later}",
         "Already in the folder, tagged: {path}": "Schon im Ordner, mit Tags versehen: {path}",
-        "Saved {path} ({size})": "{path} gespeichert ({size})",
         "Changed: {path} saved over as its new version ({size})": "Geändert: {path} als neue Version darüber gespeichert ({size})",
         "_Looking for %n file saved before its tags were kept (nothing is downloaded)_::_Looking for %n files saved before their tags were kept (nothing is downloaded)_": [
             "Suche nach %n Datei, die gespeichert wurde, bevor ihre Tags festgehalten wurden (nichts wird heruntergeladen)",
@@ -820,6 +823,7 @@
             "%n Übersichtsseiten lieferten nichts: Der Durchlauf zählt nicht als vollständig"
         ],
         "A duplicate of {path}, not saved again: {file}": "Ein Duplikat von {path}, nicht noch einmal gespeichert: {file}",
+        "Saved {path} ({size})": "{path} gespeichert ({size})",
         "Tagged: {path}": "Mit Tags versehen: {path}",
         "Signing in anew failed: {error}": "Die erneute Anmeldung ist fehlgeschlagen: {error}",
         "_%n changed (a new version)_::_%n changed (new versions)_": [
@@ -847,6 +851,7 @@
             "%n fehlgeschlagen (werden {later} erneut versucht): {error}"
         ],
         "Stopped: the rest comes {later}": "Gestoppt: Der Rest kommt {later}",
+        "{path} is not unpacked: {error}": "{path} wird nicht entpackt: {error}",
         "_%n file this run (Files per run): the rest comes {later}_::_%n files this run (Files per run): the rest comes {later}_": [
             "%n Datei in diesem Durchlauf (Dateien pro Durchlauf): Der Rest kommt {later}",
             "%n Dateien in diesem Durchlauf (Dateien pro Durchlauf): Der Rest kommt {later}"
@@ -945,6 +950,10 @@
         "the next page {address} was read already (a loop): its listing ends": "die nächste Seite {address} wurde schon gelesen (eine Schleife): Die Übersicht endet hier",
         "level {level}: clicking “{element}” failed: {why}": "Ebene {level}: Klick auf „{element}“ fehlgeschlagen: {why}",
         "waiting for {selector} to show, at most {seconds} s": "warte darauf, dass {selector} erscheint, höchstens {seconds} s",
+        "_Unpacked %n file of {path} into {folder}_::_Unpacked %n files of {path} into {folder}_": [
+            "%n Datei von {path} nach {folder} entpackt",
+            "%n Dateien von {path} nach {folder} entpackt"
+        ],
         "level {level} found nothing (it found {found} before)": "Ebene {level} fand nichts (vorher {found})",
         "level {level}: the pattern no longer matches (none of {found} links; {matched} matched before)": "Ebene {level}: Das Muster passt nicht mehr (auf keinen von {found} Links; vorher passten {matched})",
         "the listing found nothing (it found {found} before)": "die Übersicht fand nichts (vorher {found})",
