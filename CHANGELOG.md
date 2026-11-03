@@ -38,6 +38,13 @@
 
 ### Changed
 
+- Listing pages in the browser are read once their level's links are there (a next page once
+  they changed), then after two seconds at most for what a script still loads, instead of half a
+  second and up to 15 seconds more for the network to go quiet, which a page with analytics or
+  polling never does: three such pages took some 48 seconds, now some 7. On such a page a scroll
+  or a **Load more** round waits up to three seconds for the page to grow instead (a feed of
+  three rounds: 79 seconds, now 10). A page whose links do not show within five seconds still
+  gets the network's whole wait.
 - The browser's screen in the recorder (and in *Continue in the browser* and rclone's sign-in)
   takes less of the server's CPU: every second frame of Chromium's (some 30 frames a second)
   instead of every frame, and none while the jobs page is hidden (another tab, a minimized

@@ -29,7 +29,7 @@ from typing import Any
 
 from playwright.sync_api import Error as PlaywrightError
 
-from .. import choices, jsonlist, pagewatch, patterns
+from .. import choices, jsonlist, pagewatch, patterns, selectors
 from .. import recipe as recipes
 from ..l10n import said
 from . import keep, near
@@ -308,9 +308,20 @@ class Walk:  # pylint: disable=too-many-instance-attributes,too-many-public-meth
         """The listing's next page after this one at the level, or None (no next page there)."""
         if not self.after.get("selector") or int(self.after.get("level", 0)) != level:
             return None
+        awaits = self.awaits(level)
         if self.after.get("kind") == "number":
-            return self.paced(self.driver.numbered, page, self.after["selector"], number)
-        return self.paced(self.site.next_page, self.driver, page, self.after)
+            return self.paced(self.driver.numbered, page, self.after["selector"], number, awaits)
+        return self.paced(self.site.next_page, self.driver, page, self.after, awaits)
+
+    def awaits(self, level: int) -> tuple[str, ...]:
+        """The selectors a listing page of the level shows once it is there (its links and their
+        alternatives, the element it waits for): the browser waits for them rather than for the
+        network to go quiet (tabs.listing_shown)."""
+        spec = self.follow[level] if level < len(self.follow) else self.recipe["links"]
+        if spec.get("kind") == "json":
+            return ()
+        wait = spec.get("wait_for") if isinstance(spec.get("wait_for"), dict) else {}
+        return tuple(selectors.candidates(spec)) + ((str(wait["selector"]),) if wait.get("selector") else ())
 
     def clicked(self, page: Any, spec: dict, level: int, link: tuple) -> tuple:
         """A link of a clicked level to follow as children() takes it: its element to click (a
@@ -324,7 +335,7 @@ class Walk:  # pylint: disable=too-many-instance-attributes,too-many-public-meth
         """The listing's page: its address opened, or what an element clicked shows (a Target);
         None when that click failed (a gap of the pass, said in the log)."""
         if not isinstance(url, Target):
-            return self.paced(self.driver.open, url, level > 0)
+            return self.paced(self.driver.open, url, level > 0, self.awaits(level))
         try:
             return self.paced(self.driver.open_clicked, url)
         except (SourceError, PlaywrightError) as error:

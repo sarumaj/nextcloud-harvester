@@ -65,9 +65,10 @@ class Driver(abc.ABC):  # pylint: disable=too-many-public-methods
     referer = ""
 
     @abc.abstractmethod
-    def open(self, url: str | None, deep: bool = False) -> Any:
+    def open(self, url: str | None, deep: bool = False, awaits: tuple[str, ...] = ()) -> Any:
         """Opens a page (None: the page the steps ended on); deep: a page below the listing,
-        which is empty when the site answers an error (else that is the run's failure)."""
+        which is empty when the site answers an error (else that is the run's failure); awaits:
+        the selectors of what the page lists, which the browser waits for (tabs.listing_shown)."""
 
     @abc.abstractmethod
     def trouble(self, page: Any) -> str:
@@ -135,13 +136,13 @@ class Driver(abc.ABC):  # pylint: disable=too-many-public-methods
         raise SourceError(f"the JSON listing reads its page's {kind} {name}, which only the browser can")
 
     @abc.abstractmethod
-    def next(self, page: Any, selector: str) -> Any:
-        """The page after this one (its link clicked or followed), or None."""
+    def next(self, page: Any, selector: str, awaits: tuple[str, ...] = ()) -> Any:
+        """The page after this one (its link clicked or followed), or None; awaits as open's."""
 
     @abc.abstractmethod
-    def numbered(self, page: Any, selector: str, counted: int) -> Any:
+    def numbered(self, page: Any, selector: str, counted: int, awaits: tuple[str, ...] = ()) -> Any:
         """The page numbered one higher than this one in the pagination (harvester.pagination),
-        or None; counted is the walk's count of the listing's pages so far."""
+        or None; counted is the walk's count of the listing's pages so far, awaits as open's."""
 
     @abc.abstractmethod
     def address(self, page: Any) -> str:
@@ -182,7 +183,7 @@ class HttpDriver(Driver):
                 cookie["name"], cookie["value"], domain=cookie.get("domain", ""), path=cookie.get("path", "/")
             )
 
-    def open(self, url: str | None, deep: bool = False) -> Any:
+    def open(self, url: str | None, deep: bool = False, awaits: tuple[str, ...] = ()) -> Any:
         for _ in range(download.MAX_WAITS + 1):
             text = ""
             try:
@@ -263,7 +264,7 @@ class HttpDriver(Driver):
         found = [(self._address(link, base), link) for link in page.soup.select(selector)]
         return [(url, text, [near.soup_value(link, spec) for spec in specs]) for (url, text), link in found if url]
 
-    def next(self, page: Any, selector: str) -> Any:
+    def next(self, page: Any, selector: str, awaits: tuple[str, ...] = ()) -> Any:
         found = self.links(page, selector)
         if found:
             return self.open(found[0][0], deep=True)
@@ -275,7 +276,7 @@ class HttpDriver(Driver):
             )
         return None
 
-    def numbered(self, page: Any, selector: str, counted: int) -> Any:
+    def numbered(self, page: Any, selector: str, counted: int, awaits: tuple[str, ...] = ()) -> Any:
         box = page.soup.select_one(selector)
         base = self._base(page)
         found = pagination.following(str(box) if box else "", page.url, counted)

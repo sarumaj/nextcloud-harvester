@@ -198,9 +198,11 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   A next without `kind` is the single link it always was.
 - **Scroll to load more:** the step `{"action": "scroll"}` (`"rounds"`: at most 1 to 100, 20 by
   default) scrolls the page to its end until it stops growing (no new links, elements or
-  height two rounds in a row, or after a minute), for a listing that loads more as it is
-  scrolled. The listing the steps end on is read in their tab, as they left it; with a kept
-  session the sign-in is skipped but the steps after it still run. Ordinary
+  height two rounds in a row, each round waiting half a second, or up to three seconds on a page
+  that never goes quiet; or after a minute), for a listing that loads more as it is scrolled; a
+  **Load more** button's clicks wait alike. The listing the steps end on is read in their tab,
+  as they left it; with a kept session the sign-in is skipped but the steps after it still run.
+  Ordinary
   scrolling is never recorded: a position depends on the window's size and the page's state,
   and replays wrongly in a job's window; a **Load more** button is a click, recorded as one.
 - **Steps in frames:** recorder.js runs in every frame of the page, cross-origin ones (a consent
@@ -303,6 +305,11 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   and the next step's element. The replay waits for both (the step's time), then a short while
   for the network, instead of up to 15 seconds for a page that never goes quiet. A step without
   `wait` waits for the network as before.
+- **Listing pages** are read once their level's links (or one of their alternatives, or the
+  element a `wait_for` waits for) are on the page, a next page once they changed, and then a
+  short while (two seconds at most) for what a script still loads, not up to 15 seconds for a
+  page that never goes quiet (analytics, polling). A page whose links do not show within five
+  seconds (a sign-in, a listing built slowly) still gets the network's whole wait.
 - **Values:** the download URL (`{url}/download`), the file's name
   (`{year}/iX {year}-{issue:02d}`) and the tags (`{year}`) are templates of the link's values:
   the pattern's groups and `url`, `text`, `page`, `host`, `filename`, `stem`, `ext`, and in the
@@ -341,7 +348,7 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   values for the levels below; the elements are told apart by their text and their place. The
   job clicks each in turn, takes where it lands (its tab at another address, a new tab or
   popup, or the page changed in place: a single-page app's route, a dialog), waits for the
-  network to go quiet and for the next level's elements there (five seconds at most), reads the
+  next level's elements there (five seconds, then for the network to go quiet), reads the
   next level, and returns to the listing: the new tab closed; else **Back** (after an address)
   or **Escape** (after a change in place) while that shows the listing as it was (its elements,
   their texts, no more of the next level's); else the listing opened again at its address with

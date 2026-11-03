@@ -28,8 +28,9 @@ from typing import Any, NamedTuple
 
 from playwright.sync_api import Error as PlaywrightError
 
+from .. import selectors
 from .base import SourceError, WebPage
-from .tabs import SHORT_IDLE, settle
+from .tabs import SHORT_IDLE, found_elements, listing_shown, settle
 
 # The elements a click link or level matches: their text (a button's value, an icon's label), in
 # the page's order.
@@ -180,11 +181,14 @@ def _return_to(page: Any, address: str) -> None:
 def land(target: Target, timeout: float) -> Landing:
     """Clicks the target's element and waits within timeout (ms) for where it lands: a tab or
     popup it opened, its tab at another address, or its page changed in place; then for the next
-    level's elements there (ARRIVE_WAIT at most). SourceError when the click changed nothing."""
+    level's elements there (tabs.listing_shown, and ARRIVE_WAIT at most after it). SourceError when
+    the click changed nothing."""
     page = target.page
     element = element_at(page, target.selector, target.index, target.text)
     texts = page.eval_on_selector_all(target.selector, TARGETS)
     count = _count(page, target.wait_for)
+    # What the next level's selector finds before: a change in place shows it once that changed.
+    shown = found_elements(page, (target.wait_for,)) if target.wait_for else None
     tabs = len(page.context.pages)
     before = page.url
     with contextlib.suppress(PlaywrightError):
@@ -211,7 +215,10 @@ def land(target: Target, timeout: float) -> Landing:
         page.wait_for_timeout(POLL)
     with contextlib.suppress(PlaywrightError):
         landed.wait_for_load_state("domcontentloaded")
-    settle(landed)
+    if target.wait_for:
+        listing_shown(landed, (target.wait_for,), shown if how == "changed" else None)
+    else:
+        settle(landed)
     if target.wait_for:
         with contextlib.suppress(PlaywrightError):
             landed.wait_for_selector(target.wait_for, state="attached", timeout=ARRIVE_WAIT)
@@ -257,5 +264,5 @@ def back(landing: Landing, expand: Callable[[Any, dict], None]) -> None:
     if _listed_again(landing):
         return
     page.goto(target.address, wait_until="domcontentloaded")
-    settle(page)
+    listing_shown(page, tuple(selectors.candidates(target.spec)))
     expand(page, target.spec)

@@ -52,7 +52,9 @@ from .tabs import (
     PopupMissing,
     Tabs,
     arrived,
+    found_elements,
     in_frame,
+    listing_shown,
     load_more,
     scroll_to_load,
     settle,
@@ -220,7 +222,7 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes,too
         signing = recipes.sign_in_steps(steps)
         if session and start and signing:
             self.main.goto(start, wait_until="domcontentloaded")
-            settle(self.main)
+            settle(self.main, pause=0)
             if not self.signed_out(self.main):
                 for number, step in todo[:signing]:
                     self._tell(step_event(number, step, "session"))
@@ -335,7 +337,7 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes,too
     def session(self) -> dict | None:
         return self.context.storage_state()  # type: ignore[return-value]
 
-    def open(self, url: str | None, deep: bool = False) -> Any:
+    def open(self, url: str | None, deep: bool = False, awaits: tuple[str, ...] = ()) -> Any:
         if url is None:
             return self.main
         if not self._reused and url == self._start and self.main.url.split("#")[0] == url.split("#")[0]:
@@ -350,7 +352,7 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes,too
                 raise SourceError(f"{url}: {why}") from error
             raise
         self.__dict__.setdefault("_answers", {})[id(page)] = (url, answer.status if answer else 200)
-        settle(page)
+        listing_shown(page, awaits)
         return page
 
     def expand(self, page: Any, spec: dict) -> None:
@@ -420,20 +422,18 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes,too
         self.__dict__.setdefault("_landings", []).append(landing)
         return landing.page
 
-    def next(self, page: Any, selector: str) -> Any:
+    def next(self, page: Any, selector: str, awaits: tuple[str, ...] = ()) -> Any:
         link = page.query_selector(selector)
         if not link:
             return None
-        link.click()
-        settle(page)
+        clicked(page, link.click, awaits)
         return page
 
-    def numbered(self, page: Any, selector: str, counted: int) -> Any:
+    def numbered(self, page: Any, selector: str, counted: int, awaits: tuple[str, ...] = ()) -> Any:
         found = pagination.following(page.evaluate(OUTER_HTML, selector), page.url, counted)
         if not found or not page.evaluate(pagination.MARK_NUMBER, [selector, str(found[0])]):
             return None
-        page.click("[data-harvester-next]")
-        settle(page)
+        clicked(page, lambda: page.click("[data-harvester-next]"), awaits)
         return page
 
     def address(self, page: Any) -> str:
@@ -490,6 +490,18 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes,too
                     self._guard.stop()
             finally:
                 browser.SLOTS.release("job")
+
+
+def clicked(page: Any, click: Callable[[], None], awaits: tuple[str, ...]) -> None:
+    """Clicks to the listing's next page and waits for it: until what the level's selectors
+    (awaits) find changed (tabs.listing_shown), else (none) for the network to go quiet."""
+    if not awaits:
+        click()
+        settle(page)
+        return
+    before = found_elements(page, awaits)
+    click()
+    listing_shown(page, awaits, before)
 
 
 def skipped_line(skipped: dict) -> str:
@@ -836,16 +848,17 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
         """Keeps a picture of the page where the observer saw something go wrong (noticed)."""
         self.noticed = snapshot(page, what)
 
-    def next_page(self, driver: Driver, page: Any, after: dict) -> Any:
+    def next_page(self, driver: Driver, page: Any, after: dict, awaits: tuple[str, ...] = ()) -> Any:
         """The page after this one by the next page's selector, else (not on the page) by the
-        first alternative that is (a repair, said once); None at the last page."""
+        first alternative that is (a repair, said once); None at the last page. awaits: what the
+        listing's level lists, which the browser waits for to change (tabs.listing_shown)."""
         tries = selectors.candidates(after)
         if len(tries) > 1 and not self._finds(driver, page, tries[0]):
             for alternative in tries[1:]:
                 if self._finds(driver, page, alternative):
                     self._repaired("next page", tries[0], alternative)
-                    return driver.next(page, alternative)
-        return driver.next(page, tries[0])
+                    return driver.next(page, alternative, awaits)
+        return driver.next(page, tries[0], awaits)
 
     @staticmethod
     def _finds(driver: Driver, page: Any, selector: str) -> bool:

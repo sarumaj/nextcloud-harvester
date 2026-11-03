@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Part of the site source's replay (harvester.sources.site): how long a step settles, what a
-replayed step waits for (arrived), the tabs the steps act in (Tabs): the first, and a sign-in's
-popup a step went on in; the frame a step acts in (in_frame); a step's pause and its tries
-(with_tries), and the events the replay tells of each step (step_event); a page that loads more
-as it is scrolled (scroll_to_load) or with a button (load_more); and a page that prepares a
-file first, polled (and reloaded) until its element shows (wait_until_shown).
+replayed step waits for (arrived) and a listing page for its elements (listing_shown), the tabs
+the steps act in (Tabs): the first, and a sign-in's popup a step went on in; the frame a step
+acts in (in_frame); a step's pause and its tries (with_tries), and the events the replay tells
+of each step (step_event); a page that loads more as it is scrolled (scroll_to_load) or with a
+button (load_more), each round until it grew (grown); and a page that prepares a file first,
+polled (and reloaded) until its element shows (wait_until_shown).
 """
 
 import re
@@ -34,8 +35,24 @@ PAGE_SIZE = (
     "() => [document.links.length, document.getElementsByTagName('*').length,"
     " (document.scrollingElement || document.body).scrollHeight]"
 )
+# How long a scroll or a Load more button may take to add to the page before the round counts
+# as one that loaded nothing (ms), and how often the page is looked at meanwhile (ms).
+GROW_WAIT = 3_000
+GROW_POLL = 100
 # How often a page that prepares a file is looked at for its element (ms).
 WAIT_POLL = 1_000
+# How long a listing page may take to show its level's elements (or a click to change them)
+# before the walk waits for the network to go quiet instead, as long as settle would (ms), and
+# how often it looks for them meanwhile (ms).
+LISTING_WAIT = 5_000
+LISTING_POLL = 100
+# What a level's elements are on the page: their addresses and texts, which the page's next
+# page changes.
+ELEMENTS = "els => els.map(e => (e.getAttribute('href') || '') + '\\t' + (e.textContent || '').trim()).join('\\n')"
+# How long settle waits by default for the network to go quiet (ms), after a pause for what a
+# click starts (ms).
+IDLE = 15_000
+CLICK_PAUSE = 500
 SCROLL_DOWN = "() => window.scrollTo(0, (document.scrollingElement || document.body).scrollHeight)"
 
 
@@ -153,14 +170,76 @@ def in_frame(page, frames: list[dict], timeout: float):
     return target
 
 
-def settle(page, idle: float = 15_000) -> None:
+def settle(page, idle: float = IDLE, pause: float = CLICK_PAUSE) -> None:
     """Waits for what a step started: a new page, or the requests of a script (the network quiet,
-    idle ms at most)."""
-    page.wait_for_timeout(500)
+    idle ms at most), after pause ms for a navigation to begin (none after a goto, which waited
+    for its document)."""
+    if pause:
+        page.wait_for_timeout(pause)
     try:
         page.wait_for_load_state("networkidle", timeout=idle)
     except Exception:  # pylint: disable=broad-exception-caught
         pass  # a page that never goes quiet (ads, polling) is used as it is
+
+
+def found_elements(page, selectors: list[str] | tuple[str, ...]) -> str | None:
+    """What the selectors (a level's and its alternatives) find on the page, as one text ("" when
+    none finds anything); None while the page cannot be read (between two documents)."""
+    found = []
+    for selector in selectors:
+        try:
+            found.append(page.eval_on_selector_all(selector, ELEMENTS))
+        except PlaywrightError:
+            return None
+    return "\n\n".join(found) if any(found) else ""
+
+
+def listing_shown(page, selectors: list[str] | tuple[str, ...], before: str | None = None) -> None:
+    """Waits for a listing page (opened, or changed by a click) to show its level's elements:
+    until one of the selectors finds any (after a click on the page itself: until what they find
+    is no longer before), then for the network to go quiet SHORT_IDLE ms at most. Without
+    selectors, or when nothing shows within LISTING_WAIT, for the network to go quiet as long as
+    settle does in all (a page that builds its listing slowly, a sign-in page)."""
+    started = time.monotonic()
+    if selectors:
+        while (time.monotonic() - started) * 1000 < LISTING_WAIT:
+            found = found_elements(page, selectors)
+            if found and found != before:
+                settle(page, SHORT_IDLE, pause=0)
+                return
+            page.wait_for_timeout(LISTING_POLL)
+    settle(page, max(SHORT_IDLE, IDLE - (time.monotonic() - started) * 1000), pause=0)
+
+
+def grown(page, before: Any) -> bool:
+    """Whether the page grew past its size before (PAGE_SIZE) within GROW_WAIT ms: once it did,
+    until it stops growing for a moment (what a scroll loads comes in a batch). A page whose
+    network went quiet once (Playwright's "networkidle", which stays reached) and that did not grow
+    within CLICK_PAUSE ms grew not, as settle took it before; one that never goes quiet (analytics,
+    polling) is given GROW_WAIT."""
+    started = time.monotonic()
+    size = before
+    while (elapsed := (time.monotonic() - started) * 1000) < GROW_WAIT:
+        page.wait_for_timeout(GROW_POLL)
+        try:
+            now = page.evaluate(PAGE_SIZE)
+        except PlaywrightError:
+            continue  # between two documents (a button that loads a new page)
+        if now == size and size != before:
+            return True
+        size = now
+        if size == before and elapsed >= CLICK_PAUSE and _quiet(page):
+            return False
+    return size != before
+
+
+def _quiet(page) -> bool:
+    """Whether the page's network went quiet once ("networkidle" reached)."""
+    try:
+        page.wait_for_load_state("networkidle", timeout=1)
+        return True
+    except Exception:  # pylint: disable=broad-exception-caught
+        return False
 
 
 def arrived(page, step: dict, timeout: float) -> None:
@@ -240,22 +319,20 @@ def load_more(page, selector: str) -> None:
             button.click()
         except PlaywrightError:
             return  # it went away or was covered as the page grew: what loaded is read
-        settle(page)
-        still = still + 1 if page.evaluate(PAGE_SIZE) == before else 0
+        still = 0 if grown(page, before) else still + 1
         if still >= SCROLL_STILL or time.monotonic() > deadline:
             return
 
 
 def scroll_to_load(page, rounds: int) -> None:
     """Scrolls to the page's end until it stops growing (no new links, elements or height for
-    SCROLL_STILL rounds), at most rounds times or SCROLL_SECONDS."""
+    SCROLL_STILL rounds of GROW_WAIT each), at most rounds times or SCROLL_SECONDS."""
     deadline = time.monotonic() + SCROLL_SECONDS
     still = 0
     for _ in range(rounds):
         before = page.evaluate(PAGE_SIZE)
         page.evaluate(SCROLL_DOWN)
-        settle(page)
-        still = still + 1 if page.evaluate(PAGE_SIZE) == before else 0
+        still = 0 if grown(page, before) else still + 1
         if still >= SCROLL_STILL or time.monotonic() > deadline:
             return
 
