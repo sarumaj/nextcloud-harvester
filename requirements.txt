@@ -1,13 +1,13 @@
 beautifulsoup4==4.15.0
 croniter==6.2.4
 feedparser==6.0.14
-gallery-dl==1.32.17
+gallery-dl==1.32.19
 httpx==0.28.1
 nc_py_api[app]==0.30.3
 playwright==1.64.1
 # The disguised browser (the website source's option Disguise the browser): Patchright, Playwright
 # patched against bot checks, at Playwright's version (the same Chromium, shared).
-patchright==1.64.1
+patchright==1.64.4
 # The public suffixes (co.uk, github.io) the cookies panel never sets a cookie for: its bundled
 # list, offline.
 publicsuffixlist==1.1.2.20261101
@@ -20,4 +20,4 @@ socksio==1.0.0
 tzdata==2026.5
 # yt-dlp's impersonation (the media source's option Impersonate a browser), at the version yt-dlp pins.
 curl-cffi==0.16.3
-yt-dlp==2026.10.21
+yt-dlp==2026.10.26
