@@ -1,0 +1,31 @@
+---
+# A review of a pull request by Claude Code, on request: asking claude for a
+# review starts it, and the request is taken off again with the review. Copy this
+# file to .forgejo/workflows/ai-review.yml of a repository of dawid; the steps
+# are the action beside it, the tokens the owner's secrets. pull_request_target:
+# the workflow is the base branch's, not the pull request's, so a branch can
+# neither change it to read the secrets nor run an older one.
+name: AI review
+"on":
+  pull_request_target:
+    types: [review_requested]
+
+concurrency:
+  group: ai-review-target-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    # Only when the review is asked of claude. Not for a fork's pull request:
+    # pull_request_target would hand it the secrets.
+    if: >-
+      github.event.requested_reviewer.login == 'claude'
+      && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: docker
+    timeout-minutes: 20
+    steps:
+      - name: Review
+        uses: https://git.ciepiela.org/dawid/ai-review@main
+        with:
+          token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          forgejo-token: ${{ secrets.AI_REVIEW_FORGEJO_TOKEN }}

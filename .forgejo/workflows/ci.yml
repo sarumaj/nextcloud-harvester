@@ -1,11 +1,14 @@
 ---
 # The tests (no Nextcloud, no network; the browser's in Chromium against a fake site), formatting and lint of the app's Python, its
-# page's script and its shell scripts.
+# page's script and its shell scripts, info.xml against the app store's schema, and the Markdown.
 name: CI
+# A failed job mails whoever started the run. Renovate's bot has no mailbox: when its
+# branch fails, Renovate opens a pull request, which mails the repository's watchers.
 enable-email-notifications: true
 "on":
   push:
-    branches: [main]
+    # Renovate's branches too: it merges its updates only once their checks passed.
+    branches: [main, "renovate/**"]
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
@@ -23,12 +26,12 @@ jobs:
     steps:
       - name: Check out
         run: |
-          apt-get update -qq && apt-get install -qq -y git nodejs shellcheck curl >/dev/null
+          apt-get update -qq && apt-get install -qq -y git nodejs shellcheck curl libxml2-utils >/dev/null
           git init -q . && git remote add origin "${{ github.server_url }}/${{ github.repository }}.git"
           git fetch -q --depth 1 origin "${{ github.sha }}"
           git checkout -q FETCH_HEAD
 
-      - name: Install
+      - name: Install the dependencies
         run: |
           pip install -q -r requirements-dev.txt
           playwright install --with-deps chromium >/dev/null
@@ -40,17 +43,39 @@ jobs:
           python3 -c "import zipfile; z = zipfile.ZipFile('/tmp/rclone.zip'); open('/usr/local/bin/rclone', 'wb').write(z.read(next(n for n in z.namelist() if n.endswith('/rclone'))))"
           chmod +x /usr/local/bin/rclone
 
-      - name: Tests
+      # The store's schema does not know AppAPI's routes (external-app/routes), which AppAPI
+      # reads from info.xml: everything else is checked.
+      - name: Check info.xml against the app store's schema
+        run: |
+          curl -fsSL -o /tmp/info.xsd https://apps.nextcloud.com/schema/apps/info.xsd
+          sed '/<routes>/,/<\/routes>/d' appinfo/info.xml > /tmp/info.xml
+          xmllint --noout --schema /tmp/info.xsd /tmp/info.xml
+
+      - name: Run the tests
         run: python -m pytest -q
 
-      - name: Formatting
+      - name: Check the formatting
         run: black --check ex_app tests
 
-      - name: Lint
+      - name: Lint the Python
         run: pylint ex_app/lib tests
 
-      - name: Page script
+      - name: Check the page's scripts parse
         run: node --check ex_app/js/harvester-main.js && node --check ex_app/lib/harvester/browser/recorder.js
 
-      - name: Shell scripts
+      - name: Check the shell scripts
         run: shellcheck start.sh healthcheck.sh
+
+  markdown:
+    runs-on: docker
+    container: docker.io/library/node:24-bookworm
+    timeout-minutes: 10
+    steps:
+      - name: Check out
+        run: |
+          git init -q . && git remote add origin "${{ github.server_url }}/${{ github.repository }}.git"
+          git fetch -q --depth 1 origin "${{ github.sha }}"
+          git checkout -q FETCH_HEAD
+
+      - name: Lint the Markdown
+        run: npx --yes markdownlint-cli2 "*.md" "docs/**/*.md"
