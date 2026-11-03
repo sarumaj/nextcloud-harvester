@@ -7,7 +7,8 @@ browser is driven with the async API on the app's event loop. The test runs the 
 thread, and Blocking hands each of its calls over to the loop and waits for the answer, so the
 walk, its steps and its pages are the job's, not a second implementation. The test has a browser
 context of its own (the recorder's session, its guard, no recorder.js: nothing it does is
-recorded), which the recorder closes when the test ends or is stopped.
+recorded), which the recorder closes when the test ends or is stopped (Trials: the recorder's part
+that starts, shows and stops it).
 
 As the job runs (as_job), the context starts empty, at the recipe's window size, with the job's
 account (resolved by the app from the saved job, never sent to the page): the sign-in steps are
@@ -23,17 +24,26 @@ the test's time.
 """
 
 import asyncio
+import base64
 import inspect
+import json
 import threading
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from playwright.async_api import Browser, BrowserContext, Page
+
+from .. import browser
 from .. import cookies as cookie_jar
 from .. import needs
+from ..recipe import uses_browser
 from ..sources import download, site
-from ..sources.base import Stopped
+from ..sources.base import SourceError, Stopped
+from . import VIEWPORT
 
+# Seconds closing a browser or a context may take.
+CLOSE_TIMEOUT = 10
 # How long a test may take in all (s), and one call of it at most (a step's own time limit, and
 # some to spare for the loop).
 TRIAL_SECONDS = 180
@@ -235,3 +245,146 @@ def survey(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         ]
         result["probe"] = probe(driver, files[0]["url"], source.settings) if files else None
     return result
+
+
+# The job's settings the recipe's test takes from the form: the file names, the pages, and what a
+# download accepts (the file's extension comes from its type).
+TRIAL_SETTINGS = (
+    "path",
+    "download_url",
+    "max_pages",
+    "browser",
+    "http1",
+    "file_type",
+    "min_size",
+    "max_size",
+    "wait_pattern",
+)
+
+
+def recipe_size(recipe: dict) -> tuple[object, object]:
+    """The window a recipe was recorded in (its "viewport"), else the jobs' default."""
+    size = recipe.get("viewport") if isinstance(recipe.get("viewport"), dict) else VIEWPORT
+    return size.get("width"), size.get("height")
+
+
+class Trials:  # pylint: disable=too-few-public-methods
+    """The recorder's test of the recipe (mixed into Recorder, whose state and methods these
+    are): started, shown on the screen, stopped, and answered when a step asks the person."""
+
+    send: Callable[[dict], Awaitable[None]]
+    _browser: Browser | None
+    _context: BrowserContext | None
+    _page: Page | None
+    _home: bool
+    _desk: needs.Desk
+    _trial_stop: threading.Event | None
+    _trial: asyncio.Task | None
+    _trial_context: BrowserContext | None
+    _trial_size: dict | None
+
+    recipe: dict
+
+    async def _new_context(self, session: dict | None, viewport: dict | None = None) -> BrowserContext:
+        """A browser context of the recorder's (its guard, its options)."""
+
+    async def _show(self, page: Page) -> None:
+        """Shows the page on the screen (the recorder's)."""
+
+    async def test(self, message: dict, account: dict[str, str] | None = None) -> None:
+        """Starts the recipe's test (trial.py) unless one runs; its result goes to the page. With
+        the job's account (given by the app, never by the page) the test runs as the job does:
+        a fresh context at the recipe's window, the account's secrets and cookies, the first file
+        probed."""
+        if self._trial and not self._trial.done():
+            return
+        recipe = message.get("recipe") if isinstance(message.get("recipe"), dict) else self.recipe
+        given = message.get("settings") if isinstance(message.get("settings"), dict) else {}
+        settings = {key: given[key] for key in TRIAL_SETTINGS if given.get(key) not in (None, "")}
+        self._trial = asyncio.ensure_future(self._run_test(recipe, settings, account))
+
+    async def _run_test(self, recipe: dict, settings: dict, account: dict[str, str] | None = None) -> None:
+        """The test in a context of its own, shown on the screen; afterwards its context closes
+        and the screen shows the recorder's page again."""
+        assert self._context is not None and self._browser is not None
+        home, context = self._page, None
+        stop = self._trial_stop = threading.Event()
+        as_job = account is not None
+        try:
+            source = site.Site({**settings, "recipe": json.dumps(recipe)}, account or {}, None)
+            # As the job runs: no session (the sign-in is replayed), the recipe's window.
+            session = None if as_job else await self._context.storage_state()
+            self._trial_size = browser.fitted_viewport(*recipe_size(recipe)) if as_job else None
+            context = self._trial_context = await self._new_context(session, self._trial_size)  # type: ignore[arg-type]
+            context.on("page", lambda page: asyncio.ensure_future(self._show_trial(page, context, home)))
+            blocking = Blocking(context, asyncio.get_running_loop(), stop, time.monotonic() + TRIAL_SECONDS)
+            await self.send({"type": "test-started", "as_job": as_job})
+            # The test's requests over HTTP as the browser's (user agent, connection); its steps told.
+            # The test's steps that ask the person, on the test's desk.
+            via = (browser.user_agent(self._browser.version), browser.PROXY if self._home else "", self.send)
+            result = await asyncio.to_thread(survey, source, blocking, recipe, session, as_job, *via, self._desk)  # type: ignore[arg-type]
+            result["as_job"] = as_job
+            # Stopped by the person: what the stop cut short is no failure of the recipe.
+            if stop.is_set() and result.get("ended") == "failed":
+                result["ended"] = "stopped"
+                result["problems"] = result["problems"][:-1]
+            if not (uses_browser(recipe) or int(source.settings["browser"] or 0)):
+                result["http"] = True
+        except SourceError as error:
+            result = {"pages": [], "problems": [str(error)], "files": 0, "ended": "failed", "shot": None}
+        except Exception as error:  # pylint: disable=broad-exception-caught
+            result = {
+                "pages": [],
+                "problems": [] if stop.is_set() else [(str(error) or type(error).__name__).splitlines()[0]],
+                "files": 0,
+                "ended": "stopped" if stop.is_set() else "failed",
+                "shot": None,
+            }
+        finally:
+            stop.set()
+            if context is not None:
+                try:
+                    await asyncio.wait_for(context.close(), CLOSE_TIMEOUT)
+                except Exception:  # pylint: disable=broad-exception-caught
+                    pass  # the browser is closing as a whole
+            self._trial_stop = self._trial_context = self._trial_size = None
+        shot = result.pop("shot", None)
+        if shot:
+            result["shot"] = {**shot, "image": base64.b64encode(shot["image"]).decode()}
+        try:
+            if home is not None and not home.is_closed():
+                await self._show(home)
+                await self.send({"type": "url", "url": home.url})
+            await self.send({"type": "test", "result": result})
+        except Exception:  # pylint: disable=broad-exception-caught
+            pass  # the recording ended meanwhile: its browser and page are gone
+
+    async def _show_trial(self, page: Page, context: BrowserContext, home: Page | None) -> None:
+        """Shows a page of the test; once it closes, the test's newest page still open (or the
+        recorder's own)."""
+
+        async def closed(_page: Page) -> None:
+            if self._page is page:
+                pages = [other for other in context.pages if not other.is_closed()]
+                shown = pages[-1] if pages else home
+                if shown is not None and not shown.is_closed():
+                    try:
+                        await self._show(shown)
+                    except Exception:  # pylint: disable=broad-exception-caught
+                        pass  # the test's context is closing: the recorder's page comes back after
+
+        page.on("close", lambda _: asyncio.ensure_future(closed(page)))
+        try:
+            await self._show(page)
+        except Exception:  # pylint: disable=broad-exception-caught
+            pass  # closed at once (a page the walk read quickly): the next one is shown
+
+    async def _trial_message(self, kind: object, message: dict) -> None:
+        """The test's stop, or the code one of its steps asks the person for."""
+        if kind == "test-code":
+            self._desk.answer(0, str(message.get("code") or "").strip()[: needs.CODE_MAX])
+        elif self._trial_stop:
+            # The call under way ends with its pages (it may wait for a step's whole time else).
+            self._trial_stop.set()
+            if self._trial_context:
+                await self._trial_context.close()
