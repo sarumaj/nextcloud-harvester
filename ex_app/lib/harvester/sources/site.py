@@ -30,7 +30,6 @@ import time
 from collections.abc import Callable, Iterator
 from typing import Any, BinaryIO
 
-import httpx
 from playwright.sync_api import Error as PlaywrightError, Route, WebSocketRoute
 
 from .. import browser
@@ -41,7 +40,7 @@ from ..l10n import said
 from ..browser import engine
 from ..browser.guard import Guard
 from ..schedule import zone
-from . import base, download, near
+from . import base, clicks, download, near
 from .base import AuthError, ChallengeError, IMPERSONATE, Item, Option, Source, SourceError, Stopped, nap
 from .base import pattern_search
 from .download import Response
@@ -95,11 +94,9 @@ LOGIN_SCRIPT = r"""() => {
   if ([...document.querySelectorAll(fields)].some(shown)) return true
   return /(^|\/)(log-?in|sign-?in|sso|auth|oauth2?|session\/new)(\/|$)/i.test(location.pathname)
 }"""
-# The elements a click link matches: their text, in the page's order.
-TARGETS = "els => els.map(e => (e.innerText || e.value || e.getAttribute('aria-label') || '').trim())"
 
 
-class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes
+class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes,too-many-public-methods
     """Pages in Chromium: the steps replayed in the first tab, followed links in tabs of their own.
 
     With a kept session the sign-in steps (recipe.sign_in_steps) are skipped while the listing
@@ -346,31 +343,47 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes
         return [tuple(link) for link in page.eval_on_selector_all(selector, near.VALUES, specs)]
 
     def targets(self, page: Any, selector: str) -> list[str]:
-        return page.eval_on_selector_all(selector, TARGETS)
+        return page.eval_on_selector_all(selector, clicks.TARGETS)
 
     def click_download(self, trigger: tuple, dest: BinaryIO, settings: dict) -> str:
-        page, selector, index, text = trigger
-        elements = page.query_selector_all(selector)
-        texts = page.eval_on_selector_all(selector, TARGETS)
         # The element at its place, unless the page changed meanwhile: then the one of its text.
-        if index >= len(texts) or texts[index] != text:
-            index = texts.index(text) if text in texts else -1
-        if index < 0:
-            raise SourceError(f"the element to click for “{text}” ({selector}) is gone from the page")
+        page, selector, index, text = trigger
+        what = f"clicking “{text}” ({selector})"
         try:
-            with page.expect_download(timeout=STEP_TIMEOUT) as started:
-                elements[index].click()
-            got = started.value
-            path = got.path()
+            with clicks.clicked_file(page, clicks.element_at(page, selector, index, text), what, STEP_TIMEOUT) as came:
+                kind, got = came
+                if kind == "address":
+                    return self._shown_file(got, dest, settings, self.address(page))
+                path = got.path()
+                try:
+                    name = download.safe_name(got.suggested_filename) or "download"
+                    download.copy_file(str(path), dest, settings, mimetypes.guess_type(name)[0] or "")
+                finally:
+                    with contextlib.suppress(PlaywrightError):
+                        got.delete()
+                return name
         except PlaywrightError as error:
-            raise SourceError(f"clicking “{text}” ({selector}) downloaded nothing: {short_error(error)}") from error
+            raise SourceError(f"{what} downloaded nothing: {short_error(error)}") from error
+
+    def _shown_file(self, url: str, dest: BinaryIO, settings: dict, listing: str) -> str:
+        """The file a tab showed after a click (a PDF in the viewer), fetched by its address with
+        the browser's cookies and the listing as Referer, checked as a download is; its name."""
+        answer: dict[str, str] = {}
+
+        def told(response: Response) -> None:
+            answer["name"] = download.disposition_name(response.headers, response.url)
+
+        self.referer = listing
         try:
-            name = download.safe_name(got.suggested_filename) or "download"
-            download.copy_file(str(path), dest, settings, mimetypes.guess_type(name)[0] or "")
+            download.fetch(self.download, url, dest, settings, self.nap, told=told)
         finally:
-            with contextlib.suppress(PlaywrightError):
-                got.delete()
-        return name
+            self.referer = ""
+        return answer.get("name") or "download"
+
+    def open_clicked(self, target: clicks.Target) -> Any:
+        landing = clicks.land(target, STEP_TIMEOUT)
+        self.__dict__.setdefault("_landings", []).append(landing)
+        return landing.page
 
     def next(self, page: Any, selector: str) -> Any:
         link = page.query_selector(selector)
@@ -392,6 +405,11 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes
         return page.url
 
     def done(self, page: Any) -> None:
+        # A page a click landed on: back to the listing it was clicked on (the newest first).
+        landings = self.__dict__.get("_landings", [])
+        if landings and landings[-1].page is page:
+            clicks.back(landings.pop(), self.expand)
+            return
         self.__dict__.get("_answers", {}).pop(id(page), None)
         if page is not self.main:
             page.close()
@@ -402,7 +420,7 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes
         # context's own requests (context.request), which pass by its routes: the guarded client
         # checks every request and redirect on the addresses the names resolve to, and the file
         # comes in chunks, never whole into memory.
-        hooks = {"request": [session_cookies(self.context.storage_state()["cookies"])]}
+        hooks = {"request": [cookie_jar.session_cookies(self.context.storage_state()["cookies"])]}
         options = {"proxy": self.proxy} if self.proxy else {}
         headers = {"User-Agent": self.user_agent, "Accept-Language": accept_language(browser.LOCALE)}
         with download.guarded_client(
@@ -445,37 +463,6 @@ def socket_guard(route: WebSocketRoute) -> None:
     which a close from the handler would leave waiting)."""
     if browser.reachable(browser.http_address(route.url)):
         route.connect_to_server()
-
-
-def sent_with(cookie: dict, url: httpx.URL, now: float) -> bool:
-    """Whether the browser sends the cookie (storage_state's) to the address: a host's own only to
-    that host (Playwright's domain without a dot), a domain's to it and its subdomains, a secure
-    one only over https, within its path, unexpired."""
-    domain, host = str(cookie.get("domain", "")).lower(), url.host.lower()
-    within = str(cookie.get("path") or "/").rstrip("/")
-    path = url.path or "/"
-    expires = float(cookie.get("expires", -1) or -1)
-    return (
-        (host == domain or (domain.startswith(".") and f".{host}".endswith(domain)))
-        and (path == within or path.startswith(within + "/"))
-        and (url.scheme == "https" or not cookie.get("secure"))
-        and not 0 < expires < now
-    )
-
-
-def session_cookies(cookies: list[dict]) -> Callable[[httpx.Request], None]:
-    """Gives each request (a redirect's too) the browser's cookies that the browser would send
-    with it (sent_with): an HTTP client's cookie jar would send a host's own to its subdomains
-    too."""
-
-    def add(request: httpx.Request) -> None:
-        now = time.time()
-        pairs = [f"{cookie['name']}={cookie['value']}" for cookie in cookies if sent_with(cookie, request.url, now)]
-        if pairs:
-            # After those the client's own jar holds (set by the answers since).
-            request.headers["Cookie"] = "; ".join(filter(None, [request.headers.get("Cookie", ""), *pairs]))
-
-    return add
 
 
 def snapshot(page, what: str) -> dict | None:

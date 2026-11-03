@@ -4,11 +4,17 @@ extensions such as "Get cookies.txt" write it) or a Cookie header's name=value; 
 
 They go to the HTTP client, to Chromium (a website job), or as a cookies.txt file to yt-dlp and
 gallery-dl. The browser views' cookies panel writes a cookies.txt (to_text) for the account.
+A website job's downloads over HTTP send the browser's cookies as the browser would
+(session_cookies).
 """
 
 import os
 import tempfile
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
+
+import httpx
 
 
 @dataclass(frozen=True)
@@ -92,3 +98,34 @@ def to_file(cookies: list[Cookie]) -> str:
     with os.fdopen(handle, "w", encoding="utf-8") as file:
         file.write(to_text(cookies))
     return path
+
+
+def sent_with(cookie: dict, url: httpx.URL, now: float) -> bool:
+    """Whether the browser sends the cookie (storage_state's) to the address: a host's own only to
+    that host (Playwright's domain without a dot), a domain's to it and its subdomains, a secure
+    one only over https, within its path, unexpired."""
+    domain, host = str(cookie.get("domain", "")).lower(), url.host.lower()
+    within = str(cookie.get("path") or "/").rstrip("/")
+    path = url.path or "/"
+    expires = float(cookie.get("expires", -1) or -1)
+    return (
+        (host == domain or (domain.startswith(".") and f".{host}".endswith(domain)))
+        and (path == within or path.startswith(within + "/"))
+        and (url.scheme == "https" or not cookie.get("secure"))
+        and not 0 < expires < now
+    )
+
+
+def session_cookies(cookies: list[dict]) -> Callable[[httpx.Request], None]:
+    """Gives each request (a redirect's too) the browser's cookies that the browser would send
+    with it (sent_with): an HTTP client's cookie jar would send a host's own to its subdomains
+    too."""
+
+    def add(request: httpx.Request) -> None:
+        now = time.time()
+        pairs = [f"{cookie['name']}={cookie['value']}" for cookie in cookies if sent_with(cookie, request.url, now)]
+        if pairs:
+            # After those the client's own jar holds (set by the answers since).
+            request.headers["Cookie"] = "; ".join(filter(None, [request.headers.get("Cookie", ""), *pairs]))
+
+    return add

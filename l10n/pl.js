@@ -910,6 +910,7 @@ OC.L10N.register(
         "the listing (page {number}, {address}) gave nothing: {why}": "lista (strona {number}, {address}) nic nie dała: {why}",
         "a level {level} page (page {number}, {address}) gave nothing: {why}": "strona poziomu {level} (strona {number}, {address}) nic nie dała: {why}",
         "the next page {address} was read already (a loop): its listing ends": "następna strona {address} była już czytana (pętla): jej lista się tu kończy",
+        "level {level}: clicking “{element}” failed: {why}": "poziom {level}: kliknięcie „{element}” nie powiodło się: {why}",
         "level {level} found nothing (it found {found} before)": "poziom {level} nic nie znalazł (wcześniej: {found})",
         "level {level}: the pattern no longer matches (none of {found} links; {matched} matched before)": "poziom {level}: wzorzec już nie pasuje (do żadnego z linków: {found}; wcześniej pasowało: {matched})",
         "the listing found nothing (it found {found} before)": "lista nic nie znalazła (wcześniej: {found})",

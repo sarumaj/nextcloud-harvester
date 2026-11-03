@@ -6,6 +6,13 @@
 
 - The recorder's Network panel shows an answer's content: **Preview** beside each one, its JSON
   indented (the first 20 000 characters).
+- File links that are clicked (`"click": true`) give the file also when the click opens a tab
+  or popup that shows it (a PDF in the viewer, a picture) or starts its download, or takes its
+  own tab to it; checked as any download, never a web page, and the tab goes back to the listing.
+- Levels to follow that are clicked (`"click": true`): rows, cards or buttons without an address
+  that open an entry. A run clicks each, reads the next level where it lands (another address, a
+  new tab or popup, a single-page app's route, a dialog) and returns to the listing (Back,
+  Escape, else the listing opened again with its loading of more); a click that fails is a gap.
 
 ### Changed
 

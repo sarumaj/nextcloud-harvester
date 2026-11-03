@@ -49,9 +49,14 @@ and the click or key that sends it, which a kept session skips; and the steps fr
 listing (a tab, "show all", a filter), which every replay does.
 
 The file links may have "key": a template of their values ({year}-{issue}) that tells files
-apart across runs instead of their address. Their "click": true makes them elements that start
-a download when clicked (a button, a form, a script), which only the browser can do. A level
-(an entry of follow, or links) may load more of its pages before they are read: "scroll":
+apart across runs instead of their address. Their "click": true makes them elements that give
+the file when clicked (a button, a form, a script: a download, or a tab that shows the file),
+which only the browser can do. A level to follow may be clicked too ("click": true: a row, a
+card, a button that opens an entry): the next level is read where each click lands (another
+address, a new tab or popup, a dialog), and the walk goes back to the listing after it
+(harvester.sources.clicks). A level that is clicked has no addresses: its pattern is searched in
+its elements' texts, which tell them apart (with their place), as does the file links' key. A
+level (an entry of follow, or links) may load more of its pages before they are read: "scroll":
 rounds of scrolling to the end, "load_more": the element of a "Load more" button, clicked until
 it is gone (harvester.sources.site).
 
@@ -477,6 +482,8 @@ def _check_level(where: str, spec: object) -> list[str]:
         problems.append(f"{where}: rounds of scrolling from 1 to {SCROLL_ROUNDS_MAX}")
     if "load_more" in spec and not (isinstance(spec["load_more"], str) and spec["load_more"]):
         problems.append(f"{where}: the Load more button's element (selector) is text")
+    if not isinstance(spec.get("click", False), bool):
+        problems.append(f"{where}: click is true or false")
     return problems
 
 
@@ -727,8 +734,6 @@ def _check_links(links: object, recipe: dict) -> list[str]:
     if isinstance(links, dict):
         problems += _check_values("file links", links.get("values"))
         problems += _check_key(links, recipe)
-        if not isinstance(links.get("click", False), bool):
-            problems.append("file links: click is true or false")
     return problems
 
 
@@ -769,12 +774,11 @@ def token_warnings(recipe: dict) -> list[Said]:
 
 def uses_browser(recipe: dict) -> bool:
     """Whether the recipe needs the browser: it has steps to replay, a next page or numbered
-    pages that are buttons (clicked, no address to fetch), file links that are clicked to
-    download, or a level that loads more by scrolling or with a button."""
+    pages that are buttons (clicked, no address to fetch), file links or links to follow that
+    are clicked, or a level that loads more by scrolling or with a button."""
     after = recipe.get("next") or {}
     buttons = isinstance(after, dict) and bool(after.get("buttons"))
-    links = recipe.get("links") or {}
-    clicked = isinstance(links, dict) and bool(links.get("click"))
+    clicked = any(spec.get("click") for spec in levels(recipe))
     loading = any("scroll" in spec or "load_more" in spec for spec in levels(recipe))
     return bool(recipe.get("steps")) or buttons or clicked or loading
 

@@ -79,11 +79,17 @@ class Driver(abc.ABC):
 
     @abc.abstractmethod
     def targets(self, page: Any, selector: str) -> list[str]:
-        """The texts of the elements a click link matches."""
+        """The texts of the elements a level that is clicked matches (its file links, or links to
+        follow)."""
 
     @abc.abstractmethod
     def click_download(self, trigger: tuple, dest: BinaryIO, settings: dict) -> str:
         """Clicks the element and writes the file it downloads to dest; returns the file's name."""
+
+    def open_clicked(self, target: Any) -> Any:
+        """Opens what an element of a level to follow shows when clicked (clicks.Target): the page
+        to read, which done() returns from to the listing. Only the browser clicks."""
+        raise SourceError(f"the links to follow ({target.selector}) are clicked, which only the browser can")
 
     def sign_in_again(self) -> bool:
         """Signs in anew (the session ended in the middle of a run); False without a sign-in."""
@@ -198,9 +204,7 @@ class HttpDriver(Driver):
             raise SourceError(f"{page.url}: the recipe loads more of its pages, which only the browser can")
 
     def targets(self, page: Any, selector: str) -> list[str]:
-        raise SourceError(
-            f"{page.url}: the file links ({selector}) are clicked to download, which only the browser can"
-        )
+        raise SourceError(f"{page.url}: the elements {selector} are clicked, which only the browser can")
 
     def click_download(self, trigger: tuple, dest: BinaryIO, settings: dict) -> str:
         raise SourceError(f"the file links ({trigger[1]}) are clicked to download, which only the browser can")

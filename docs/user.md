@@ -273,11 +273,17 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   `{year}`, `{year-1}`, `{month:02d}`, `{day}`; other braces are typed as they are. The file
   links may have `"key": "{year}-{issue}"`, a template of their values that tells files apart
   instead of their address (for addresses that change), and `"click": true` for elements that
-  start a download when clicked (a button, a form, a script, a blob; no address): the job clicks
-  each in the browser, its pattern searched in the element's text, and keeps the file the browser
-  downloads, checked as any download (its types, its smallest and largest size, before anything
-  is copied); `{disposition}` is the name the browser was given, and such a file is told apart
-  by its listing and its text unless the recipe has a key. Each level (an entry of `follow`, or
+  give the file when clicked (a button, a form, a script, a blob; no address): the job clicks
+  each in the browser, its pattern searched in the element's text (an icon's `aria-label` or
+  `title` where it has none), and keeps what the click gives: the browser's download (also one a
+  tab or popup it opened starts, or the page it opened starts a moment later), or the file a tab
+  or popup it opened shows (a PDF in the viewer, a picture), or the file it took its own tab to;
+  a file a tab shows is fetched by its address with the browser's cookies, as other file links
+  are. Each is checked as any download (its types, its smallest and largest size, before
+  anything is copied; never a web page: a click that only leads to one fails its file after ten
+  seconds); the tabs it opened close and its own tab goes back to the listing. `{disposition}`
+  is the name the file came with, and such a file is told apart by its listing and its text
+  unless the recipe has a key. Each level (an entry of `follow`, or
   `links`) may load more of its pages before they are read: `"scroll": 20` (rounds, as the
   scroll step) and `"load_more": "button.more"`, clicked until it is gone or the page stops
   growing (50 times or a minute at most). These need the browser, as does a next page that is a
@@ -285,6 +291,23 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   A recipe is checked when the job is saved: the kinds of its parts (text, numbers, lists), the
   actions, credentials (`username`, `password`, `totp`) and keys of its steps (`Enter`, `Tab`,
   `Control+A`, one character, ...), its dates, the next page's level, the key's values.
+- **Levels that are clicked** (`harvester/sources/clicks.py`): a level of links to follow may
+  have `"click": true` for elements without an address that open an entry (a row, a card, a
+  button): `{"selector": "tr.invoice", "pattern": "^Invoice (?P<number>\\d+)", "click": true}`.
+  Its pattern is searched in each element's text (as a clicked file link's), whose groups are
+  values for the levels below; the elements are told apart by their text and their place. The
+  job clicks each in turn, takes where it lands (its tab at another address, a new tab or
+  popup, or the page changed in place: a single-page app's route, a dialog), waits for the
+  network to go quiet and for the next level's elements there (five seconds at most), reads the
+  next level, and returns to the listing: the new tab closed; else **Back** (after an address)
+  or **Escape** (after a change in place) while that shows the listing as it was (its elements,
+  their texts, no more of the next level's); else the listing opened again at its address with
+  its level's `scroll` and `load_more` done again. Then the next element is found by its place,
+  else by its text. A click that changes nothing within the step's time, or whose element is
+  gone, is a gap of the run (`level 1: clicking “Invoice 7” failed: …` in the log), and the
+  walk goes on. The limits: a listing opened again starts at its address, so pages reached by
+  buttons without an address (`"buttons": true`) and steps after its address are not done
+  again; an element needs a text (or an `aria-label`, a `title`).
 - **Values from the page** (`patterns.page_values`): a level of links to follow or the file
   links may take `"values"` from the page around each link, not only from its address: the
   link's text, an attribute, or an element near it (`{"name": "date", "closest": "tr",

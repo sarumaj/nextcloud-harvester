@@ -8,16 +8,24 @@ listing (a loop); a page that should list something and shows a sign-in, an erro
 page is a gap, which keeps the run from counting as a complete pass. The file links may be a
 JSON listing instead of a page's (near.json_pages), and a level's links may carry values read
 from the page around them (patterns.page_values).
+
+A level that is clicked ("click": true) has elements without an address (a button, a row, a
+card): each is told apart by its text (the level's pattern is searched in it) and its place,
+known by the listing's address and its text, and its next level is read where its click lands
+(clicks.land), after which the walk returns to the listing (Driver.done: clicks.back).
 """
 
 import dataclasses
 from collections.abc import Callable, Generator, Iterator
 from typing import Any
 
+from playwright.sync_api import Error as PlaywrightError
+
 from .. import jsonlist, patterns
 from ..l10n import said
 from . import near
 from .base import ChallengeError, Item, SourceError, pattern_search
+from .clicks import Target
 
 # The seen key a run records once it has gone through the whole site (not stopped by
 # max_items): from then on, a listing of known files ends the run (stop_at_seen).
@@ -78,9 +86,9 @@ class Walk:  # pylint: disable=too-many-instance-attributes
 
     def matching(self, page: Any, spec: dict, where: tuple[int, int], values: dict) -> list[tuple[str, str, dict]]:
         """The links of the level's spec on the page (where: its level and page number) that its
-        pattern matches and that were not taken yet, with their groups; a click link's pattern
-        is searched in its text, and its place among the elements kept (_click)."""
-        clicked = spec is self.recipe["links"] and bool(spec.get("click"))
+        pattern matches and that were not taken yet, with their groups; a clicked level's pattern
+        is searched in its elements' texts, and each one's place among them kept (_click)."""
+        clicked = bool(spec.get("click")) and spec.get("kind") != "json"
         links, event = self.candidates(page, spec, clicked, where[0])
         found = [entry for index, link in enumerate(links) if (entry := self.take(spec, link, values, clicked, index))]
         kind = "follow" if spec is not self.recipe["links"] else "links"
@@ -239,11 +247,39 @@ class Walk:  # pylint: disable=too-many-instance-attributes
             return self.paced(self.driver.numbered, page, self.after["selector"], number)
         return self.paced(self.site.next_page, self.driver, page, self.after)
 
+    def clicked(self, page: Any, spec: dict, level: int, link: tuple) -> tuple:
+        """A link of a clicked level to follow as children() takes it: its element to click (a
+        Target, with the next level's selector to wait for where it lands), text and values."""
+        url, text, groups = link
+        index = groups.pop("_click")
+        after = self.follow[level + 1] if level + 1 < len(self.follow) else self.recipe["links"]
+        return Target(page, spec["selector"], index, text, url, spec, str(after.get("selector") or "")), text, groups
+
+    def open_listing(self, url: Any, level: int) -> Any:
+        """The listing's page: its address opened, or what an element clicked shows (a Target);
+        None when that click failed (a gap of the pass, said in the log)."""
+        if not isinstance(url, Target):
+            return self.paced(self.driver.open, url, level > 0)
+        try:
+            return self.paced(self.driver.open_clicked, url)
+        except (SourceError, PlaywrightError) as error:
+            if isinstance(error, ChallengeError):
+                raise
+            self.site.gaps += 1
+            why = (str(error) or type(error).__name__).splitlines()[0]
+            self.site.report(
+                "info",
+                said("level {level}: clicking “{element}” failed: {why}", level=level, element=url.text, why=why),
+            )
+            return None
+
     def walk(self, url: str | None, level: int, values: dict, outcome: dict) -> Iterator[Item]:
         """A listing at the level, page after page; outcome tells whether it found files and
         whether any was new."""
         spec = self.follow[level] if level < len(self.follow) else self.recipe["links"]
-        page = self.paced(self.driver.open, url, level > 0)
+        page = self.open_listing(url, level)
+        if page is None:
+            return
         try:
             for number in range(1, int(self.site.settings["max_pages"]) + 1):
                 self.driver.expand(page, spec)
@@ -253,6 +289,8 @@ class Walk:  # pylint: disable=too-many-instance-attributes
                     links = self.matching(page, spec, (level, number), values)
                     if not links:
                         self.blocked(page, level, number)
+                    if spec.get("click"):
+                        links = [self.clicked(page, spec, level, link) for link in links]
                     if (yield from self.children(links, level, values, outcome)):
                         return
                 elif (yield from self.files(page, number, values, outcome, level)):
