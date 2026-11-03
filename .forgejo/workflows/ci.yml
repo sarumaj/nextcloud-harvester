@@ -35,7 +35,7 @@ jobs:
         run: |
           # As the Dockerfile: urllib3-future beside upstream urllib3, not over it.
           URLLIB3_NO_OVERRIDE=1 pip install -q --no-binary=urllib3-future -r requirements-dev.txt
-          playwright install --with-deps chromium >/dev/null
+          playwright install --with-deps --no-shell chromium >/dev/null
           # rclone for the remote source's test, the same release and check as the Dockerfile's.
           version=$(sed -n 's/^ARG RCLONE_VERSION=//p' Dockerfile)
           sha=$(sed -n 's/^ARG RCLONE_AMD64_SHA256=//p' Dockerfile)
