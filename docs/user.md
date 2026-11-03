@@ -599,7 +599,9 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   show the values, and their names, types and patterns can be changed. **Network** lists the
   page's answers in JSON to its XHR and fetch() requests, GET and POST (address, size; a POST's
   body in a few words: a GraphQL operation's name); **Preview** shows one, indented (its first
-  20 000 characters; one larger than 2 MB is not kept); **Use as the file links** makes one the
+  20 000 characters; one larger than 2 MB is not kept, and of the last 30 answers only the
+  newest 8 MB together: an older one's Preview says it is no longer kept); **Use as the file
+  links** makes one the
   JSON listing, its items, fields, date and page parameter proposed from the answer, to check and
   change: a POST's body (editable), a page counter in the body or a cursor the answer gives, and
   the headers with where each token is read from (the cookie or `<meta>` whose value it is); a

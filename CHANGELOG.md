@@ -43,6 +43,9 @@
 
 ### Changed
 
+- The recorder's **Network** panel keeps at most 8 MB of its answers' bodies together (60 MB a
+  recording before: 30 answers of up to 2 MB each), dropping the oldest first; their entries
+  stay, and the Preview of one dropped says it is no longer kept.
 - A website job with the browser downloads its files through one checked HTTP client for the
   run (its connections kept), instead of a new one for each file (some 30 ms, a new TLS
   handshake, and a copy of the browser's whole session each): each request still gets the

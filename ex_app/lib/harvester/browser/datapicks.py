@@ -28,6 +28,9 @@ PATTERN_TIMEOUT = 2.0
 # it keeps to propose a listing from (a listing is far smaller; the app's memory is shared).
 REQUESTS_KEPT = 30
 REQUEST_BODY = 2 * 1024 * 1024
+# The bodies of all of them together at most (a recording's share of the app's memory): the
+# oldest bodies are dropped first (their entries stay, a Preview of one says it is gone).
+REQUESTS_BUDGET = 8 * 1024 * 1024
 # How much of a kept answer the panel's Preview shows (characters, the JSON indented).
 PREVIEW_CHARS = 20_000
 # What a value of the page may change of its spec (the page's message), and what a JSON listing may.
@@ -42,6 +45,20 @@ PAGE_ENTRIES = """() => {
   try { storage = Object.keys(localStorage).map(key => [key, localStorage.getItem(key)]) } catch (error) {}
   return {meta, storage}
 }"""
+
+
+def within_budget(requests: list[dict]) -> list[dict]:
+    """The Network panel's answers with their bodies REQUESTS_BUDGET at most together: the oldest
+    bodies dropped first (marked dropped), the entries kept."""
+    total = sum(len(item["body"]) for item in requests if item["body"])
+    for item in requests:
+        if total <= REQUESTS_BUDGET:
+            break
+        if item["body"]:
+            total -= len(item["body"])
+            item["body"] = None
+            item["dropped"] = True
+    return requests
 
 
 def edited_part(key: str, given: object) -> dict | None:
@@ -256,7 +273,7 @@ class DataPicks:  # pylint: disable=too-few-public-methods
         entry = {"id": number, "url": response.url, "size": size, "status": response.status}
         entry |= {"method": request.method, "summary": jsonrequest.short_body(sent)}
         kept = {"body": body if body and len(body) <= REQUEST_BODY else None, "request": sent}
-        self.requests = (self.requests + [entry | kept])[-REQUESTS_KEPT:]
+        self.requests = within_budget((self.requests + [entry | kept])[-REQUESTS_KEPT:])
         await self.send({"type": "requests", "items": [{key: item[key] for key in entry} for item in self.requests]})
 
     @staticmethod
@@ -297,10 +314,13 @@ class DataPicks:  # pylint: disable=too-few-public-methods
     async def _json_preview(self, number: object) -> None:
         """A JSON answer of the Network panel shown to the person ({type: request-body, id, text,
         truncated, kept}): indented, its first PREVIEW_CHARS characters; an answer that is not JSON
-        after all as its text. kept is false for one too large to keep (REQUEST_BODY) or gone."""
+        after all as its text. kept is false for one too large to keep (REQUEST_BODY) or gone,
+        dropped true for one whose body newer answers took the place of (REQUESTS_BUDGET)."""
         chosen = next((item for item in self.requests if item["id"] == number), None)
         if chosen is None or chosen["body"] is None:
-            await self.send({"type": "request-body", "id": number, "text": "", "truncated": False, "kept": False})
+            dropped = bool(chosen and chosen.get("dropped"))
+            message = {"type": "request-body", "id": number, "text": "", "truncated": False, "kept": False}
+            await self.send(message | {"dropped": dropped})
             return
         text = await asyncio.to_thread(preview, chosen["body"])
         await self.send(

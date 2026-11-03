@@ -1926,7 +1926,7 @@
 			if (!previews.has(id)) return []
 			const shown = previews.get(id)
 			if (shown === null) return [el('p', { class: 'harvester-muted', text: t('Loading…') })]
-			if (!shown.kept) return [el('p', { class: 'harvester-muted', text: t('This answer is not kept (larger than 2 MB, or gone): its content cannot be shown.') })]
+			if (!shown.kept) return [el('p', { class: 'harvester-muted', text: shown.dropped ? t('This answer is no longer kept: newer answers took its place (the panel keeps some 8 MB of them).') : t('This answer is not kept (larger than 2 MB, or gone): its content cannot be shown.') })]
 			return [
 				el('pre', { class: 'harvester-preview', text: shown.text }),
 				...(shown.truncated ? [el('p', { class: 'harvester-muted', text: t('Only its beginning is shown.') })] : []),

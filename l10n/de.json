@@ -419,6 +419,7 @@
         "No answers in JSON yet: browse the listing, its requests show here.": "Noch keine Antworten in JSON: Durchstöbere die Übersicht, ihre Anfragen erscheinen hier.",
         "Preview": "Vorschau",
         "Use as the file links": "Als Dateilinks verwenden",
+        "This answer is no longer kept: newer answers took its place (the panel keeps some 8 MB of them).": "Diese Antwort ist nicht mehr aufbewahrt: Neuere Antworten haben ihren Platz eingenommen (das Panel bewahrt etwa 8 MB davon auf).",
         "This answer is not kept (larger than 2 MB, or gone): its content cannot be shown.": "Diese Antwort ist nicht aufbewahrt (größer als 2 MB oder nicht mehr da): Ihr Inhalt kann nicht angezeigt werden.",
         "Only its beginning is shown.": "Nur ihr Anfang wird angezeigt.",
         "Network": "Netzwerk",

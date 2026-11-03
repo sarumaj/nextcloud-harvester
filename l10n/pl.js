@@ -438,6 +438,7 @@ OC.L10N.register(
         "No answers in JSON yet: browse the listing, its requests show here.": "Nie ma jeszcze odpowiedzi w JSON: przeglądaj listę, jej zapytania pojawią się tutaj.",
         "Preview": "Podgląd",
         "Use as the file links": "Użyj jako linków do plików",
+        "This answer is no longer kept: newer answers took its place (the panel keeps some 8 MB of them).": "Ta odpowiedź nie jest już zachowana: jej miejsce zajęły nowsze odpowiedzi (panel zachowuje ich około 8 MB).",
         "This answer is not kept (larger than 2 MB, or gone): its content cannot be shown.": "Ta odpowiedź nie została zachowana (większa niż 2 MB lub już jej nie ma): nie można pokazać jej treści.",
         "Only its beginning is shown.": "Pokazano tylko jej początek.",
         "Network": "Sieć",

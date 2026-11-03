@@ -18,6 +18,7 @@ from test_recorder_features import recording, settled
 
 from harvester import jsonlist, patterns
 from harvester.browser import datapicks
+from harvester.browser.recorder import Recorder
 from harvester.recipe import check_recipe
 from harvester.sources import SourceError
 from harvester.sources import download
@@ -454,7 +455,7 @@ def test_the_network_panel_lists_json_answers_and_makes_one_the_listing():
     assert "body" not in listed[0], "the page gets the list, not the answers"
     assert previewed["type"] == "request-body" and previewed["id"] == listed[0]["id"] and previewed["kept"]
     assert previewed["text"].startswith("{\n  ") and not previewed["truncated"], "the answer indented"
-    assert gone == {"type": "request-body", "id": 999, "text": "", "truncated": False, "kept": False}
+    assert gone == {"type": "request-body", "id": 999, "text": "", "truncated": False, "kept": False, "dropped": False}
     links = chosen["recipe"]["links"]
     assert links | {"values": None} == LISTING | {"values": None, "pattern": ""}
     assert chosen["recipe"]["start"] == f"{SHOP}/app"
@@ -472,3 +473,33 @@ def test_a_preview_indents_json_and_shows_anything_else_as_text():
         == '{\n  "items": [\n    {\n      "name": "\u00e9t\u00e9"\n    }\n  ]\n}'
     )
     assert datapicks.preview(b"not json \xff") == "not json \ufffd"
+
+
+def test_the_network_panel_keeps_its_bodies_within_its_budget_dropping_the_oldest():
+    size = datapicks.REQUEST_BODY
+    entries = [{"id": number, "url": f"{SHOP}/{number}", "body": b"[]" + b" " * (size - 2)} for number in range(1, 6)]
+    entries.insert(2, {"id": 9, "url": f"{SHOP}/none", "body": None})
+    kept = datapicks.within_budget(entries)
+    assert [item["id"] for item in kept] == [1, 2, 9, 3, 4, 5], "every entry stays"
+    assert [item["id"] for item in kept if item["body"]] == [2, 3, 4, 5]
+    assert sum(len(item["body"]) for item in kept if item["body"]) <= datapicks.REQUESTS_BUDGET
+    assert kept[0]["dropped"] and "dropped" not in kept[2], "too large to keep is not dropped"
+
+    sent: list[dict] = []
+
+    async def send(message: dict) -> None:
+        sent.append(message)
+
+    recorder = Recorder(send)
+    recorder.requests = kept
+    asyncio.run(recorder._json_preview(1))
+    asyncio.run(recorder._json_preview(2))
+    assert sent[0] | {"text": ""} == {
+        "type": "request-body",
+        "id": 1,
+        "text": "",
+        "truncated": False,
+        "kept": False,
+        "dropped": True,
+    }
+    assert sent[1]["kept"] and sent[1]["text"] == "[]"
