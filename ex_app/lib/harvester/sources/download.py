@@ -79,6 +79,7 @@ DOWNLOAD_OPTIONS = {
         unit="bytes",
         minimum=0,
         suggestions=("0", "10000", "100000", "1000000"),
+        group="files",
     ),
     "max_size": Option(
         "Largest file (MB)",
@@ -87,6 +88,7 @@ DOWNLOAD_OPTIONS = {
         unit="MB",
         minimum=1,
         suggestions=("100", "1024", "4096", "16384"),
+        group="files",
     ),
     "wait_pattern": Option(
         "Wait pattern",
@@ -95,6 +97,7 @@ DOWNLOAD_OPTIONS = {
         "seconds (e.g. wait_sec=(\\d+)).",
         kind="regex",
         placeholder="wait_sec=(\\d+)",
+        group="browser",
     ),
 }
 

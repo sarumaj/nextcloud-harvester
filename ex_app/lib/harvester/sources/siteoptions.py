@@ -45,6 +45,7 @@ OPTIONS = {
         0,
         "Fetch the pages in Chromium even without steps (pages built by JavaScript).",
         kind="flag",
+        group="browser",
     ),
     "http1": Option(
         "HTTP/1.1 only",
@@ -52,6 +53,7 @@ OPTIONS = {
         "For sites whose protection cuts the browser's connection (ERR_HTTP2_PROTOCOL_ERROR): the browser "
         "speaks the older HTTP/1.1 with them, also in the recorder.",
         kind="flag",
+        group="browser",
     ),
     # Images, fonts and videos left out of the job's pages (site.LIGHT): each would come through the
     # browser's routes, uncached (the routes turn Chromium's cache off), for nothing a walk reads.
@@ -65,6 +67,7 @@ OPTIONS = {
         "the files they load.",
         kind="flag",
         before=0,
+        group="browser",
     ),
     "stealth": STEALTH,
     "consent": CONSENT,
@@ -76,6 +79,7 @@ OPTIONS = {
         kind="template",
         values=("filename", "stem", "ext", "text", "page", "host", "url"),
         suggestions=("{url}", "{url}/download", "{url}?download=1"),
+        group="files",
     ),
     "path": Option(
         "File name",
@@ -90,7 +94,12 @@ OPTIONS = {
     **download.DOWNLOAD_OPTIONS,
     "impersonate": IMPERSONATE,
     "max_pages": Option(
-        "Pages", 10, "At most this many pages of a listing.", minimum=1, suggestions=("1", "5", "10", "50")
+        "Pages",
+        10,
+        "At most this many pages of a listing.",
+        minimum=1,
+        suggestions=("1", "5", "10", "50"),
+        group="runs",
     ),
     "stop_at_seen": Option(
         "Stop at known files",
@@ -100,5 +109,6 @@ OPTIONS = {
         "taken from the end that has them. A listing over several pages is taken to start with its newest "
         "page: for one whose first page is its oldest, turn this off.",
         kind="flag",
+        group="runs",
     ),
 }

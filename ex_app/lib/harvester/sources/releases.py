@@ -78,6 +78,7 @@ class Releases(Source):
             "At most this many pages of 30 releases (the newest first).",
             minimum=1,
             suggestions=("1", "3", "10"),
+            group="runs",
         ),
         "max_releases": Option(
             "Newest releases",
@@ -86,6 +87,7 @@ class Releases(Source):
             "counted); 0: every release on the pages read.",
             minimum=0,
             suggestions=("1", "3", "10", "0"),
+            group="runs",
         ),
         "forge": Option(
             "Forge",
@@ -93,6 +95,7 @@ class Releases(Source):
             "auto: github.com, gitlab.com and codeberg.org by their name, another server asked (Forgejo or Gitea, "
             "then GitLab).",
             choices=FORGES,
+            group="browser",
         ),
         **download.DOWNLOAD_OPTIONS,
         "impersonate": IMPERSONATE,

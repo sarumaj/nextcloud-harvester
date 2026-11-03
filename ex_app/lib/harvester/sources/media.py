@@ -117,6 +117,7 @@ class Media(Source):
                 "ba[ext=m4a]/ba/b",
                 "ba/b",
             ),
+            group="files",
         ),
         "max_entries": Option(
             "Entries per run",

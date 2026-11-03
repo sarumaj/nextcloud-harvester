@@ -245,6 +245,11 @@ class Option:
     # What a job saved before the option existed has instead of default (None: the default), so
     # that a new option on by default leaves the jobs as they ran; the form shows it too.
     before: str | int | None = None
+    # Where the form shows it: "" among the source's essentials, always shown; else in a group
+    # folded away (opened when one of its options differs from its default): browser (the
+    # browser and connection), files (files and sizes), runs (repeated runs), links (a message's
+    # linked files).
+    group: str = ""
 
 
 # A job's choice to have its HTTP clients present themselves as a browser does (headers and TLS
@@ -258,6 +263,7 @@ IMPERSONATE = Option(
     "and curl_cffi's impersonation), for sites behind Cloudflare and similar checks that answer plain "
     "downloads with 403. Only where a site refuses them otherwise.",
     kind="flag",
+    group="browser",
 )
 
 # A job's choice to have its browser disguised as a person's (browser/engine.py: Patchright, a
@@ -271,6 +277,7 @@ STEALTH = Option(
     "browser, its test in the recorder and Continue in the browser alike). It answers no challenge: you "
     "still do, in the browser. From a server's address a site may refuse it all the same.",
     kind="flag",
+    group="browser",
 )
 
 
@@ -285,6 +292,7 @@ CONSENT = Option(
     "It clicks nothing else.",
     kind="flag",
     before=0,
+    group="browser",
 )
 
 
@@ -300,6 +308,7 @@ RECHECK = Option(
     "site then, not only up to known files. Not for pages the job saves.",
     kind="flag",
     before=0,
+    group="runs",
 )
 
 

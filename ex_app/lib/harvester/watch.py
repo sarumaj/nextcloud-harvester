@@ -29,6 +29,7 @@ WATCH_OPTIONS = {
         "Once a week (on Sundays, at an hour of the job's own) the recipe is walked as Test the recipe does, "
         "nothing downloaded: you are told when a level finds nothing it found before, as a run tells it.",
         kind="flag",
+        group="runs",
     ),
 }
 

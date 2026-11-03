@@ -111,6 +111,13 @@
   (below the steps and picks before); a test's result starts with its outcome in one line,
   coloured by it, and is scrolled into view. On a narrow window the screen is above the steps at
   the full width (a sliver beside them before), and the toolbar wraps, Done and Cancel together.
+- The job's form shows a source's essentials (a website's recipe, file name, file types and
+  files per run; another source's address, file names and what it takes) and folds the other
+  options into **Browser and connection**, **Files and sizes**, **Repeated runs** and a mail
+  job's **Linked files**, each opened by itself when one of its options differs from its
+  default, saying how many do (*(2 changed)*); a website job's form was 21 options in a row.
+  `GET /api/sources` gives each option its `group` (empty: an essential). Save and the form's
+  other buttons stay at the window's foot while the form scrolls.
 
 ### Fixed
 

@@ -539,9 +539,17 @@ OC.L10N.register(
         "✓ a valid pattern": "✓ ein gültiges Muster",
         "✗ an address starting with https://": "✗ eine Adresse, die mit https:// beginnt",
         "Insert:": "Einfügen:",
+        "Browser and connection": "Browser und Verbindung",
+        "Files and sizes": "Dateien und Größen",
+        "Repeated runs": "Wiederholte Läufe",
+        "Linked files": "Verlinkte Dateien",
         "Through {name}": "Über {name}",
         "Next runs (your time): {next}": "Nächste Durchläufe (deine Zeit): {next}",
         "How the files are fetched": "Wie die Dateien abgerufen werden",
+        "_(%n changed)_::_(%n changed)_": [
+            "(%n geändert)",
+            "(%n geändert)"
+        ],
         "Record in the browser": "Im Browser aufnehmen",
         "None": "Keiner",
         "Save": "Speichern",

@@ -214,6 +214,7 @@ class Mail(Source):
             "only logged.",
             kind="flag",
             before=0,
+            group="links",
         ),
         "link_pattern": Option(
             "Link address",
@@ -222,6 +223,7 @@ class Mail(Source):
             kind="regex",
             placeholder="shop\\.example/.*invoice",
             suggestions=("\\.pdf(\\?|$)", "/(download|invoice|rechnung|faktura)"),
+            group="links",
         ),
         "link_text_pattern": Option(
             "Link text",
@@ -230,6 +232,7 @@ class Mail(Source):
             kind="regex",
             placeholder="Download|Rechnung",
             suggestions=("Download|Herunterladen|Pobierz", "Invoice|Rechnung|Faktura", "PDF"),
+            group="links",
         ),
         "link_job": Option(
             "Pages to the on-demand job",
@@ -238,6 +241,7 @@ class Mail(Source):
             "and its recipe signs in and downloads the file. None: such a link is only logged.",
             kind="job",
             minimum=0,
+            group="links",
         ),
         "file_type": download.DOWNLOAD_OPTIONS["file_type"],
         "min_size": download.DOWNLOAD_OPTIONS["min_size"],

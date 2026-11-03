@@ -17,7 +17,13 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   a new job's too: *Save* stores the job and what was typed into them (an empty field keeps what
   is stored), and *Save account* stores the account alone. Fields with usual values (the
   schedule, file names, formats, patterns, sizes, files per run) offer them all as buttons below
-  the field, which takes other values too; options with a fixed set of values are lists. Below
+  the field, which takes other values too; options with a fixed set of values are lists. The
+  form shows a source's essentials (a website's recipe, file name, file types and files per run;
+  another source's address, its file names and what it takes), and folds the other options into
+  groups: **Browser and connection**, **Files and sizes**, **Repeated runs** and a mail job's
+  **Linked files**. A group opens by itself when one of its options differs from its default,
+  and says how many do (*(2 changed)*); an option's group is its `group` in `GET /api/sources`
+  (empty: an essential). Save and the form's other buttons stay at the window's foot. Below
   the jobs, a **progress log** of what the runs do (searching, each file downloaded, saved or
   found already there, errors, the outcome), live while one runs, of all jobs or of one; a new
   run clears its job's last message. The list comes without the jobs' options

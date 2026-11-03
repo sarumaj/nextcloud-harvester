@@ -2541,6 +2541,14 @@
 		return null
 	}
 
+	// The folded groups of a job's options (an option's group, from the server).
+	const GROUPS = () => ({
+		browser: t('Browser and connection'),
+		files: t('Files and sizes'),
+		runs: t('Repeated runs'),
+		links: t('Linked files'),
+	})
+
 	// An option's title: "Through the proxy" in the admin's name for it, the others as the
 	// source gives them.
 	const optionTitle = (key, option) => (key === 'home' ? t('Through {name}', { name: proxyName(option.proxy) }) : said(option.title))
@@ -2605,9 +2613,37 @@
 		}
 
 		options.append(el('legend', { text: t('How the files are fetched') }))
+		// The source's essentials first; the other options in folded groups, each opened when one
+		// of its options differs from its default and saying how many do.
+		const groups = new Map()
+		const differs = (key) => {
+			const option = chosen.options[key]
+			const now = optionInputs[key].value
+			return typeof option.default === 'number' ? Number(now) !== option.default : String(now) !== String(option.default)
+		}
+		const groupOf = (name) => {
+			if (!name) return options
+			if (!groups.has(name)) {
+				const changed = el('span', { class: 'harvester-muted' })
+				const box = el('details', { class: 'harvester-group', 'data-group': name },
+					el('summary', {}, el('span', { text: GROUPS()[name] || name }), changed))
+				box.keys = []
+				box.count = () => {
+					const count = box.keys.filter(differs).length
+					changed.textContent = count ? ` ${n('(%n changed)', '(%n changed)', count)}` : ''
+					return count
+				}
+				box.addEventListener('input', box.count)
+				box.addEventListener('change', box.count)
+				groups.set(name, box)
+			}
+			return groups.get(name)
+		}
 		for (const [key, option] of Object.entries(chosen.options)) {
 			// A saved job without the option (saved before it existed) has its value from before.
 			const current = key in value.options ? value.options[key] : value.id && option.before != null ? option.before : option.default
+			const into = groupOf(option.group)
+			if (into !== options) into.keys.push(key)
 			if (option.kind === 'recipe') {
 				const textarea = el('textarea', { rows: '10', class: 'harvester-recipe' })
 				textarea.value = current
@@ -2622,7 +2658,7 @@
 				}
 				textarea.addEventListener('input', checkLeaks)
 				checkLeaks()
-				options.append(field(said(option.title), textarea, said(option.description)), leaks,
+				into.append(field(said(option.title), textarea, said(option.description)), leaks,
 					el('button', {
 						type: 'button',
 						text: t('Record in the browser'),
@@ -2636,7 +2672,7 @@
 					const box = el('input', { type: 'checkbox', 'data-option': key })
 					box.checked = Number(current) === 1
 					optionInputs[key] = { get value() { return box.checked ? 1 : 0 } }
-					options.append(el('label', { class: 'harvester-check' }, box,
+					into.append(el('label', { class: 'harvester-check' }, box,
 						el('span', {}, el('strong', { text: optionTitle(key, option) }), el('br'), el('small', { class: 'harvester-muted', text: said(option.description) }))))
 					continue
 				}
@@ -2654,7 +2690,7 @@
 						listed = true
 					}).catch(() => {})
 					optionInputs[key] = { get value() { return Number(listed ? select.value : current) || 0 } }
-					options.append(field(optionTitle(key, option), select, said(option.description)))
+					into.append(field(optionTitle(key, option), select, said(option.description)))
 					continue
 				}
 				if (option.choices && option.choices.length) {
@@ -2669,11 +2705,11 @@
 					optionInputs[key] = {
 						get value() { return [...select.selectedOptions].map((item) => item.value).join(',') || option.default },
 					}
-					options.append(field(optionTitle(key, option), select, said(option.description)))
+					into.append(field(optionTitle(key, option), select, said(option.description)))
 					continue
 				}
 				optionInputs[key] = optionInput(option, current)
-				options.append(field(optionTitle(key, option), optionInputs[key], said(option.description)))
+				into.append(field(optionTitle(key, option), optionInputs[key], said(option.description)))
 				const extra = optionHelp(option, optionInputs[key])
 				if (extra) optionInputs[key].after(extra)
 				if (option.suggestions && option.suggestions.length) (extra || optionInputs[key]).after(suggestionChips(optionInputs[key], option.suggestions))
@@ -2686,6 +2722,10 @@
 					update()
 				}
 			}
+		}
+		for (const box of groups.values()) {
+			box.open = box.count() > 0
+			options.append(box)
 		}
 
 		const save = el('button', { class: 'primary', type: 'submit', form: 'harvester-job-form', text: t('Save') })
@@ -2926,7 +2966,10 @@
 		#harvester fieldset { border: 1px solid var(--color-border); border-radius: var(--border-radius-large); padding: 8px 16px; margin: 16px 0; max-width: 760px; }
 		#harvester legend { padding: 0 4px; font-weight: bold; }
 		#harvester form > button, #harvester .harvester-form-actions button, #harvester .harvester-card button { margin: 8px 8px 0 0; }
-		#harvester .harvester-form-actions { margin-top: 16px; }
+		/* Save and the others stay in sight at the window's foot while the form scrolls. */
+		#harvester .harvester-form-actions { position: sticky; bottom: calc(var(--default-grid-baseline, 4px) * -6); z-index: 2; margin-top: 16px; padding: 4px 0 12px; border-top: 1px solid var(--color-border); background: var(--color-main-background); }
+		#harvester .harvester-group { margin: 12px 0; border-top: 1px solid var(--color-border); padding-top: 8px; }
+		#harvester .harvester-group > summary { cursor: pointer; font-weight: bold; padding: 4px 0; }
 		#harvester .harvester-error { color: var(--color-error-text, var(--color-error)); }
 		#harvester .harvester-credentials { margin-top: 24px; max-width: 760px; }
 		#harvester .harvester-load { margin: -8px 0 12px; font-variant-numeric: tabular-nums; }

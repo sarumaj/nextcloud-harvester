@@ -53,6 +53,7 @@ COMMON_OPTIONS = {
         "Unpacked only when nothing in it is suspect (a path out of the folder, a link, a zip bomb, more than 1000 "
         "files, more than the largest file in all): else it is saved as it is.",
         kind="flag",
+        group="files",
     ),
     "unpack_keep": Option(
         "Keep the ZIP files",
@@ -60,6 +61,7 @@ COMMON_OPTIONS = {
         "With Unpack ZIP files: the archive is kept beside its folder. Off: only its files are saved, the folder "
         "standing for it.",
         kind="flag",
+        group="files",
     ),
     # On for every job, also for those saved before it existed (before): a file deleted in the
     # folder comes back with the next run whose listing finds it.
@@ -71,6 +73,7 @@ COMMON_OPTIONS = {
         "downloaded again. Off: a file once saved is never downloaded again.",
         kind="flag",
         before=1,
+        group="runs",
     ),
     "max_items": Option(
         "Files per run",
@@ -87,6 +90,7 @@ COMMON_OPTIONS = {
         "The site sees the proxy's address instead of the server's (some sites refuse servers, or ask them "
         "to prove they are human more often). Slower: the files come through the proxy.",
         kind="flag",
+        group="browser",
     ),
 }
 
