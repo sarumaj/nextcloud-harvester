@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.13.1 - 2026-11-03
+## Unreleased
 
 ### Added
 
@@ -14,6 +14,11 @@
   **Pages to the on-demand job** (an on-demand website job of the person, whose recipe signs in),
   else logged as *a page, not a file*; such a page and an expired link (404, 410, 401, 403) are
   logged once and skipped for good.
+
+## 0.13.1 - 2026-11-03
+
+### Added
+
 - Watching a page: a website recipe's `"watch": {}` (or `{"selector": "…"}`) saves no file but
   compares the start page's text (or the selector's) with the last run's, whitespace aside; a
   change is a line in the log and a notification with an excerpt of the lines gone and come (at
