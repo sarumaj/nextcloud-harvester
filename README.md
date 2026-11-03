@@ -87,7 +87,8 @@ and how a release is made.
 ## Developing
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+python3 -m venv .venv && URLLIB3_NO_OVERRIDE=1 .venv/bin/pip install --no-binary=urllib3-future \
+    -r requirements-dev.txt
 .venv/bin/playwright install chromium
 .venv/bin/python -m pytest -q
 .venv/bin/black --check ex_app tests scripts && .venv/bin/pylint ex_app/lib tests scripts

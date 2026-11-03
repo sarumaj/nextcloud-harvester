@@ -15,6 +15,13 @@
   else logged as *a page, not a file*; such a page and an expired link (404, 410, 401, 403) are
   logged once and skipped for good.
 
+### Fixed
+
+- Gallery jobs (again): urllib3-future, which nc_py_api's niquests brings, is built without
+  installing itself as `urllib3` (`URLLIB3_NO_OVERRIDE`), so gallery-dl gets upstream urllib3 again.
+  0.13.1's urllib3 2.7.0 did not help: the fork stood in its place, and lacks
+  `urllib3.connection.create_urllib3_context`.
+
 ## 0.13.1 - 2026-11-03
 
 ### Added

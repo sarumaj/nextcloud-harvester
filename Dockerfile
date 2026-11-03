@@ -11,8 +11,13 @@ RUN apt-get update && apt-get install -y curl && \
 
 # Copy requirements and install Python dependencies using a cache mount.
 COPY requirements.txt /
+# urllib3-future (nc_py_api's niquests) built from source with URLLIB3_NO_OVERRIDE: its wheel
+# installs itself as urllib3 too, over upstream urllib3, and lacks what gallery-dl calls
+# (urllib3.connection.create_urllib3_context); so built, niquests uses urllib3_future and
+# gallery-dl (requests) upstream urllib3. tests/test_gallery.py checks it.
 RUN --mount=type=cache,target=/root/.cache/pip \
-    python3 -m pip install --root-user-action=ignore -r requirements.txt && rm requirements.txt
+    URLLIB3_NO_OVERRIDE=1 python3 -m pip install --root-user-action=ignore \
+    --no-binary=urllib3-future -r requirements.txt && rm requirements.txt
 
 # Patchright (the disguised browser, harvester/browser/engine.py) starts Playwright's Chromium:
 # the build fails when their versions want different ones. Its own copy of Node.js (some 120 MB)

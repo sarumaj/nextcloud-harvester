@@ -13,10 +13,6 @@ patchright==1.64.4
 publicsuffixlist==1.1.2.20261101
 # The recorder's patterns, with a time limit (a pattern that backtracks without end).
 regex==2026.9.29
-# urllib3 below 2.8.0, which no longer has urllib3.connection.create_urllib3_context that
-# gallery-dl 1.32.19 calls (every gallery job failed with an AttributeError); test_gallery.py
-# checks it, so a newer urllib3 is taken once gallery-dl no longer needs it.
-urllib3==2.7.0
 # SOCKS proxies: the downloads (httpx) and gallery-dl (requests).
 PySocks==1.7.1
 socksio==1.0.0
