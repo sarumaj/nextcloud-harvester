@@ -160,7 +160,7 @@ def test_the_recorders_cookies_are_listed_shown_changed_and_deleted():
 class SessionRecorder:
     """A recorder whose browser is a session; it notes what the page asked of it."""
 
-    def __init__(self, send):
+    def __init__(self, send, _send_bytes=None):
         self.send = send
         self.handled: list[dict] = []
 

@@ -255,7 +255,7 @@ class StartedRecorder:
 
     started: list[bool] = []
 
-    def __init__(self, send):
+    def __init__(self, send, _send_bytes=None):
         self.send = send
 
     async def start(self, *_args, stealth=False, **_kwargs):

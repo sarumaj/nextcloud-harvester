@@ -729,7 +729,7 @@ async def record(websocket: WebSocket, nc: NC) -> None:
     allowed, job = await admit(websocket, nc)
     if not allowed:
         return
-    recorder = Recorder(l10n.sending(websocket.send_json))
+    recorder = Recorder(l10n.sending(websocket.send_json), websocket.send_bytes)
     try:
         # The job's (or the form's) HTTP/1.1 only: known before the browser starts. Within the
         # try: whatever goes wrong from here on, the browser's slot is released.
@@ -786,7 +786,7 @@ async def sign_in(websocket: WebSocket, nc: AsyncNextcloudApp, wizard: str) -> N
         return
     # Never through the jobs' proxy: the listener is this container's own. This browser's guard
     # alone lets it through (Chromium sends even 127.0.0.1 to its guard), while loopback is set.
-    recorder = Recorder(l10n.sending(websocket.send_json))
+    recorder = Recorder(l10n.sending(websocket.send_json), websocket.send_bytes)
     recorder.loopback = AUTHORIZE_ORIGIN
     try:
         try:

@@ -63,6 +63,9 @@
   or a **Load more** round waits up to three seconds for the page to grow instead (a feed of
   three rounds: 79 seconds, now 10). A page whose links do not show within five seconds still
   gets the network's whole wait.
+- The browser's screen comes as binary WebSocket messages, each frame the JPEG itself, instead
+  of base64 in JSON (a third larger, and parsed): the page shows each by an object URL and lets
+  the one before go.
 - The browser's screen in the recorder (and in *Continue in the browser* and rclone's sign-in)
   takes less of the server's CPU: every second frame of Chromium's (some 30 frames a second)
   instead of every frame, and none while the jobs page is hidden (another tab, a minimized

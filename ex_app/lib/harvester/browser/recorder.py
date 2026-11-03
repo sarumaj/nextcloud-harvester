@@ -7,9 +7,11 @@ For each pick of links the recorder proposes a pattern with named groups
 (harvester.patterns.propose), outlines in the page the links it matches (solid) and those it
 leaves out (dashed), and shows examples with their values; the person may edit the pattern.
 
-The messages are JSON over the page's WebSocket:
+The messages are JSON over the page's WebSocket, but for the screen's frames: each a binary
+message, the JPEG itself (a third smaller than in base64, and nothing to parse); without a
+binary sender, {type: frame, data}.
 
-- to the page: {type: frame, data}, {type: url, url}, {type: error, message}, {type: recipe, recipe,
+- to the page: {type: url, url}, {type: error, message}, {type: recipe, recipe,
   proposals}, {type: test, result} (the recipe's test, trial.py), {type: test-step, ...} (its steps),
   {type: where, frame (null: the page; else {host, url, level})} (where the person acts);
 - from the page: {type: load, recipe} (the picks of the recipe the form holds), {type: goto,
@@ -62,6 +64,7 @@ can be opened and picked on directly).
 """
 
 import asyncio
+import base64
 import contextlib
 import copy
 import logging
@@ -182,8 +185,12 @@ def frame_place(frame) -> dict | None:
 class Recorder(LinkPicks, Popups, Trials):  # pylint: disable=too-many-instance-attributes
     """One recording: a browser, the page shown and the recipe so far."""
 
-    def __init__(self, send: Callable[[dict], Awaitable[None]]):
+    def __init__(
+        self, send: Callable[[dict], Awaitable[None]], send_bytes: Callable[[bytes], Awaitable[None]] | None = None
+    ):
         self.send = send
+        # The screen's frames as binary messages (the JPEG itself), else as {type: frame, data}.
+        self.send_bytes = send_bytes
         # The steps: the form's, those edited, those recorded.
         self.steps = StepList()
         self.start_url = ""
@@ -498,7 +505,10 @@ class Recorder(LinkPicks, Popups, Trials):  # pylint: disable=too-many-instance-
         # Acknowledged once sent: Chromium sends the next frame only then, so frames never
         # pile up for a page that reads slowly (or not at all).
         try:
-            await self.send({"type": "frame", "data": frame["data"]})
+            if self.send_bytes is not None:
+                await self.send_bytes(base64.b64decode(frame["data"]))
+            else:
+                await self.send({"type": "frame", "data": frame["data"]})
         finally:
             if self._cdp:
                 try:

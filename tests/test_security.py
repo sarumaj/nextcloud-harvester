@@ -98,7 +98,7 @@ class FakeRecorder:
 
     started: list[tuple[bool, bool]] = []
 
-    def __init__(self, send):
+    def __init__(self, send, _send_bytes=None):
         self.send = send
 
     async def start(self, *_args, http1=False, home=False, **_kwargs):
@@ -122,6 +122,9 @@ class Socket:
 
     async def send_json(self, message):
         self.sent.append(message)
+
+    async def send_bytes(self, data):
+        self.sent.append({"type": "frame", "bytes": len(data)})
 
     async def close(self, code=1000):
         pass

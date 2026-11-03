@@ -75,3 +75,25 @@ def test_the_screencast_sends_every_second_frame_and_none_while_the_page_is_hidd
     assert still_hidden == 0 and after_load == 0, "no frames while the page is hidden"
     assert again > 3, "frames again once it shows"
     assert started and all(params["everyNthFrame"] == recorder_module.EVERY_NTH_FRAME == 2 for params in started)
+
+
+@needs_chromium
+def test_frames_go_as_binary_messages_where_the_socket_takes_them():
+    async def scenario():
+        driver, recorder = await recording(Drawing())
+        frames_sent: list[bytes] = []
+
+        async def send_bytes(data: bytes) -> None:
+            frames_sent.append(data)
+
+        recorder.send_bytes = send_bytes
+        try:
+            await recorder.handle({"type": "goto", "url": f"{SITE}/drawing"})
+            await asyncio.sleep(0.5)
+            return frames_sent, frames(driver.sent[-20:])
+        finally:
+            await recorder.close()
+
+    sent, json_frames = asyncio.run(scenario())
+    assert sent and all(frame[:2] == b"\xff\xd8" for frame in sent), "the JPEG itself"
+    assert json_frames == 0, "none as JSON besides"

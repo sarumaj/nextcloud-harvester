@@ -361,6 +361,23 @@ def test_the_recorders_screen_stops_while_hidden_and_its_socket_closes_when_left
 
 
 @needs_chromium
+def test_the_recorders_frames_come_as_binary_messages_each_shown_by_an_object_url_revoked_after(page):
+    page.get_by_role("button", name="Edit").click()
+    page.get_by_role("button", name="Record in the browser").click()
+    page.wait_for_function("window.__sockets.length && window.__sockets[0].sent.length")
+    assert page.evaluate("window.__sockets[0].binaryType") == "blob"
+    frame = """() => window.__sockets[0].emit('message', { data: new Blob([new Uint8Array([255, 216, 255])]) })"""
+    page.evaluate(frame)
+    first = page.locator("img.harvester-screen").get_attribute("src")
+    page.evaluate(frame)
+    second = page.locator("img.harvester-screen").get_attribute("src")
+    assert first.startswith("blob:") and second.startswith("blob:") and first != second
+    revoked = "url => fetch(url).then(() => false, () => true)"
+    assert page.evaluate(revoked, first) and not page.evaluate(revoked, second), "the frame before let go"
+    assert not page.locator(".harvester-screen-notice").is_visible()
+
+
+@needs_chromium
 def test_a_failed_steps_picture_and_the_browser_at_its_page(page):
     page.get_by_role("button", name="Show what the browser saw").click()
     image = page.locator("img.harvester-shot-image")

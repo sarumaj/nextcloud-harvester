@@ -965,6 +965,11 @@
 			let finished = false
 			const back = el('button', { type: 'button', text: t('Back to the question'), onclick: () => { finished = true; socket.close(); showQuestion(view) } })
 			socket.addEventListener('message', (event) => {
+				// A frame (a binary message): the screen shows it (wireScreen).
+				if (typeof event.data !== 'string') {
+					if (message.textContent === starting) message.textContent = ''
+					return
+				}
 				const data = JSON.parse(event.data)
 				if (data.type === 'frame') {
 					if (left(screen, socket)) return
@@ -1330,7 +1335,23 @@
 		// the screen says what is going on, not an empty image.
 		const notice = el('div', { class: 'harvester-screen-notice', text: t('Starting the browser…') })
 		const box = el('div', { class: 'harvester-screen-box' }, screen, notice, keys)
-		screen.frame = (data) => { screen.src = `data:image/jpeg;base64,${data}`; notice.hidden = true }
+		// A frame: a binary message's JPEG (its object URL, the one before revoked), or base64.
+		let frameUrl = null
+		screen.frame = (data) => {
+			const url = typeof data === 'string' ? `data:image/jpeg;base64,${data}` : URL.createObjectURL(data)
+			screen.src = url
+			if (frameUrl) URL.revokeObjectURL(frameUrl)
+			frameUrl = typeof data === 'string' ? null : url
+			notice.hidden = true
+		}
+		socket.binaryType = 'blob'
+		socket.addEventListener('message', (event) => {
+			if (typeof event.data !== 'string' && !left(screen, socket)) screen.frame(event.data)
+		})
+		socket.addEventListener('close', () => {
+			if (frameUrl) URL.revokeObjectURL(frameUrl)
+			frameUrl = null
+		})
 		screen.say = (text) => { if (!screen.getAttribute('src')) { notice.textContent = text; notice.hidden = false } }
 		screen.focusKeys = () => keys.focus({ preventScroll: true })
 		// The remote window's size, as the recorder last confirmed it ({type: viewport}).
@@ -1720,6 +1741,11 @@
 			: null
 		const cookies = cookiesPanel(send, intoAccount, true)
 		socket.addEventListener('message', (event) => {
+			// A frame (a binary message): the screen shows it (wireScreen).
+			if (typeof event.data !== 'string') {
+				if (message.textContent === starting) message.textContent = ''
+				return
+			}
 			const data = JSON.parse(event.data)
 			if (cookies.handle(data)) return
 			if (data.type === 'frame') {
@@ -2305,6 +2331,7 @@
 			if (!placed) send({ type: 'mode', mode: 'browse' })
 		})
 		socket.addEventListener('message', (event) => {
+			if (typeof event.data !== 'string') return // a frame: the screen shows it (wireScreen)
 			const data = JSON.parse(event.data)
 			if (cookies.handle(data)) return
 			if (data.type === 'frame') { if (!left(screen, socket)) screen.frame(data.data) }
