@@ -105,6 +105,14 @@ CREATE TABLE IF NOT EXISTS contents (
     PRIMARY KEY (job, key)
 );
 CREATE INDEX IF NOT EXISTS contents_hash ON contents (job, hash);
+-- The text of the pages a job watches (pagewatch.py) as its last run found it, by page.
+CREATE TABLE IF NOT EXISTS texts (
+    job INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    key TEXT NOT NULL,
+    text TEXT NOT NULL,
+    at REAL NOT NULL,
+    PRIMARY KEY (job, key)
+);
 -- A person's own templates: recipe files (recipe_file.py) saved from a job's form, theirs alone.
 CREATE TABLE IF NOT EXISTS templates (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -527,6 +535,21 @@ class Store:  # pylint: disable=too-many-public-methods
                     "INSERT OR REPLACE INTO contents (job, key, hash, etag, modified, path, at)"
                     " VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (job_id, key, digest, etag, modified, path, time.time()),
+                )
+
+    def page_text(self, job_id: int, key: str) -> str | None:
+        """The text of the watched page as the job's last run found it, or None."""
+        with self._lock:
+            row = self._db.execute("SELECT text FROM texts WHERE job = ? AND key = ?", (job_id, key)).fetchone()
+        return row["text"] if row else None
+
+    def keep_page_text(self, job_id: int, key: str, text: str) -> None:
+        """Keeps the watched page's text as this run found it. Nothing for a job deleted meanwhile."""
+        with self._lock, self._db:
+            if self._db.execute("SELECT 1 FROM jobs WHERE id = ?", (job_id,)).fetchone():
+                self._db.execute(
+                    "INSERT OR REPLACE INTO texts (job, key, text, at) VALUES (?, ?, ?, ?)",
+                    (job_id, key, text, time.time()),
                 )
 
     def forget(self, job_id: int, key: str) -> None:

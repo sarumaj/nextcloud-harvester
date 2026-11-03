@@ -29,7 +29,7 @@ from typing import Any
 
 from playwright.sync_api import Error as PlaywrightError
 
-from .. import choices, jsonlist, patterns
+from .. import choices, jsonlist, pagewatch, patterns
 from .. import recipe as recipes
 from ..l10n import said
 from . import keep, near
@@ -73,6 +73,9 @@ class Walk:  # pylint: disable=too-many-instance-attributes,too-many-public-meth
         saves its start page, that page."""
         if self.recipe.get("save"):
             yield from self.start_page()
+            return
+        if "watch" in self.recipe:
+            pagewatch.look(self)
             return
         start = self.recipe.get("start") or None
         if start and self.choice:

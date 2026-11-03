@@ -548,7 +548,16 @@ class Executor:
                 source = source_class(job.options, credentials, client)
                 source.home = home
                 source.timezone = job.timezone
-                source.contents = versions.Contents(self.store, job_id)
+                source.contents = versions.Contents(
+                    self.store,
+                    job_id,
+                    lambda url, change: self.notify(
+                        nc,
+                        "Harvester: {job} — the page changed",
+                        {"job": job.name, "address": url, "change": change},
+                        "{address}: {change}",
+                    ),
+                )
                 # Every wait of the source ends at once when the run is stopped.
                 if hasattr(source, "sleep"):
                     source.sleep = control.nap

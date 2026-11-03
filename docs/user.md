@@ -416,6 +416,20 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   levels or file links (`{"start": "https://…", "save": "pdf"}`), saves the start page itself, where
   the steps end: the template `save-page` is such an on-demand job, whose start is each page sent to
   it.
+- **Watching a page** (`harvester/pagewatch.py`): a recipe's `"watch"`, beside its `start` (or
+  its steps) and without levels or file links, saves no file but compares the page's text with
+  the last run's: `{"start": "https://…/prices", "watch": {}}` watches the whole page,
+  `"watch": {"selector": "main .prices"}` the text of the selector's elements. The text is what
+  a person reads (no scripts, styles or templates), a line per block with its whitespace
+  collapsed, so a change of spaces, indentation or line breaks alone is none. The first run keeps
+  the text (*Watching …: its text is kept*); a later run that finds it changed logs *The page
+  changed:* with an excerpt of the lines gone (`-`) and come (`+`), at most 300 characters, and
+  notifies you with it; the run's outcome says *The page changed* or *The page is as before*. A
+  page that changes on every visit (a counter, the time) changes on every run: watch a selector
+  of the part that matters. A selector that finds nothing fails the run, or where it found the
+  text before, ends it as a changed site (told once). The job keeps at most 200,000 characters of
+  the text, in its database. **Test the recipe** reads the text and says how long it is, keeping
+  nothing.
 - **Files a page only shows:** the file links may have `"capture": ["application/pdf"]` (media
   types, `image/*` for any picture, at most 10; never `text/html`): each page a link leads to is
   opened and the job keeps the files of those types that it loads (its own requests, its frames'

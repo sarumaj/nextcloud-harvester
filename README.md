@@ -23,6 +23,8 @@ the app's browser or taken from a template, not by code.
   saved over its own, and Nextcloud keeps the one before as a version.
 - **ZIP files unpacked** into a folder of their name, if asked, with guards against paths out
   of the folder, links and zip bombs.
+- **Pages watched:** a page (or a part of it) compared with the last run's text, a change told
+  in a notification with an excerpt; whitespace alone is no change.
 - **Cookie banners** answered on their own, "Reject all" else "Only necessary": the common consent
   managers' and banners of such buttons in German, English and Polish, nothing else.
 - **Recorder:** a browser in the app, shown on the page: sign in and pick the links (or the

@@ -352,6 +352,8 @@ class Source(abc.ABC):
         # The job's record of what its files hold (versions.Contents; the executor's): None, no
         # duplicates or changes are looked for.
         self.contents: Any = None
+        # The run's outcome in place of its files' (a watched page's: pagewatch.py), or None.
+        self.note: Any = None
 
     def rechecks(self) -> bool:
         """Whether a run asks the addresses of the files the job saved again (RECHECK); never for

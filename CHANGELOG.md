@@ -4,6 +4,10 @@
 
 ### Added
 
+- Watching a page: a website recipe's `"watch": {}` (or `{"selector": "…"}`) saves no file but
+  compares the start page's text (or the selector's) with the last run's, whitespace aside; a
+  change is a line in the log and a notification with an excerpt of the lines gone and come (at
+  most 300 characters), and the run's outcome says whether the page changed.
 - ZIP files unpacked: **Unpack ZIP files** (every job, off by default) puts a downloaded `.zip`
   file's files into a folder of its name beside it, tagged; **Keep the ZIP files** (on by default)
   keeps the archive too. A suspect archive is saved as it is, the log saying why: a path out of

@@ -624,4 +624,5 @@ def run(  # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
         mark_seen(FULL_PASS)
     if halted:
         return said("{outcome}; stopped, the rest comes {later}", outcome=tally.sentence(), later=later)
-    return tally.sentence()
+    # A watched page's run saves no file: its outcome is what it found.
+    return source.note if source.note is not None else tally.sentence()

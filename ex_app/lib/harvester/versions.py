@@ -50,6 +50,14 @@ class Contents:
         """The items of keys whose address is due to be asked again (not in RECHECK_EVERY)."""
         return keys - self.store.checked_since(self.job_id, time.time() - RECHECK_EVERY)
 
+    def text(self, key: str) -> str | None:
+        """The text of a watched page as the last run found it (pagewatch.py), or None."""
+        return self.store.page_text(self.job_id, key)
+
+    def keep_text(self, key: str, text: str) -> None:
+        """Keeps a watched page's text as this run found it."""
+        self.store.keep_page_text(self.job_id, key, text)
+
     def checked(self, key: str, known: dict) -> None:
         """The item's address answered that its file did not change since known (304)."""
         self.store.keep_content(self.job_id, key, known["hash"], known["path"], known["etag"], known["modified"])

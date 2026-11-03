@@ -119,7 +119,7 @@ import re
 import string
 from urllib.parse import urlsplit
 
-from . import choices, jsonrequest, needs, patterns
+from . import choices, jsonrequest, needs, pagewatch, patterns
 from .browser import VIEWPORT_MAX, VIEWPORT_MIN, allowed_url
 from .l10n import Said, listed, said
 from .patterns import token_parameters
@@ -803,6 +803,8 @@ def _check_links(links: object, recipe: dict) -> list[str]:
     """The file links: a JSON listing's parts, or a level's with its values, key and click; what
     they keep of the pages they lead to (save, capture). A recipe that saves its start page has
     none."""
+    if "watch" in recipe:
+        return pagewatch.recipe_problems(recipe)
     if "save" in recipe:
         if recipe["save"] not in SAVE_KINDS:
             return [f"save is one of {', '.join(SAVE_KINDS)}"]
