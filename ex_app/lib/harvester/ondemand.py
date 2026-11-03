@@ -3,11 +3,12 @@
 a feed), which takes the place of the job's own for that run alone; its options stay as they are.
 Only sources with an address (Source.address_option) offer them."""
 
+from collections.abc import Callable
 from dataclasses import replace
 from urllib.parse import urlparse
 
 from .sources import SOURCES, SourceError
-from .store import Job
+from .store import Job, Store
 
 # The longest address a fetch takes (browsers' own limit is about this).
 MAX_URL = 2000
@@ -64,4 +65,26 @@ def fetch_problem(job: Job, url: str, account: bool) -> str:
     if account and own and not same_site(url, own):
         host = urlparse(own).hostname
         return f"The job's account is for {host}: it fetches only addresses of that site."
+    return ""
+
+
+def hand_over(  # pylint: disable=too-many-arguments
+    store: Store,
+    job: Job,
+    target_id: int,
+    url: str,
+    account: Callable[[Job], bool],
+    queue: Callable[[int, str], object],
+) -> str:
+    """Queues the address for another job of the job's person, as Send to Harvester does (the mail
+    source's pages, whose sign-in that job's recipe knows): only an on-demand website job of the
+    same person, the address checked as fetch_problem checks a sent one (account: whether the
+    target's account is set). Returns why it was not queued, "" once it is."""
+    target = store.job(target_id)
+    if target is None or target.user != job.user or target.source != "site" or not on_demand(target):
+        return "the job for pages is no on-demand website job of yours (deleted?)"
+    problem = fetch_problem(target, url, account(target))
+    if problem:
+        return f"{target.name}: {problem}"
+    queue(target_id, url)
     return ""

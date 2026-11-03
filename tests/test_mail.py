@@ -273,19 +273,25 @@ class Run:  # pylint: disable=too-few-public-methods
     """The runner's record of a job's keys, and its run of the mail source (fake Nextcloud)."""
 
     def __init__(self):
+        from test_runner import FakeLibrary  # pylint: disable=import-outside-toplevel
+
         self.seen: set[str] = set()
+        self.library = FakeLibrary()
 
     def __call__(self, server, **options):
+        return self.go(source(server, **options))
+
+    def go(self, made: Mail):
+        """A run of the mail source given, into the same library."""
         from harvester import runner  # pylint: disable=import-outside-toplevel
         from harvester.store import Job  # pylint: disable=import-outside-toplevel
-        from test_runner import FakeLibrary  # pylint: disable=import-outside-toplevel
 
         job = Job(user="u", name="n", source="mail", target="/In", schedule="", options={"max_items": -1})
         log: list = []
         outcome = runner.run(
             job,
-            source(server, **options),
-            FakeLibrary(),
+            made,
+            self.library,
             self.seen.__contains__,
             self.seen.add,
             lambda seconds: None,

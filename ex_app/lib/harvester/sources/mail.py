@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Email attachments: the files attached to the messages of an IMAP mailbox, e.g. a supplier's invoices.
+"""Email attachments: the files attached to the messages of an IMAP mailbox, e.g. a supplier's invoices,
+and if asked the files their bodies link to (maillinks.py).
 
 The mailbox is only read: the folder is selected read-only and the messages are fetched with
 BODY.PEEK, so nothing is marked as read. A message's attachments are told apart by its Message-ID
-(or, without one, the folder's UIDVALIDITY and the message's UID), their position and file name.
+(or, without one, the folder's UIDVALIDITY and the message's UID), their position and file name;
+its linked files by the same and the link's address.
 
 A run asks the server for few things: a sender that is a plain address or domain is searched for
 by the server, the headers come a hundred messages at a time, and a message whose attachments
@@ -15,6 +17,7 @@ source's step "mail-code"): read-only too, and the code is never logged.
 """
 
 import base64
+import dataclasses
 import datetime
 import email
 import email.policy
@@ -31,7 +34,7 @@ from typing import Any, BinaryIO, ClassVar
 from bs4 import BeautifulSoup
 
 from .. import browser, patterns
-from . import download
+from . import download, maillinks
 from .base import MARK, AuthError, Item, Option, Refused, Source, SourceError, pattern_search
 
 # Month names IMAP's SINCE expects, whatever the locale.
@@ -202,6 +205,40 @@ class Mail(Source):
             values=("from", "sender", "subject", "date", "year", "month", "day", "filename", "stem", "ext"),
             suggestions=("{year}/{date} {filename}", "{sender}/{year}/{date} {filename}", "{date} {subject}{ext}"),
         ),
+        "links": Option(
+            "Also the files linked in the message",
+            0,
+            "Downloads the files the message links to too (“Download your invoice”), of the link address or link "
+            f"text below (one at least), at most {maillinks.MAX_LINKS} a message; never an unsubscribe link. A "
+            "link that gives a web page (a sign-in) instead of a file goes to the on-demand job below, or is "
+            "only logged.",
+            kind="flag",
+            before=0,
+        ),
+        "link_pattern": Option(
+            "Link address",
+            "",
+            "Regular expression on the link's address; empty: any (then the link text decides).",
+            kind="regex",
+            placeholder="shop\\.example/.*invoice",
+            suggestions=("\\.pdf(\\?|$)", "/(download|invoice|rechnung|faktura)"),
+        ),
+        "link_text_pattern": Option(
+            "Link text",
+            "",
+            "Regular expression on the link's text (for an address in plain text: its line); empty: any.",
+            kind="regex",
+            placeholder="Download|Rechnung",
+            suggestions=("Download|Herunterladen|Pobierz", "Invoice|Rechnung|Faktura", "PDF"),
+        ),
+        "link_job": Option(
+            "Pages to the on-demand job",
+            0,
+            "One of your on-demand website jobs: a link that gives a web page (a portal's sign-in) is sent to it, "
+            "and its recipe signs in and downloads the file. None: such a link is only logged.",
+            kind="job",
+            minimum=0,
+        ),
         "file_type": download.DOWNLOAD_OPTIONS["file_type"],
         "min_size": download.DOWNLOAD_OPTIONS["min_size"],
         "max_size": download.DOWNLOAD_OPTIONS["max_size"],
@@ -214,6 +251,9 @@ class Mail(Source):
         "from_pattern",
         "subject_pattern",
         "filename_pattern",
+        "links",
+        "link_pattern",
+        "link_text_pattern",
         "file_type",
         "min_size",
         "max_size",
@@ -240,11 +280,12 @@ class Mail(Source):
                 raise ValueError
         except (TypeError, ValueError):
             problems.append("the days back are not a number of days")
-        for name in ("from_pattern", "subject_pattern", "filename_pattern"):
+        for name in ("from_pattern", "subject_pattern", "filename_pattern", "link_pattern", "link_text_pattern"):
             try:
                 re.compile(str(self.settings[name]))
             except re.error as error:
                 problems.append(f"{self.options[name].title}: not a regular expression ({error})")
+        problems += self.link_problems()
         problems += download.problems(self.settings)
         auth = str(self.settings["auth"])
         if auth not in AUTHS:
@@ -258,6 +299,24 @@ class Mail(Source):
         # The attachment the run is at (its key and content): only it is kept, the others of a
         # long listing are not held until the run ends.
         self.current: tuple[str, bytes] | None = None
+        # The waits of the linked files' downloads (the executor's, which a stop ends).
+        self.sleep: Callable[[float], None] = time.sleep
+
+    def links(self) -> bool:
+        """Whether the job takes the files linked in the messages too."""
+        return str(self.settings["links"]).strip() in ("1", "True", "true")
+
+    def link_problems(self) -> list[str]:
+        """What is wrong with the linked files' options."""
+        problems = []
+        if self.links() and not (str(self.settings["link_pattern"]) or str(self.settings["link_text_pattern"])):
+            problems.append("the files linked in the message need a link address or link text to look for")
+        try:
+            if int(self.settings["link_job"] or 0) < 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            problems.append("the on-demand job for pages is not a job")
+        return problems
 
     def open(self) -> Any:
         """Signs in and selects the folder, read-only."""
@@ -362,6 +421,8 @@ class Mail(Source):
                 message = email.message_from_bytes(fetched_bytes(data), policy=policy)
                 keys: list[str] = []
                 yield from self.attachments(message, f"{validity}:{uid.decode()}", seen, keys)  # type: ignore[arg-type]
+                if self.links():
+                    yield from self.linked(message, f"{validity}:{uid.decode()}", seen, keys)  # type: ignore[arg-type]
                 # Back here once the run took each of them (a run that ends before does not come
                 # back): the message is done when every one is saved or skipped.
                 if all(seen(key) for key in keys):
@@ -425,6 +486,24 @@ class Mail(Source):
             yield self.item(key, filename, values | {"index": index}, uid)
             self.current = None
 
+    def linked(self, message: EmailMessage, uid: str, seen: Callable[[str], bool], keys: list[str]) -> Iterator[Item]:
+        """The files of the message's links the job takes, not fetched yet (their keys added to
+        keys): named as their answer names them (pending), a stand-in from the address before."""
+        message_id = str(message.get("Message-ID", "")).strip() or uid
+        values = self.message_values(message)
+        found = maillinks.wanted_links(
+            message, str(self.settings["link_pattern"]), str(self.settings["link_text_pattern"])
+        )
+        for address, text in found:
+            key = f"{maillinks.KEY}{message_id}|{patterns.stable_url(address)}"
+            if seen(key):
+                continue
+            keys.append(key)
+            stand_in = patterns.link_values(address, text, 1)
+            link = values | {"url": address, "text": stand_in["text"], "host": stand_in["host"]}
+            item = self.item(key, safe(stand_in["filename"], 200) or "download", link, uid)
+            yield dataclasses.replace(item, url=address, pending=item.problem is None)
+
     def item(self, key: str, filename: str, values: dict, uid: str) -> Item:
         """An attachment: its path from the message's values and its file name (an item that
         fails alone when the name cannot be made)."""
@@ -465,10 +544,24 @@ class Mail(Source):
             "day": sent.day,
         }
 
-    def fetch(self, item: Item, dest: BinaryIO) -> None:
+    def fetch(self, item: Item, dest: BinaryIO) -> Item | None:
+        if item.key.startswith(maillinks.KEY):
+            target = int(self.settings["link_job"] or 0)
+            name = maillinks.fetch_link(
+                self.client,
+                item.url,
+                dest,
+                self.settings,
+                self.sleep,
+                lambda url: self.hand_over(target, url) if target else maillinks.NO_JOB,
+            )
+            named = self.item(item.key, name, item.values, item.url)
+            path = download.with_extension(named.path, self.settings) if named.path else ""
+            return dataclasses.replace(item, path=path or item.path, values=named.values, pending=False)
         if self.current is None or self.current[0] != item.key:
             raise SourceError(f"{item.path} was not read from the mailbox")
         dest.write(self.current[1])
+        return None
 
     def access_token(self) -> str:
         """An access token for the mailbox, from the refresh token (and the provider's newer

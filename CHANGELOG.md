@@ -4,6 +4,16 @@
 
 ### Added
 
+- Files linked in an e-mail: a mail job's **Also the files linked in the message** (off by
+  default) downloads the files its messages link to ("Download your invoice"), from the HTML
+  part's links and the plain text's addresses, of the **Link address** or **Link text** pattern
+  (one at least), at most 10 a message; never `mailto:`, `tel:`, an unsubscribe link or a private
+  address. Through the checked download (public addresses only, at most 10 redirects, the job's
+  types and largest file), named by `Content-Disposition` or the final address, known by the
+  message's ID and the link's address. A link that gives a web page is sent to the mail job's
+  **Pages to the on-demand job** (an on-demand website job of the person, whose recipe signs in),
+  else logged as *a page, not a file*; such a page and an expired link (404, 410, 401, 403) are
+  logged once and skipped for good.
 - Watching a page: a website recipe's `"watch": {}` (or `{"selector": "…"}`) saves no file but
   compares the start page's text (or the selector's) with the last run's, whitespace aside; a
   change is a line in the log and a notification with an excerpt of the lines gone and come (at

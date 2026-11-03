@@ -112,6 +112,10 @@ class Response:
 Opener = Callable[[str], contextlib.AbstractContextManager[Response]]
 
 
+class Gone(SourceError):
+    """The address answered 404 Not Found or 410 Gone (an expired link, a file taken away)."""
+
+
 class Unchanged(Exception):
     """The file asked for only if it changed (a Check's ETag or Last-Modified) did not: 304 Not
     Modified, nothing written."""
@@ -456,6 +460,8 @@ def _attempt(  # pylint: disable=too-many-arguments,too-many-positional-argument
         # whether all of them are, which is the account's.
         if response.status in (401, 403):
             raise Denied(f"{url} answered {response.status}: the account may not download it")
+        if response.status in (404, 410):
+            raise Gone(f"{url} answered {response.status}")
         if response.status >= 400:
             raise SourceError(f"{url} answered {response.status}")
         check = _check_of(url)

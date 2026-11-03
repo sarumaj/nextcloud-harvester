@@ -548,6 +548,9 @@ class Executor:
                 source = source_class(job.options, credentials, client)
                 source.home = home
                 source.timezone = job.timezone
+                source.hand_over = lambda target, url: ondemand.hand_over(
+                    self.store, job, target, url, lambda other: any(self._credentials(nc, other).values()), self.fetch
+                )
                 source.contents = versions.Contents(
                     self.store,
                     job_id,

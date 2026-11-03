@@ -2428,6 +2428,23 @@
 						el('span', {}, el('strong', { text: optionTitle(key, option) }), el('br'), el('small', { class: 'harvester-muted', text: said(option.description) }))))
 					continue
 				}
+				if (option.kind === 'job') {
+					// One of the person's on-demand website jobs, kept as its ID (0: none); the list
+					// comes as the jobs' list does, a job no longer there is none.
+					const select = el('select', { 'data-option': key }, el('option', { value: '0', text: t('None') }))
+					// Until the list is there, the job keeps what it had.
+					let listed = false
+					api('GET', '/jobs').then((jobs) => {
+						select.append(...jobs.filter((other) => onDemand(other) && other.source === 'site')
+							.map((other) => el('option', { value: String(other.id), text: `${other.name} (${other.target})` })))
+						select.value = String(current || 0)
+						if (!select.value) select.value = '0'
+						listed = true
+					}).catch(() => {})
+					optionInputs[key] = { get value() { return Number(listed ? select.value : current) || 0 } }
+					options.append(field(optionTitle(key, option), select, said(option.description)))
+					continue
+				}
 				if (option.choices && option.choices.length) {
 					// The values it may have; several (kept comma-separated) where it allows them.
 					const chosen = String(current).split(',').map((v) => v.trim())

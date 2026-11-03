@@ -224,8 +224,9 @@ class Option:
     description: str = ""
     # How the job's form shows it: text; url (an address, checked as typed); regex (checked as
     # typed); template (a file name or address made of values, with the values to insert);
-    # flag (a checkbox, kept as 1 or 0); recipe (the recorder's button and its JSON). A number
-    # default makes a number field.
+    # flag (a checkbox, kept as 1 or 0); recipe (the recorder's button and its JSON); job (one of
+    # the person's on-demand website jobs, kept as its ID, 0: none). A number default makes a
+    # number field.
     kind: str = "text"
     # The unit of a size (bytes, MB): the form shows the value in readable units beside it.
     unit: str = ""
@@ -354,6 +355,9 @@ class Source(abc.ABC):
         self.contents: Any = None
         # The run's outcome in place of its files' (a watched page's: pagewatch.py), or None.
         self.note: Any = None
+        # Hands an address to one of the person's on-demand jobs (its ID) to fetch, as Send to
+        # Harvester does (ondemand.hand_over, the executor's): why it could not, "" once queued.
+        self.hand_over: Callable[[int, str], str] = lambda job_id, url: "no on-demand job takes it here"
 
     def rechecks(self) -> bool:
         """Whether a run asks the addresses of the files the job saved again (RECHECK); never for

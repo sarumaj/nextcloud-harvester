@@ -33,6 +33,7 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   a job with an account and an address of its own fetches only that site's addresses (the same
   host, with or without `www.`, or a subdomain), since its user name and password are for that
   site. `mail`, `remote` and `releases` have no address a page could send: no on-demand jobs.
+  A mail job may send its links that give a web page to one (*Pages to the on-demand job*).
   The addresses wait in the database (a restart loses none), one after another per job, each
   once (sent again while it waits, it keeps its place); a job's next address goes back to the
   queue's end, behind other jobs. The job's row lists them, the one being fetched (*Stop* ends
@@ -70,6 +71,25 @@ recorder that makes them, and what a run does. Installing and the admin's settin
     is skipped unread, and a message whose attachments were all saved or skipped (or that is not
     the job's) is not read again until the job's server, folder, filters, types or sizes change.
     Only the attachment the run is at is held in memory.
+    **Also the files linked in the message** (off by default, also for jobs saved before;
+    `sources/maillinks.py`) downloads the files a message links to too ("Download your
+    invoice"): the HTML part's links and the addresses written in the plain text, http(s) only,
+    of the **Link address** or **Link text** patterns (one at least; both given, both must match;
+    an address in plain text has its line as its text), at most 10 a message. Never a `mailto:`
+    or `tel:` link, nor one that unsubscribes or manages a newsletter (by its address, its text,
+    or the message's `List-Unsubscribe`), nor a private address. Each goes through the checked
+    download of the other sources (the guarded client: public addresses only, a redirect's too,
+    at most 10 redirects of a tracker; the job's types and largest file), with no cookies,
+    password or `Referer`; it is named as the answer names it (`Content-Disposition`, else the
+    last part of the address it ended at: `{filename}`, `{stem}`, `{ext}` in *File name*), with
+    the message's values and tags. A linked file is known by the message's ID and the link's
+    address: fetched once, and a duplicate of a file the job saved is not saved again. A link that
+    gives a web page instead of a file (a portal's sign-in) is sent to **Pages to the on-demand
+    job**, one of your on-demand website jobs, whose recipe signs in and downloads it (its queue,
+    as *Send to Harvester*; checked as a sent address is); without one, the log says *a page, not
+    a file: …*. Such a page, and a link that expired (404, 410) or is closed (401, 403), is a line
+    in the log once and skipped for good, not a failure of the run. *Attachment names* is for
+    attachments only.
   - `feed`: the files of an RSS or Atom feed, newest first: its enclosures (podcast episodes) or
     each entry's link, through the checked download. Values: `{title}`, `{feed}`, `{author}`,
     `{date}`, `{year}`, `{filename}`, …
