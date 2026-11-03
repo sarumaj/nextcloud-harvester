@@ -707,7 +707,8 @@ recorder that makes them, and what a run does. Installing and the admin's settin
 
 ## Runs
 
-- **Downloads:** a pause between files, and one of a second between listing pages; waits when
+- **Downloads:** a pause between files (counted from the end of the site's last answer: saving
+  the file into Nextcloud is part of it), and one of a second between listing pages; waits when
   the site asks (429 or 503 with `Retry-After`, for listing pages too, or a wait pattern on the
   URL it redirects to, like heise's `wait_sec=`) and three retries of a broken transfer; the
   listing a file is linked from as `Referer`, and the browser's language (`Accept-Language`). A

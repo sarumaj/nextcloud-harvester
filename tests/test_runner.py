@@ -86,7 +86,71 @@ def test_run_downloads_new_files_tags_them_and_keeps_existing_ones():
     assert library.files == {"/In/a.txt": b"by hand", "/In/b.txt": b"b", "/In/c.txt": b"c"}
     assert library.tags[0] == ["mine", "letter a"]
     assert seen == {"a", "b", "c", runner.FULL_PASS}
-    assert sleeps == [5.0]
+    assert len(sleeps) == 1 and 4.0 < sleeps[0] <= 5.0, "the pause, less the time since the download"
+
+
+class Clock:
+    """A fake time.monotonic that only the fakes move: a download, an upload, a sleep."""
+
+    def __init__(self):
+        self.now = 100.0
+        self.sleeps: list[float] = []
+
+    def __call__(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+@pytest.mark.parametrize("upload, sleeps", [(3.0, [2.0, 2.0]), (6.0, [])])
+def test_the_pause_counts_from_the_end_of_the_last_download(upload, sleeps):
+    """The site sees at least the pause (5 s) between the end of one download and the start of
+    the next; the time the file took to go into Nextcloud counts towards it."""
+    clock = Clock()
+    downloads: list[tuple[float, float]] = []
+
+    class Timed(FakeSource):
+        """A download takes a second."""
+
+        def fetch(self, item, dest):
+            began = clock.now
+            clock.now += 1.0
+            dest.write(item.key.encode())
+            downloads.append((began, clock.now))
+
+    class Slow(FakeLibrary):
+        """A file takes upload seconds to go in."""
+
+        def put(self, path, content):
+            clock.now += upload
+            return super().put(path, content)
+
+    job = Job(user="u", name="n", source="fake", target="/In", schedule="* * * * *")
+    seen: set[str] = set()
+    runner.run(job, Timed({}, {}, None), Slow(), seen.__contains__, seen.add, clock.sleep, clock=clock)
+    assert clock.sleeps == sleeps
+    gaps = [later[0] - earlier[1] for earlier, later in zip(downloads, downloads[1:])]
+    assert len(gaps) == 2 and all(gap >= Timed.pause for gap in gaps), gaps
+
+
+def test_a_failed_download_counts_as_the_sites_last_answer():
+    clock = Clock()
+
+    class SecondFails(FakeSource):
+        """b's site answers an error after two seconds."""
+
+        def fetch(self, item, dest):
+            clock.now += 2.0
+            if item.key == "b":
+                raise SourceError("b answered 500")
+            dest.write(item.key.encode())
+
+    job = Job(user="u", name="n", source="fake", target="/In", schedule="* * * * *")
+    seen: set[str] = set()
+    runner.run(job, SecondFails({}, {}, None), FakeLibrary(), seen.__contains__, seen.add, clock.sleep, clock=clock)
+    assert clock.sleeps == [5.0, 5.0], "c waits the whole pause after b's error, not after a's file"
 
 
 def test_run_stops_after_max_items():

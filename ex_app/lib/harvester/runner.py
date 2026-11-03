@@ -227,6 +227,7 @@ def place(  # pylint: disable=too-many-arguments,too-many-positional-arguments,t
     record: Callable[[Placed], None] = lambda placed: None,
     owners: dict[int, str] | None = None,
     recheck: bool = False,
+    fetched: Callable[[], None] = lambda: None,
 ) -> str:
     """Puts the item's file into the job's folder (after the pause) and tags it; returns what it
     did (DOWNLOADED, ADOPTED: it was there already, downloaded by hand or by an earlier job, kept,
@@ -235,14 +236,15 @@ def place(  # pylint: disable=too-many-arguments,too-many-positional-arguments,t
     for a later change of the job's tags; owners are the files the job saved, by ID, with their
     items' keys (free_path). An item whose name comes with its file (pending) is downloaded
     first, and then put where that name says. recheck: the item's file is known, its address is
-    asked again (_recheck)."""
+    asked again (_recheck). fetched hears when the site's answer has come (or failed): the next
+    pause counts from there."""
     if item.problem is not None:
         raise item.problem
     if not item.path.strip("/"):
         raise SourceError(f"the file name for {item.url} came out empty (check the job's File name)")
     owners = owners or {}
     if recheck and source.contents is not None:
-        return _recheck(job, source, library, item, pause, report, record, owners)
+        return _recheck(job, source, library, item, pause, report, record, owners, fetched)
     path, file_id = (
         (posixpath.join(job.target, item.path), None) if item.pending else free_path(job, library, item, owners)
     )
@@ -253,8 +255,11 @@ def place(  # pylint: disable=too-many-arguments,too-many-positional-arguments,t
     pause()
     report("info", said("Downloading {file}", file=item.url if item.pending else path))
     with tempfile.TemporaryFile() as content:
-        with download.checking(download.Check(item.url)) as check:
-            named = source.fetch(item, content)
+        try:
+            with download.checking(download.Check(item.url)) as check:
+                named = source.fetch(item, content)
+        finally:
+            fetched()
         if item.pending:
             item = named or item
             path, file_id = free_path(job, library, item, owners)
@@ -287,6 +292,7 @@ def _recheck(  # pylint: disable=too-many-arguments,too-many-positional-argument
     report: Report,
     record: Callable[[Placed], None],
     owners: dict[int, str],
+    fetched: Callable[[], None],
 ) -> str:
     """A known file's address asked again: only if it changed since (its ETag, Last-Modified),
     else downloaded and compared by its hash. A file that changed is saved over its own (UPDATED:
@@ -305,6 +311,8 @@ def _recheck(  # pylint: disable=too-many-arguments,too-many-positional-argument
         except download.Unchanged:
             contents.checked(item.key, known)
             return UNCHANGED
+        finally:
+            fetched()
         item = (named or item) if item.pending else item
         path = known["path"] if known else free_path(job, library, item, owners)[0]
         size = content.tell()
@@ -514,6 +522,7 @@ def run(  # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
     owners: dict[int, str] | None = None,
     later: str = NEXT_RUN,
     deleted: "Deleted | None" = None,
+    clock: Callable[[], float] = time.monotonic,
 ) -> str:
     """Downloads up to max_items new items (and stops at until, a time.monotonic(), or a
     function giving it) and returns what was done, in a sentence; report hears of each step
@@ -522,7 +531,8 @@ def run(  # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
     the files the job saved before, by ID, with their items' keys; later says when the rest
     comes (a fetch's: when its address is sent again). deleted (deleted.py) tells which known
     files are gone from Nextcloud: seen() skips them no more, and a known file due to be asked
-    for changes that is gone is downloaded as a new one."""
+    for changes that is gone is downloaded as a new one. clock (time.monotonic) times the pauses
+    between downloads."""
     limit = int(job.options.get("max_items", COMMON_OPTIONS["max_items"].default))
     tally = Tally(later=later)
     complete = True
@@ -534,6 +544,19 @@ def run(  # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
         if placed.file_id is not None:
             owners[placed.file_id] = placed.key
         record(placed)
+
+    # The pause between two downloads counts from the end of the site's last answer (a file, an
+    # ask whether it changed, a sign-in anew: last), not from the end of saving and tagging the
+    # file in Nextcloud: the site sees at least source.pause between them, and no more than that.
+    last: list[float] = []
+
+    def answered() -> None:
+        last[:] = [clock()]
+
+    def wait() -> None:
+        left = source.pause - (clock() - last[0]) if last else source.pause
+        if left > 0:
+            sleep(left)
 
     # The sign-in is done anew once a run (resigned); failures one after another end it.
     resigned = False
@@ -573,18 +596,19 @@ def run(  # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
                 break
             # A pause between two downloads (or asks of a known file), not before the first.
             asked = tally.downloaded + tally.updated + tally.unchanged + tally.duplicates
-            pause = (lambda: sleep(source.pause)) if asked else (lambda: None)
+            pause = wait if asked else (lambda: None)
             rechecked = item.key in again and not (deleted is not None and deleted.gone(item.key))
             try:
                 try:
-                    done = place(job, source, library, item, pause, report, keep, owners, rechecked)
+                    done = place(job, source, library, item, pause, report, keep, owners, rechecked, answered)
                 except WebPage as error:
                     # The session ended in the middle of the run (files came before): signed in
                     # anew once, and the file asked for again.
                     if resigned or not asked or not signed_in_again(source, error, report):
                         raise
                     resigned = True
-                    done = place(job, source, library, item, pause, report, keep, owners, rechecked)
+                    answered()
+                    done = place(job, source, library, item, pause, report, keep, owners, rechecked, answered)
                 setattr(tally, done, getattr(tally, done) + 1)
                 if deleted is not None:
                     deleted.placed(item.key, done, posixpath.join(job.target, item.path))

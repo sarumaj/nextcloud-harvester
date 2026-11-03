@@ -48,6 +48,10 @@
   chunks), its ID comes from the answer instead of a lookup, and a job's folders are made once a
   run, not for each file (one made again if it is deleted meanwhile): some 2 requests a file
   instead of about 9.
+- The pause between two downloads counts from the end of the site's last answer (a file, an
+  error, a check for changes, a sign-in anew), so that saving and tagging the file are part of
+  it: the site still sees the whole pause between two downloads, and a run waits about a second
+  less a file.
 
 ### Fixed
 
