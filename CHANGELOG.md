@@ -60,6 +60,7 @@
   the other browsers and the app.
 - The image is some 270 MB smaller: without Playwright's headless shell, which nothing starts
   (the browsers are the full Chromium); an empty `HARVESTER_BROWSER_CHANNEL` means it too.
+- The app's modules are compiled in the image, not again at each start (some 0.25 s).
 
 ### Fixed
 

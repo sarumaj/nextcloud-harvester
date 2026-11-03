@@ -121,6 +121,9 @@ RUN useradd --system --uid 10001 --user-group --create-home --home-dir /home/har
 COPY ex_app/img /ex_app/img
 COPY ex_app/js /ex_app/js
 COPY ex_app/lib /ex_app/lib
+# The app's modules compiled now: the app's user may not write their __pycache__ there, so each
+# start of the app compiled them all again, in memory.
+RUN python3 -m compileall -q /ex_app/lib
 
 # Copy scripts with the proper permissions.
 COPY --chmod=775 healthcheck.sh /
