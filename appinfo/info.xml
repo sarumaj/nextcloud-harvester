@@ -9,7 +9,7 @@ websites (a recipe recorded in the app's browser, which proposes the links' patt
 template such as heise's magazines), mailbox attachments (IMAP), feeds and podcasts, video and
 gallery sites (yt-dlp, gallery-dl), file stores and cloud drives (rclone), and release pages.
 When a site asks for a person, the job waits for you to answer it in its browser.]]></description>
-	<version>0.10.0</version>
+	<version>0.11.0</version>
 	<licence>agpl</licence>
 	<author>Dawid Ciepiela</author>
 	<namespace>Harvester</namespace>
@@ -27,7 +27,7 @@ When a site asks for a person, the job waits for you to answer it in its browser
 		<docker-install>
 			<registry>ghcr.io/sarumaj</registry>
 			<image>harvester</image>
-			<image-tag>0.10.0</image-tag>
+			<image-tag>0.11.0</image-tag>
 		</docker-install>
 		<routes>
 			<route>
