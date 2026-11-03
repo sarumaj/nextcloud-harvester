@@ -25,6 +25,29 @@
 	// A text the server sends (a source's, an option's or a template's title and help, an error):
 	// translated if the app's translations have it (scripts/l10n.py collects them), as sent if not.
 	const said = (text) => (text ? t(String(text)) : text)
+	// A server's text with values (the schedule in words, why a job waits, the progress log, a
+	// run's outcome, the recorder's warnings): the English text, and its template (harvester.l10n:
+	// {text, params} or a count's {text, plural, count, params}, a list {list, kind}), translated
+	// here and filled with its values as text; a value may be a template of its own. Without a
+	// template (a log line older than templates, an error) the text is shown as it came.
+	function rendered(template) {
+		if (template === null || typeof template !== 'object') return String(template ?? '')
+		if (Array.isArray(template.list)) return joined(template.list.map(rendered), template.kind)
+		const vars = {}
+		for (const [name, value] of Object.entries(template.params || {})) vars[name] = rendered(value)
+		return 'plural' in template ? n(template.text, template.plural, Number(template.count), vars) : t(template.text, vars)
+	}
+	const shown = (text, template) => (template && typeof template === 'object' ? rendered(template) : (text ?? ''))
+	// A list in the person's language ("Monday and Thursday", "3 downloaded, 1 skipped"); in English
+	// where the app has no translations of it (the page's words stay English there too).
+	function joined(items, kind) {
+		const language = t('Monday') !== 'Monday' ? document.documentElement.lang || 'en' : 'en'
+		try {
+			return new Intl.ListFormat(language, { type: kind === 'unit' ? 'unit' : 'conjunction' }).format(items)
+		} catch (e) {
+			return items.join(', ')
+		}
+	}
 	// The proxy's name as the admin set it, or the default's words in the person's language.
 	const proxyName = (name) => (!name || name === 'the proxy' ? t('the proxy') : name)
 
@@ -270,9 +293,9 @@
 					el('div', {
 						class: 'harvester-muted harvester-message',
 						'data-job-message': String(job.id),
-						text: job.running ? job.waiting || t('Starting')
-							: job.queued ? job.waiting || t('Waiting for its site or a free runner')
-								: job.last_run ? `${when(job.last_run)} · ${job.last_message || ''}` : '',
+						text: job.running ? shown(job.waiting, job.waiting_l10n) || t('Starting')
+							: job.queued ? shown(job.waiting, job.waiting_l10n) || t('Waiting for its site or a free runner')
+								: job.last_run ? `${when(job.last_run)} · ${shown(job.last_message, job.last_message_l10n)}` : '',
 					}),
 					notices[job.id] ? el('div', { class: 'harvester-error harvester-message', role: 'alert', text: notices[job.id] }) : '',
 					fetchList(job, act)),
@@ -464,7 +487,7 @@
 		const line = (entry) => el('li', { class: `harvester-log-${entry.level}` },
 			el('time', { text: clock(entry.at) }),
 			select.value ? '' : el('span', { class: 'harvester-log-job', text: entry.name }),
-			el('span', { class: 'harvester-log-text', text: entry.message },
+			el('span', { class: 'harvester-log-text', text: shown(entry.message, entry.message_l10n) },
 				// The job's browser's picture of the failed step (or of the page asking for a
 				// person): kept for its newest failure only, so an older line's may be gone.
 				entry.shot ? el('button', {
@@ -489,14 +512,14 @@
 				// Why a queued job waits (its place, a runner, its site), or a running one (a browser).
 				for (const [id, reason] of Object.entries(data.waiting || {})) {
 					const message = root.querySelector(`[data-job-message="${id}"]`)
-					if (message) message.textContent = reason
+					if (message) message.textContent = shown(reason, (data.waiting_l10n || {})[id])
 				}
 				const stick = list.scrollHeight - list.scrollTop - list.clientHeight < 24
 				for (const entry of data.lines) {
 					list.append(line(entry))
 					after = entry.id
 					const message = root.querySelector(`[data-job-message="${entry.job}"]`)
-					if (message && running.includes(entry.job) && !(data.waiting || {})[entry.job]) message.textContent = entry.message
+					if (message && running.includes(entry.job) && !(data.waiting || {})[entry.job]) message.textContent = shown(entry.message, entry.message_l10n)
 				}
 				while (list.children.length > 300) list.firstChild.remove()
 				if (!list.children.length) list.append(el('li', { class: 'harvester-muted', text: t('No runs yet.') }))
@@ -858,7 +881,7 @@
 					if (message.textContent === starting) message.textContent = ''
 				} else if (data.type === 'cursor') screen.style.cursor = data.cursor
 				else if (data.type === 'url') url.value = data.url
-				else if (data.type === 'error') { message.textContent = data.message; screen.say(data.message) }
+				else if (data.type === 'error') { message.textContent = shown(data.message, data.message_l10n); screen.say(message.textContent) }
 				else if (data.type === 'viewport') screen.resized(data)
 				else if (data.type === 'rclone-done') {
 					finished = true
@@ -1516,7 +1539,7 @@
 				if (message.textContent === starting) message.textContent = ''
 			} else if (data.type === 'cursor') screen.style.cursor = data.cursor
 			else if (data.type === 'url') url.value = data.url
-			else if (data.type === 'error') { message.textContent = data.message; done.disabled = false; screen.say(data.message) }
+			else if (data.type === 'error') { message.textContent = shown(data.message, data.message_l10n); done.disabled = false; screen.say(message.textContent) }
 			else if (data.type === 'session-saved') { socket.close(); show(root) }
 			else if (data.type === 'viewport') screen.resized(data)
 			else if (data.type === 'network') network.show(data)
@@ -1945,7 +1968,7 @@
 			if (data.type === 'frame') { if (!left(screen, socket)) screen.frame(data.data) }
 			else if (data.type === 'cursor') screen.style.cursor = data.cursor
 			else if (data.type === 'url') url.value = data.url
-			else if (data.type === 'error') { message.textContent = data.message; screen.say(data.message) }
+			else if (data.type === 'error') { message.textContent = shown(data.message, data.message_l10n); screen.say(message.textContent) }
 			else if (data.type === 'viewport') screen.resized(data)
 			else if (data.type === 'network') network.show(data)
 			else if (data.type === 'test-started') { testing = true; tested = null; played = {}; editing = null; playedShape = shape(); renderPanel() }
@@ -1962,7 +1985,7 @@
 				renderPanel()
 			}
 			else if (data.type === 'where') showWhere(data.frame)
-			else if (data.type === 'warning') leaks.append(el('p', { text: data.message }))
+			else if (data.type === 'warning') leaks.append(el('p', { text: shown(data.message, data.message_l10n) }))
 			else if (data.type === 'requests') { requests = data.items; if (!networkBox.hidden) renderRequests() }
 			else if (data.type === 'recipe') {
 				// The steps and picks are the recorder's (it started with the form's).
@@ -1970,7 +1993,7 @@
 				if (!data.recipe.next) delete recipe.next
 				if (shape() !== playedShape) { played = {}; editing = null }
 				proposals = data.proposals
-				warnings = data.warnings || []
+				warnings = (data.warnings || []).map((warning, index) => shown(warning, (data.warnings_l10n || [])[index]))
 				message.textContent = ''
 				renderPanel()
 			}
@@ -2125,12 +2148,12 @@
 					const answer = await api('GET', `/schedule?expression=${encodeURIComponent(schedule.value.trim())}&timezone=${encodeURIComponent(zone)}`)
 					scheduleHint.classList.toggle('harvester-error', Boolean(answer.error))
 					if (answer.error) {
-						scheduleHint.textContent = answer.error
+						scheduleHint.textContent = shown(answer.error, answer.error_l10n)
 						return
 					}
 					const format = { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }
 					const next = answer.next.map((at) => new Date(at * 1000).toLocaleString(undefined, format)).join(' · ')
-					scheduleHint.replaceChildren(el('strong', { text: answer.description }), el('br'),
+					scheduleHint.replaceChildren(el('strong', { text: shown(answer.description, answer.description_l10n) }), el('br'),
 						el('span', { class: 'harvester-muted', text: t('Next runs (your time): {next}', { next }) }))
 				} catch (e) {
 					scheduleHint.textContent = ''

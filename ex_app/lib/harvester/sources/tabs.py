@@ -13,6 +13,7 @@ from typing import Any
 from playwright.sync_api import Error as PlaywrightError
 
 from .. import recipe as recipes
+from ..l10n import said
 from .base import SourceError
 
 # How long the network may take to go quiet after a step that waited for its address and element
@@ -52,14 +53,24 @@ def step_event(number: int, step: dict, state: str, **more: Any) -> dict:
 
 
 def step_line(event: dict) -> str:
-    """The progress log's line of a step's pause or retry (step_event), "" for its other
-    events."""
+    """The progress log's line of a step's pause or retry (step_event), a said() text, "" for
+    its other events."""
     if event["state"] == "pausing":
-        return f"step {event['number']} ({event['label']}): pausing {event['seconds']:g} s before it"
+        return said(
+            "step {number} ({label}): pausing {seconds} s before it",
+            number=event["number"],
+            label=event["label"],
+            seconds=f"{event['seconds']:g}",
+        )
     if event["state"] == "retrying":
-        return (
-            f"step {event['number']} ({event['label']}) failed, trying again in {event['seconds']:g} s "
-            f"(attempt {event['attempt']} of {event['of']}): {event['why']}"
+        return said(
+            "step {number} ({label}) failed, trying again in {seconds} s (attempt {attempt} of {of}): {why}",
+            number=event["number"],
+            label=event["label"],
+            seconds=f"{event['seconds']:g}",
+            attempt=event["attempt"],
+            of=event["of"],
+            why=str(event["why"]),
         )
     return ""
 

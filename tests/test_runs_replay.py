@@ -86,7 +86,7 @@ def test_a_dead_year_is_an_empty_page_and_the_run_no_complete_pass():
     message, seen, log = run(made)
     assert message == "5 downloaded", "2026 and 2024 still come"
     assert any(re.search(r"a level 1 page \(page 1, .*/2025\) gave nothing: answered 404", line) for line in log)
-    assert FULL_PASS not in seen and "1 listing pages gave nothing: the run does not count as a complete pass" in log
+    assert FULL_PASS not in seen and "1 listing page gave nothing: the run does not count as a complete pass" in log
 
 
 def test_an_error_on_the_listing_itself_fails_the_run_readably():

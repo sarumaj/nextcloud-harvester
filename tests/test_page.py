@@ -6,7 +6,8 @@ from the progress log, with the job's browser opened at its page; the queue's st
 job waits; and on-demand jobs: Fetch a URL…, the waiting addresses, the form's On demand, and the
 Send to Harvester bookmarklet with the page it opens (?fetch=); the recorder's steps in frames,
 their switch "optional" with its hint for consent buttons, and "Acting in"; the cookies panel of both
-browser views."""
+browser views; the server's texts with values (templates) in the person's language, older plain
+ones as they came."""
 
 # pylint: disable=missing-function-docstring
 
@@ -164,6 +165,8 @@ def fixture_page(request):
             },
         },
         "/jobs/1/shot": SHOT,
+        # The schedule in words as the server says it (the job's form asks as it is typed).
+        "/schedule": main.explain_schedule("0 6 * * *"),
         "/status": STATUS,
         "POST /jobs/3/fetch": {"id": 8, "url": SENT, "at": 3, "new": True},
         "POST /jobs": CLIPS | {"id": 9, "name": "v.example", "once": False, "fetches": []},
@@ -181,7 +184,9 @@ def fixture_page(request):
 
     def document(route) -> None:
         stubs = STUBS + (L10N_STUBS if language else "")
-        body = f'<html><head><script>{stubs}</script><script src="/main.js"></script>'
+        # Nextcloud names the person's language on the page (lists are joined in it).
+        body = f'<html lang="{marker.args[0] if marker else "en"}"><head><script>{stubs}</script>'
+        body += '<script src="/main.js"></script>'
         if language and language.exists():
             body += f"<script>{language.read_text(encoding='utf-8')}</script>"
         body += "</head>"
@@ -697,3 +702,80 @@ def test_a_language_without_translations_is_english(page):
     ]
     assert page.get_by_role("button", name="New job").is_visible()
     assert page.locator(".harvester-load").inner_text() == "Runners 2/2 · Browsers 3/3 (2 jobs, 1 recording) · 3 queued"
+
+
+# A queued job whose reason comes as a template, and a job whose last run's outcome does
+# (harvester.l10n), as the API gives them.
+WAITS = QUEUED | {
+    "waiting_l10n": {
+        "text": "{place}. in the queue: waits for a runner, all {runners} busy (%n job ahead)",
+        "plural": "{place}. in the queue: waits for a runner, all {runners} busy (%n jobs ahead)",
+        "count": 1,
+        "params": {"place": 2, "runners": 2},
+    }
+}
+DONE = JOB | {
+    "id": 4,
+    "name": "Done",
+    "last_status": "ok",
+    "last_message": "3 downloaded, 1 already there",
+    "last_message_l10n": {
+        "list": [
+            {"text": "%n downloaded", "plural": "%n downloaded", "count": 3},
+            {"text": "%n already there", "plural": "%n already there", "count": 1},
+        ],
+        "kind": "unit",
+    },
+}
+
+
+@needs_chromium
+@pytest.mark.language("de")
+@pytest.mark.parametrize("page", [[JOB, WAITS, DONE]], indirect=True)
+def test_the_servers_texts_in_the_persons_language(page):
+    german = json.loads((ROOT / "l10n" / "de.json").read_text(encoding="utf-8"))["translations"]
+    rows = page.locator("tbody tr")
+    # Why a job waits: the template's German, its count's form and its values.
+    key = "_{place}. in the queue: waits for a runner, all {runners} busy (%n job ahead)_::_{place}. in the queue: waits for a runner, all {runners} busy (%n jobs ahead)_"  # pylint: disable=line-too-long
+    reason = german[key][0].replace("%n", "1").replace("{place}", "2").replace("{runners}", "2")
+    assert reason in rows.nth(1).inner_text() and "in the queue" not in rows.nth(1).inner_text()
+    # A run's outcome: each figure in German; an older run's message (no template) as it was.
+    done = rows.nth(2).inner_text()
+    assert german["_%n downloaded_::_%n downloaded_"][1].replace("%n", "3") in done
+    assert german["_%n already there_::_%n already there_"][0].replace("%n", "1") in done
+    assert "step 2 (click #go) failed" in rows.nth(0).inner_text()
+
+    # The progress log: a line with its template in German, an older plain line as it is, and a
+    # value that looks like markup shown as text.
+    lines = [
+        {"id": 2, "job": 1, "name": "Mag", "at": 2, "level": "info", "message": "Looking for new files", "shot": 0},
+        {
+            "id": 3,
+            "job": 1,
+            "name": "Mag",
+            "at": 3,
+            "level": "info",
+            "message": "Saved /Mag/<b>a</b>.pdf (2.0 KB)",
+            "message_l10n": {
+                "text": "Saved {path} ({size})",
+                "params": {"path": "/Mag/<b>a</b>.pdf", "size": "2.0 KB"},
+            },
+            "shot": 0,
+        },
+    ]
+    answer = LOG | {"lines": lines, "running": [], "queued": [2]}
+    page.route(
+        "**/apps/app_api/proxy/harvester/api/log**",
+        lambda route: route.fulfill(status=200, content_type="application/json", body=json.dumps(answer)),
+    )
+    page.wait_for_function("document.querySelectorAll('.harvester-log-text').length >= 3", timeout=15000)
+    texts = page.locator(".harvester-log-text").all_inner_texts()
+    assert "Looking for new files" in texts[-2], "an older line, as it was"
+    saved = german["Saved {path} ({size})"].replace("{path}", "/Mag/<b>a</b>.pdf").replace("{size}", "2.0 KB")
+    assert saved in texts[-1]
+
+    # The schedule in words, in the job's form.
+    page.get_by_role("button", name=german["Edit"]).first.click()
+    hint = page.locator(".harvester-schedule strong")
+    hint.wait_for()
+    assert hint.inner_text() == german["every day at {times}"].replace("{times}", "06:00")

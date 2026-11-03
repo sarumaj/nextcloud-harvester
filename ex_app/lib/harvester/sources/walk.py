@@ -15,6 +15,7 @@ from collections.abc import Callable, Generator, Iterator
 from typing import Any
 
 from .. import jsonlist, patterns
+from ..l10n import said
 from . import near
 from .base import ChallengeError, Item, SourceError, pattern_search
 
@@ -144,8 +145,14 @@ class Walk:  # pylint: disable=too-many-instance-attributes
         why = "" if json else self.driver.trouble(page)
         if why:
             self.site.gaps += 1
-            where = "the listing" if level == 0 else f"a level {level} page"
-            self.site.report("info", f"{where} (page {number}, {self.driver.address(page)}) gave nothing: {why}")
+            values = {"number": number, "address": self.driver.address(page), "why": str(why)}
+            if level == 0:
+                line = said("the listing (page {number}, {address}) gave nothing: {why}", **values)
+            else:
+                line = said(
+                    "a level {level} page (page {number}, {address}) gave nothing: {why}", level=level, **values
+                )
+            self.site.report("info", line)
 
     def item_of(self, link: str, text: str, number: int, values: dict, page: Any) -> Item:
         """The file of a link (Site.item) with its listing as Referer; a click link's with what
@@ -214,7 +221,11 @@ class Walk:  # pylint: disable=too-many-instance-attributes
         marks = {("links", links) if links else ("address", patterns.stable_url(self.driver.address(page)))}
         if marks & seen_here:
             self.site.report(
-                "info", f"the next page {self.driver.address(page)} was read already (a loop): its listing ends"
+                "info",
+                said(
+                    "the next page {address} was read already (a loop): its listing ends",
+                    address=self.driver.address(page),
+                ),
             )
             return True
         seen_here |= marks

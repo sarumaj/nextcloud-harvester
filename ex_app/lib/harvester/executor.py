@@ -21,6 +21,7 @@ from croniter import croniter
 from nc_py_api import AsyncNextcloudApp
 
 from . import browser, ondemand, runner, settings
+from .l10n import Said, said, said_n
 from .schedule import zone
 from .watch import Watch, test_due
 from .nextcloud import NextcloudLibrary
@@ -52,13 +53,17 @@ def site_of(job: Job) -> str:
     return f"job:{job.id}"
 
 
-def browsers_in_use() -> str:
+def browsers_in_use() -> Said:
     """The browsers open, by what holds them, without whose: "all 3 in use (2 by jobs, 1 by
     recordings)"."""
     taken = browser.SLOTS.taken()
     jobs, recordings = taken.get("job", 0), taken.get("recording", 0)
-    held = "all" if jobs + recordings >= browser.SLOTS.limit else f"{jobs + recordings} of"
-    return f"{held} {browser.SLOTS.limit} in use ({jobs} by jobs, {recordings} by recordings)"
+    limit = browser.SLOTS.limit
+    if jobs + recordings >= limit:
+        return said("all {limit} in use ({jobs} by jobs, {recordings} by recordings)", limit=limit, jobs=jobs,
+                    recordings=recordings)  # fmt: skip
+    return said("{used} of {limit} in use ({jobs} by jobs, {recordings} by recordings)", used=jobs + recordings,
+                limit=limit, jobs=jobs, recordings=recordings)  # fmt: skip
 
 
 class Control:
@@ -85,7 +90,7 @@ class Control:
         """Asked by the run before each file: waits while it is paused (up to PAUSE_LIMIT, then
         it stops), and says whether to stop."""
         if self.paused.is_set() and not self.stopped.is_set():
-            report("info", "Paused")
+            report("info", said("Paused"))
             began = time.monotonic()
             while self.paused.is_set() and not self.stopped.is_set():
                 if time.monotonic() - began > PAUSE_LIMIT:
@@ -94,7 +99,7 @@ class Control:
                 time.sleep(1)
             self.paused_for += time.monotonic() - began
             if not self.stopped.is_set():
-                report("info", "Resumed")
+                report("info", said("Resumed"))
         return self.stopped.is_set()
 
 
@@ -156,18 +161,26 @@ def page_link(nc: AsyncNextcloudApp) -> str:
     return f"{nc.app_cfg.endpoint.rstrip('/')}/index.php/apps/app_api/embedded/harvester/harvester"
 
 
-def through_proxy(client: httpx.Client) -> str:
+def through_proxy(client: httpx.Client) -> Said:
     """The run's first line when it goes through the proxy: which address sites see (Cloudflare's
-    view, through the run's own client), so the log shows the proxy is used."""
+    view, through the run's own client), so the log shows the proxy is used. The default name
+    is in the person's language, an admin's name as it is."""
+    proxy = said("the proxy") if browser.PROXY_NAME == "the proxy" else browser.PROXY_NAME
     try:
         answer = client.get(browser.TRACE_URL, timeout=15)
         seen = browser.seen_address(answer.text)
     except httpx.HTTPError as error:
-        return f"Through {browser.PROXY_NAME}: the check of the address failed ({error})"
+        return said("Through {proxy}: the check of the address failed ({error})", proxy=proxy, error=str(error))
     if not seen:
-        return f"Through {browser.PROXY_NAME}: the address sites see is unknown"
-    country = f" ({seen['country']})" if seen["country"] else ""
-    return f"Through {browser.PROXY_NAME}: sites see {seen['ip']}{country}"
+        return said("Through {proxy}: the address sites see is unknown", proxy=proxy)
+    if seen["country"]:
+        return said(
+            "Through {proxy}: sites see {address} ({country})",
+            proxy=proxy,
+            address=seen["ip"],
+            country=seen["country"],
+        )
+    return said("Through {proxy}: sites see {address}", proxy=proxy, address=seen["ip"])
 
 
 class Executor:
@@ -229,11 +242,12 @@ class Executor:
             "queued": queued,
         }
 
-    def waits(self, jobs: list[Job]) -> dict[int, str]:
+    def waits(self, jobs: list[Job]) -> dict[int, Said]:
         """Why each of the jobs (those a user may see) waits, if it does: its place in the queue
         and what it waits for (a runner, its own site, a browser), and how many addresses an
         on-demand job has to fetch. Nothing of other people's jobs but how many there are: the
-        site named is the job's own (or its next address's)."""
+        site named is the job's own (or its next address's). The reasons are said() texts (the
+        page translates them)."""
         with self._lock:
             order = list(self._queued)
             busy_sites = set(self._sites.values())
@@ -241,30 +255,39 @@ class Executor:
         waiting: dict[int, list[str]] = {}
         for fetch in self.store.fetches([job.id or 0 for job in jobs]):
             waiting.setdefault(fetch["job"], []).append(fetch["url"])
-        reasons: dict[int, str] = {}
+        reasons: dict[int, Said] = {}
         for job in jobs:
             job_id = job.id or 0
             if job_id in running:
                 if running[job_id] and browser.SLOTS.waiting(running[job_id]):
-                    reasons[job_id] = f"Waits for a browser: {browsers_in_use()}"
+                    reasons[job_id] = said("Waits for a browser: {browsers}", browsers=browsers_in_use())
                 continue
             if job_id not in order:
                 continue
             ahead = order.index(job_id)
-            place = f"{ahead + 1}. in the queue"
+            place = ahead + 1
             # The site its next run is of: an on-demand job's next address's.
             site = site_of(ondemand.for_fetch(job, waiting[job_id][0]) if job_id in waiting else job)
             if site in busy_sites and not site.startswith("job:"):
-                reasons[job_id] = f"{place}: waits for its site ({site}), used by another job"
+                reasons[job_id] = said(
+                    "{place}. in the queue: waits for its site ({site}), used by another job", place=place, site=site
+                )
             elif len(running) >= self.runners:
-                plural = "s" if ahead != 1 else ""
-                reasons[job_id] = f"{place}: waits for a runner, all {self.runners} busy ({ahead} job{plural} ahead)"
+                reasons[job_id] = said_n(
+                    "{place}. in the queue: waits for a runner, all {runners} busy (%n job ahead)",
+                    "{place}. in the queue: waits for a runner, all {runners} busy (%n jobs ahead)",
+                    ahead,
+                    place=place,
+                    runners=self.runners,
+                )
             else:
-                reasons[job_id] = f"{place}: starts in a moment"
+                reasons[job_id] = said("{place}. in the queue: starts in a moment", place=place)
             # An on-demand job's addresses, fetched one after the other.
             count = len(waiting.get(job_id, []))
             if count:
-                reasons[job_id] += f"; {count} address{'es' if count != 1 else ''} queued"
+                reasons[job_id] = said_n(
+                    "{reason}; %n address queued", "{reason}; %n addresses queued", count, reason=reasons[job_id]
+                )
         return reasons
 
     def start(self) -> None:
@@ -540,7 +563,8 @@ class Executor:
                     finally:
                         source.close()
             if not self._changed(job, watch, source, nc, message):
-                self._succeeded(job_id, control, wanted, f"{fetch['url']}: {message}" if fetch else message, nc)
+                outcome = said("{address}: {outcome}", address=fetch["url"], outcome=message) if fetch else message
+                self._succeeded(job_id, control, wanted, outcome, nc)
         except Exception as error:  # pylint: disable=broad-exception-caught
             # A listing that finds none of its links fails the run; where it found them before,
             # the site changed. A page asking for a person, or a refused sign-in, is no change.
@@ -600,13 +624,16 @@ class Executor:
             return False
         if not self.store.job(job_id):
             return True  # deleted while it ran: nobody to tell
-        line = self.store.log(job_id, "warning", f"The site seems to have changed: {change['detail']}")
+        line = self.store.log(
+            job_id, "warning", said("The site seems to have changed: {detail}", detail=change["detail"])
+        )
         picture = getattr(source, "noticed", None)
         if picture:
             self.store.keep_shot(job_id, line, picture)
-        text = f"The site seems to have changed: {change['reason']}"
+        text = said("The site seems to have changed: {reason}", reason=change["reason"])
         if run:
-            self.store.finish(job_id, "changed", f"{text}; {message}" if message else text)
+            outcome = said("{change}; {outcome}", change=text, outcome=message) if message else text
+            self.store.finish(job_id, "changed", outcome)
         else:
             # A test is no run: the job's schedule counts from its last run still.
             self.store.mark(job_id, "changed", text)
@@ -631,7 +658,7 @@ class Executor:
             control = self.controls.setdefault(job_id, Control())
         control.thread = threading.get_ident()
         watch_stop(control.stopped)
-        self.store.log(job_id, "info", "Testing the recipe (nothing is downloaded)")
+        self.store.log(job_id, "info", said("Testing the recipe (nothing is downloaded)"))
         nc = self.connect()
         try:
             self.call(nc.set_user(job.user))
@@ -657,7 +684,9 @@ class Executor:
                         source.close()
             self._tested(job, result, watch, source, nc)
         except Exception as error:  # pylint: disable=broad-exception-caught
-            self.store.log(job_id, "error", f"The recipe's test failed: {error or type(error).__name__}")
+            self.store.log(
+                job_id, "error", said("The recipe's test failed: {error}", error=str(error) or type(error).__name__)
+            )
         finally:
             watch_stop(None)
             with self._lock:
@@ -669,29 +698,38 @@ class Executor:
         """The recipe test's outcome in the progress log, judged as a run's."""
         job_id = job.id or 0
         for problem in result["problems"]:
-            self.store.log(job_id, "info", f"Test: {problem}")
+            self.store.log(job_id, "info", said("Test: {problem}", problem=problem))
         pages = len(result["pages"])
-        summary = f"The recipe's test: {result['files']} file links on {pages} page{'s' if pages != 1 else ''}"
+        summary = said_n(
+            "The recipe's test: {files} file links on %n page",
+            "The recipe's test: {files} file links on %n pages",
+            pages,
+            files=result["files"],
+        )
         if result.get("error") in ("ChallengeError", "AuthError"):
             # Not the site's change: the run says so (Needs you, Sign-in refused) when it comes.
-            self.store.log(job_id, "error", f"{summary}; it ended: {result['problems'][-1]}")
+            self.store.log(
+                job_id, "error", said("{summary}; it ended: {problem}", summary=summary, problem=result["problems"][-1])
+            )
             return
         if result["ended"] == "stopped":
-            self.store.log(job_id, "done", f"{summary}; stopped")
+            self.store.log(job_id, "done", said("{summary}; stopped", summary=summary))
             return
         failure = result["problems"][-1] if result["ended"] == "failed" else ""
         if self._changed(job, watch, source, nc, failure, failed=bool(failure), run=False):
             return
         latest = self.store.job(job_id)
         if failure:
-            line = self.store.log(job_id, "error", f"{summary}; it failed: {failure}")
+            line = self.store.log(
+                job_id, "error", said("{summary}; it failed: {problem}", summary=summary, problem=failure)
+            )
             if result.get("shot"):
                 self.store.keep_shot(job_id, line, result["shot"])
         else:
-            self.store.log(job_id, "done", f"{summary}: as before")
+            self.store.log(job_id, "done", said("{summary}: as before", summary=summary))
             # Found as before: a warning of a changed site is over (the next run says the rest).
             if latest and latest.last_status == "changed":
-                self.store.mark(job_id, "ok", "The recipe's test found the site as before")
+                self.store.mark(job_id, "ok", said("The recipe's test found the site as before"))
 
     def _succeeded(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self, job_id: int, control: Control, wanted: bool, message: str, nc: AsyncNextcloudApp
@@ -829,7 +867,7 @@ class Executor:
                 self.store.clear_retag(job_id, job.tags)
             return message
         if changed:
-            report("info", f"Tags brought up to date on {changed} files")
+            report("info", said_n("Tags brought up to date on %n file", "Tags brought up to date on %n files", changed))
         known_before = 0
 
         def seen(key: str) -> bool:
@@ -850,10 +888,18 @@ class Executor:
             stopped=stopped,
             record=record,
             owners={entry["file"]: key for key, entry in known.items() if entry["file"] is not None},
-            later="when the address is sent again" if fetch else "next run",
+            later=runner.SENT_AGAIN if fetch else runner.NEXT_RUN,
         )
         if fetch and known_before:
-            report("info", f"{known_before} of the files at {fetch['url']} were fetched before: not again")
+            report(
+                "info",
+                said_n(
+                    "%n of the files at {address} was fetched before: not again",
+                    "%n of the files at {address} were fetched before: not again",
+                    known_before,
+                    address=fetch["url"],
+                ),
+            )
         return message
 
     @staticmethod
@@ -867,7 +913,7 @@ class Executor:
         report: runner.Report,
         record: Callable[[runner.Placed], None],
         stopped: Callable[[], bool],
-    ) -> tuple[str, bool]:
+    ) -> tuple[Said, bool]:
         """A pass for the tags after their change: those of the files saved before the job
         recorded them (earlier, their keys), found by a listing without downloads; changed
         recorded files were brought up to date already. Returns what it did, and whether it went
@@ -875,13 +921,25 @@ class Executor:
         tagged, whole = 0, True
         if earlier:
             report(
-                "info", f"Looking for {len(earlier)} files saved before their tags were kept (nothing is downloaded)"
+                "info",
+                said_n(
+                    "Looking for %n file saved before its tags were kept (nothing is downloaded)",
+                    "Looking for %n files saved before their tags were kept (nothing is downloaded)",
+                    len(earlier),
+                ),
             )
             tagged, whole = runner.retag_earlier(
                 job, source, library, earlier.__contains__, record, previous=previous, report=report, stopped=stopped
             )
-        message = f"Tags brought up to date on {changed + tagged} files"
-        return (message, True) if whole else (f"{message}; stopped, the others get them at the job's next turn", False)
+        count = changed + tagged
+        if whole:
+            return said_n("Tags brought up to date on %n file", "Tags brought up to date on %n files", count), True
+        stopped_at = said_n(
+            "Tags brought up to date on %n file; stopped, the others get them at the job's next turn",
+            "Tags brought up to date on %n files; stopped, the others get them at the job's next turn",
+            count,
+        )
+        return stopped_at, False
 
     def _begin(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self, job_id: int, control: Control, run: bool, retag: bool, fetch: dict | None = None
@@ -893,9 +951,9 @@ class Executor:
         if run:
             self.store.begin(job_id)
         if retag:
-            self.store.log(job_id, "info", "The job's tags changed: bringing them to its files")
+            self.store.log(job_id, "info", said("The job's tags changed: bringing them to its files"))
         if fetch:
-            self.store.log(job_id, "info", f"Fetching {fetch['url']}")
+            self.store.log(job_id, "info", said("Fetching {address}", address=fetch["url"]))
         watch_stop(control.stopped)
 
     def notify(  # pylint: disable=too-many-arguments,too-many-positional-arguments

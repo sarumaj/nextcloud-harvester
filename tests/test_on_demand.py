@@ -244,7 +244,7 @@ def test_files_fetched_before_are_not_fetched_again_and_the_log_says_so(app):
         fetch, _ = executor.fetch(job_id, url)
         executor.run(store.job(job_id) or job, wanted=False, fetch=fetch)
     lines = messages(store, job_id)
-    assert "1 of the files at https://v.example/2 were fetched before: not again" in lines
+    assert "1 of the files at https://v.example/2 was fetched before: not again" in lines
     assert lines[-1] == "https://v.example/2: 1 downloaded", "c alone"
     assert store.seen_keys(job_id) >= {"a", "b", "c"}, "seen is the job's, across its addresses"
 

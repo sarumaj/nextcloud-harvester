@@ -59,7 +59,7 @@ Translated:
   values has placeholders (`t('Delete {name}?', { name })`), never pieces put together, so a
   language can order them; a count is `n()` (`%n` and its forms). Only quoted texts are found:
   no variables, no template strings;
-- what the page shows of the server's lists, through `said()`: the sources' titles,
+- what the page shows of the server's lists, through the page's `said()`: the sources' titles,
   descriptions and account fields, the options' titles and help, the templates' titles,
   descriptions and parameters;
 - the admin's settings (Nextcloud's settings page runs `t()` over their titles, help and
@@ -68,11 +68,30 @@ Translated:
   page through `said()`;
 - the notifications: `executor.notify(nc, "Harvester: {job} failed", {"job": name}, …)` sends
   the subject and message with their values as rich parameters, and Nextcloud translates them
-  for the person who gets them.
+  for the person who gets them;
+- the server's texts with values, as templates (`harvester/l10n.py`): the schedule in words, why
+  a job waits (and the recorder's refusal when no browser is free), the progress log's usual
+  lines, a run's outcome (a job's last message), a changed site's reason, and the recorder's
+  warnings. `said("Saved {path} ({size})", path=…, size=…)` is the English text, a `str` for the
+  logs, the database and API clients that do not translate, and carries its template; the API
+  gives it beside the English as `<field>_l10n` (`message_l10n` of a log line and of the
+  recorder's messages, `last_message_l10n` and `waiting_l10n` of a job, `description_l10n` and
+  `error_l10n` of `/api/schedule`, `warnings_l10n` of the recorder's recipe):
+  `{"text": "Saved {path} ({size})", "params": {…}}`, a count's
+  `{"text": "%n file", "plural": "%n files", "count": 3, "params": {…}}` (`said_n()`), a list
+  `{"list": […], "kind": "and"}` (`listed()`, joined on the page with `Intl.ListFormat` in the
+  person's language). The page's `rendered()` translates it with `t()` or `n()` and fills in the
+  values as text; a value may be a template of its own (a day's name, "next run"). Each text is
+  a whole sentence or phrase, a count `said_n()`; a value is never a piece of English made
+  elsewhere, except an error. The database keeps the template beside the message
+  (`log.message_l10n`, `jobs.last_message_l10n`); a line or message from before has none and is
+  shown as it is, in English.
 
-Not translated: the progress log and the run's messages, the server's errors with values in
-them, the schedule in words, the recorder's warnings, recipes and their keys, the API's
-identifiers, and the logs (for the admin).
+Not translated: the reasons a run fails (the sources' and programs' errors, also inside a
+translated line: "Skipped {file}: {error}"), the progress log's rarer lines (a repaired
+selector, a source's own), the server's errors with values in them that are not `said()`,
+the notifications' values (a changed site's reason in English), recipes and their keys, the
+API's identifiers, and the logs (for the admin).
 
 **A new or changed text:** write it in English where it is shown, as above, then
 
@@ -81,7 +100,8 @@ identifiers, and the logs (for the admin).
 ```
 
 translate them into each `l10n/<language>.json` (a plural's key is `_one_::_many_`, its value
-the language's forms: two in German, four in Polish), and run
+the language's forms: two in German, four in Polish; the form of 1 may leave out `%n` where the
+English one does), and run
 
 ```bash
 .venv/bin/python scripts/l10n.py --write   # orders each .json, writes its .js

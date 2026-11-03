@@ -48,7 +48,7 @@ def test_the_runner_says_why_it_stops_early():
     seen: set[str] = set()
     runner.run(job(max_items=1), FakeSource({}, {}, None), FakeLibrary(), seen.__contains__, seen.add,
                report=lambda level, text: lines.append((level, text)))  # fmt: skip
-    assert lines[-1] == ("info", "1 files this run (Files per run): the rest comes next run")
+    assert lines[-1] == ("info", "1 file this run (Files per run): the rest comes next run")
 
 
 def test_sizes_read_as_people_say_them():

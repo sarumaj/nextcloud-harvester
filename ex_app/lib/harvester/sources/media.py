@@ -24,6 +24,7 @@ import yt_dlp
 from yt_dlp.networking.impersonate import ImpersonateTarget
 
 from .. import browser, cookies, patterns
+from ..l10n import said
 from ..browser import allowed_url
 from . import download
 from .base import ACCOUNT_HELP, IMPERSONATE, Item, Option, Refused, Source, SourceError, Stopped, stop_requested
@@ -215,7 +216,7 @@ class Media(Source):
             except SourceError as error:
                 if entries is None:
                     raise
-                self.report("info", f"Skipped {page}: {error}")
+                self.report("info", said("Skipped {file}: {error}", file=page, error=str(error)))
                 continue
             if info.get("live_status") in SKIPPED:
                 continue

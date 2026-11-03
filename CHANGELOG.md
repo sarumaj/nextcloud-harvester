@@ -24,11 +24,19 @@
   parameters). Other languages are English. `scripts/l10n.py` collects the texts and writes the
   `.js` files; `tests/test_l10n.py` checks every text in every language, with its placeholders,
   and the page's tests run in German too.
+- The server's texts with values are translated too: the schedule in words, why a job waits,
+  the progress log's usual lines, a run's outcome, a changed site's reason and the recorder's
+  warnings come as templates (`harvester/l10n.py`: whole sentences, counts with their plural
+  forms, lists joined in the person's language) beside their English, which the API, the logs
+  and the database keep (`log.message_l10n`, `jobs.last_message_l10n`); lines from before stay
+  English. `scripts/l10n.py` finds them (`said()`, `said_n()`).
 
 ### Changed
 
 - The page counts in words that fit the number ("1 file link on 1 page"), and the recorder says
-  "level 2" instead of "2nd level".
+  "level 2" instead of "2nd level"; so does the progress log ("1 file this run").
+- The schedule in words: "every 15 minutes" without ", every day", "on days 1 and 15 of every
+  month"; a combination of fields without words of its own names the fields.
 - The help of the admin's setting *The proxy's name* gives an example instead of
   `Through <name>`, whose `<name>` Nextcloud's settings page dropped as a tag.
 - The README in the structure the four apps share.

@@ -53,9 +53,10 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   user; the same failure (or change) again on the next runs does not. A one-time job tells what
   it did as it is deleted.
 - **Language:** the page and the notifications are in your language in Nextcloud (*Personal
-  settings*), in German or Polish; in another language they are English. What a run says stays
-  English: the progress log and a job's last message, the reasons it fails or waits, the
-  schedule in words and the recorder's warnings, as do a site's own texts and the recipes.
+  settings*), in German or Polish; in another language they are English. So are the schedule in
+  words, why a job waits, the progress log's usual lines and a run's outcome, and the recorder's
+  warnings. English stay the reasons a run fails (a site's or a program's errors), the log's
+  lines from before this version, a site's own texts and the recipes.
 
 ## Sources
 

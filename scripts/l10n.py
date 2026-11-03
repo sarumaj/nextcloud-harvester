@@ -12,10 +12,15 @@ the app's notifications with the .json. The texts are:
   titles, descriptions and parameters, as the app has them when it runs;
 - the admin's settings (settings.form): their titles, help and placeholders that are words;
 - the API's errors given as plain strings (HTTPException(status, "…")), and the subjects and
-  messages of the notifications (self.notify(nc, "…", values, "…")).
+  messages of the notifications (self.notify(nc, "…", values, "…"));
+- the server's texts with values, sent as templates the page translates (harvester.l10n):
+  said("…", name=value) and said_n("…", "…", count) with their texts as plain strings (the
+  schedule in words, why a job waits, the progress log, a run's outcome, the recorder's
+  warnings).
 
-Not translated: the progress log, the server's errors with values in them, the schedule in
-words, recipes and their keys, the API's identifiers. Run it with the app's virtual environment:
+Not translated: the server's errors with values in them (but those made with said()), the
+progress log's rarer lines and a run's errors, recipes and their keys, the API's identifiers. Run
+it with the app's virtual environment:
 
     .venv/bin/python scripts/l10n.py            # what each language lacks or no longer uses
     .venv/bin/python scripts/l10n.py --missing de    # the texts de lacks, as JSON to translate
@@ -128,15 +133,27 @@ def served_texts() -> dict[str, str]:
 CALLS = {"HTTPException": ((1,), ("detail",)), "notify": ((1, 3), ("subject", "message"))}
 
 
+def text_of(node: ast.expr) -> str:
+    """A call's argument as a text: a plain string's (one written in pieces, "a" "b", is one), else
+    ""."""
+    return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else ""
+
+
 def code_texts() -> dict[str, str]:
-    """The API's errors given as plain strings (HTTPException(status, "…")), and the
-    notifications' subjects and messages (self.notify(nc, subject, values, message))."""
+    """The API's errors given as plain strings (HTTPException(status, "…")), the notifications'
+    subjects and messages (self.notify(nc, subject, values, message)), and the templates the page
+    translates: said("…") and said_n("…", "…", count) (harvester.l10n)."""
     texts: dict[str, str] = {}
     for path in sorted(LIB.rglob("*.py")):
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             if not isinstance(node, ast.Call):
                 continue
             name = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
+            where = f"{path.relative_to(ROOT)}:{node.lineno}"
+            if name == "said" and node.args and text_of(node.args[0]):
+                texts.setdefault(text_of(node.args[0]), where)
+            elif name == "said_n" and len(node.args) >= 2 and text_of(node.args[0]) and text_of(node.args[1]):
+                texts.setdefault(plural_key(text_of(node.args[0]), text_of(node.args[1])), where)
             positions, keywords = CALLS.get(name, ((), ()))
             arguments = [node.args[i] for i in positions if i < len(node.args)]
             arguments += [keyword.value for keyword in node.keywords if keyword.arg in keywords]
@@ -202,12 +219,15 @@ def problems(language: str, texts: dict[str, str] | None = None) -> list[str]:
             )
             continue
         names = set(PLACEHOLDER.findall(english[-1]))
-        for text in values:
+        for index, text in enumerate(values):
+            # The first form is the one of 1 (as in English): it may leave out %n where the English
+            # one does ("every minute", "jede Minute").
+            optional = plural and index == 0 and "%n" not in english[0] and "%n" in english[-1]
             if not isinstance(text, str) or not text.strip():
                 found.append(f"{key!r}: an empty translation")
             elif set(PLACEHOLDER.findall(text)) != names:
                 found.append(f"{key!r}: placeholders {sorted(set(PLACEHOLDER.findall(text)))}, not {sorted(names)}")
-            elif ("%n" in english[-1]) != ("%n" in text):
+            elif not optional and ("%n" in english[-1]) != ("%n" in text):
                 found.append(f"{key!r}: %n differs")
     return found
 

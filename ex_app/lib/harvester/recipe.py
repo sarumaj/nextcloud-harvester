@@ -95,6 +95,7 @@ from urllib.parse import urlsplit
 
 from . import patterns
 from .browser import VIEWPORT_MAX, VIEWPORT_MIN, allowed_url
+from .l10n import Said, listed, said
 from .patterns import token_parameters
 
 ACTIONS = {"goto", "click", "fill", "press", "scroll", "select", "hover", "popup", "opener", "mail-code"}
@@ -407,10 +408,10 @@ def key_ok(key: object) -> bool:
     return all(modifier in MODIFIERS for modifier in modifiers) and (len(last) == 1 or last in KEYS | MODIFIERS)
 
 
-def leaked_passwords(recipe: object) -> list[str]:
+def leaked_passwords(recipe: object) -> list[Said]:
     """What the recipe's steps say of a password in the recipe: a fill with a value of its own in a
     field that looks like a password's (PASSWORD_FIELD), recorded before the recorder knew it. Never
-    with the value."""
+    with the value. said() texts, which the recorder's page translates."""
     steps = recipe.get("steps") if isinstance(recipe, dict) else None
     found = []
     for number, step in enumerate(steps if isinstance(steps, list) else [], 1):
@@ -419,11 +420,20 @@ def leaked_passwords(recipe: object) -> list[str]:
         selector = str(step.get("selector") or "")
         if step.get("value") and PASSWORD_FIELD.search(selector):
             found.append(
-                f"step {number} fills a value of its own into {selector}, which looks like a password field: "
-                "mark it as the account's password (the recorder's Steps), and change the password if the "
-                "recipe was shared"
+                said(
+                    "step {number} fills a value of its own into {selector}, which looks like a password field: "
+                    "mark it as the account's password (the recorder's Steps), and change the password if the "
+                    "recipe was shared",
+                    number=number,
+                    selector=selector,
+                )
             )
     return found
+
+
+def in_this_recipe(warning: str) -> Said:
+    """The recorder's warning of a password in the recipe it opened (leaked_passwords)."""
+    return said("In this recipe, {warning}.", warning=warning)
 
 
 def _check_pattern(where: str, pattern: object) -> list[str]:
@@ -727,24 +737,32 @@ def levels(recipe: dict) -> list[dict]:
     return [spec for spec in [*(recipe.get("follow") or []), recipe.get("links")] if isinstance(spec, dict)]
 
 
-def token_warnings(recipe: dict) -> list[str]:
+def token_warnings(recipe: dict) -> list[Said]:
     """The recipe's addresses that carry a token of the visit they were recorded in (a sign-in's
     code or ticket, a session, a signature: harvester.patterns.token_parameter), which a job's
-    run will likely find spent: its steps' and its listing's."""
+    run will likely find spent: its steps' and its listing's. said() texts (the recorder's page
+    translates them)."""
     warnings = []
     for number, step in enumerate(recipe.get("steps") or [], 1):
         names = token_parameters(str(step.get("url") or "")) if isinstance(step, dict) else []
         if names and step.get("action") == "goto":
             warnings.append(
-                f"step {number} opens an address with {', '.join(names)}: a token of this visit, likely spent "
-                "when the job runs. Record the clicks that lead there instead (undo the step)."
+                said(
+                    "step {number} opens an address with {names}: a token of this visit, likely spent when the job "
+                    "runs. Record the clicks that lead there instead (undo the step).",
+                    number=number,
+                    names=listed(names, "unit"),
+                )
             )
     names = token_parameters(str(recipe.get("start") or ""))
     if names:
         warnings.append(
-            f"the listing's address carries {', '.join(names)}: a token of this visit, likely spent when the job "
-            "runs. Pick on the page the steps lead to, without browsing away first: the job starts where its "
-            "steps end then."
+            said(
+                "the listing's address carries {names}: a token of this visit, likely spent when the job runs. "
+                "Pick on the page the steps lead to, without browsing away first: the job starts where its "
+                "steps end then.",
+                names=listed(names, "unit"),
+            )
         )
     return warnings
 

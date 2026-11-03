@@ -2,8 +2,8 @@
 """The translations (l10n/<language>.json and .js, scripts/l10n.py): every text the app shows is
 in every language, with the same placeholders ({name}, %n) and its plural's forms; no language
 keeps texts the app no longer has; each .js registers what its .json holds; the extraction finds
-each kind of text, and the page passes t() only texts it can find. The page's English without a
-language, and in German, are test_page.py's."""
+each kind of text (the server's templates too: said() and said_n()), and the page passes t() only
+texts it can find. The page's English without a language, and in German, are test_page.py's."""
 
 # pylint: disable=missing-function-docstring
 
@@ -37,6 +37,13 @@ def test_each_kind_of_text_is_found():
         "no such job",  # an API error
         "Harvester: {job} failed",  # a notification
         "{address} asks for a person ({kind}).",
+        "every day at {times}",  # the server's said(): the schedule in words
+        "_every minute_::_every %n minutes_",  # said_n(): a count's forms
+        "{place}. in the queue: starts in a moment",  # why a job waits
+        "Saved {path} ({size})",  # the progress log
+        "_%n downloaded_::_%n downloaded_",  # a run's outcome
+        "In this recipe, {warning}.",  # the recorder's warnings
+        "Monday",  # a value that is a text of its own
     ):
         assert text in TEXTS, text
     assert "http://proxy.example:3128" not in TEXTS, "an example address is no text"
@@ -83,4 +90,22 @@ def test_the_page_translates_only_texts_it_names():
     # t() with anything but a quoted text would go unfound: the server's texts go through said().
     code = (ROOT / "ex_app" / "js" / "harvester-main.js").read_text(encoding="utf-8")
     others = re.findall(r"(?<![\w$.])[tn]\(\s*[^\s')][\w.]*", code)
-    assert others == ["t(text", "n(one", "t(String"], "only their definitions and said()'s t(String(text))"
+    assert others == [
+        "t(text",
+        "n(one",
+        "t(String",
+        "n(template.text",
+        "t(template.text",
+    ], "only their definitions, said()'s t(String(text)) and rendered()'s templates (said() on the server)"
+
+
+def test_a_plural_may_leave_out_the_count_where_english_does(tmp_path, monkeypatch):
+    # "every minute" / "every %n minutes": the form of 1 without %n, as the English one.
+    monkeypatch.setattr(l10n, "L10N", tmp_path)
+    key = "_every minute_::_every %n minutes_"
+    data = {"translations": {key: ["jede Minute", "alle %n Minuten"]}, "pluralForm": "nplurals=2; plural=(n != 1);"}
+    (tmp_path / "xx.json").write_text(json.dumps(data), encoding="utf-8")
+    assert not l10n.problems("xx", {key: ""})
+    data["translations"][key] = ["jede Minute", "alle Minuten"]
+    (tmp_path / "xx.json").write_text(json.dumps(data), encoding="utf-8")
+    assert any("%n differs" in problem for problem in l10n.problems("xx", {key: ""}))

@@ -79,7 +79,7 @@ from playwright.async_api import (
 )
 
 from .. import browser, pagination, patterns
-from ..recipe import SCROLL_ROUNDS, frame_address, leaked_passwords, token_warnings, uses_browser
+from ..recipe import SCROLL_ROUNDS, frame_address, in_this_recipe, leaked_passwords, token_warnings, uses_browser
 from ..sources import site
 from ..sources.base import SourceError
 from . import jar, trial
@@ -965,7 +965,7 @@ class Recorder(DataPicks, Popups):  # pylint: disable=too-many-instance-attribut
             # A password a recipe of before the recorder knew it holds: said, never shown.
             for warning in leaked_passwords(message.get("recipe")):
                 LOGGER.warning("a recipe opened in the recorder: %s", warning)
-                await self.send({"type": "warning", "message": f"In this recipe, {warning}."})
+                await self.send({"type": "warning", "message": in_this_recipe(warning)})
             await self._update()
         elif kind == "scroll":
             await self._scroll()

@@ -7,6 +7,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 
+from .l10n import loaded, stored
 from .sources.base import MARK, REFUSED
 
 # A job's id is never used again (AUTOINCREMENT): a run of a deleted job that is still going
@@ -30,7 +31,10 @@ CREATE TABLE IF NOT EXISTS jobs (
     timezone TEXT NOT NULL DEFAULT 'UTC',
     retag_from TEXT,
     once INTEGER NOT NULL DEFAULT 0,
-    tested REAL
+    tested REAL,
+    -- last_message's template (harvester.l10n, JSON), which the page translates; none for a
+    -- message older than templates, shown as it is.
+    last_message_l10n TEXT
 );
 CREATE TABLE IF NOT EXISTS seen (
     job INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
@@ -51,7 +55,9 @@ CREATE TABLE IF NOT EXISTS log (
     job INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
     at REAL NOT NULL,
     level TEXT NOT NULL,
-    message TEXT NOT NULL
+    message TEXT NOT NULL,
+    -- The message's template (harvester.l10n, JSON), none for a line older than templates.
+    message_l10n TEXT
 );
 CREATE INDEX IF NOT EXISTS log_job ON log (job, id);
 -- What the job's browser showed at its last failed step or challenge (the newest only), and the
@@ -104,7 +110,7 @@ TEMPLATES_KEPT = 50
 
 
 @dataclass
-class Job:
+class Job:  # pylint: disable=too-many-instance-attributes  # a row of the jobs table
     """A source's settings, the folder its files go to and when it runs."""
 
     user: str
@@ -121,6 +127,8 @@ class Job:
     last_run: float | None = None
     last_status: str | None = None
     last_message: str | None = None
+    # last_message's template, which the page translates (harvester.l10n); None: shown as it is.
+    last_message_l10n: dict | None = None
     # The page that asked for a person (status "challenge"), where the user continues.
     challenge_url: str | None = None
     # The time zone its schedule is in (an IANA name; the page sends the browser's).
@@ -154,6 +162,10 @@ class Store:  # pylint: disable=too-many-public-methods
             self._db.execute("ALTER TABLE jobs ADD COLUMN once INTEGER NOT NULL DEFAULT 0")
         if "tested" not in columns:
             self._db.execute("ALTER TABLE jobs ADD COLUMN tested REAL")
+        if "last_message_l10n" not in columns:
+            self._db.execute("ALTER TABLE jobs ADD COLUMN last_message_l10n TEXT")
+        if "message_l10n" not in {row["name"] for row in self._db.execute("PRAGMA table_info(log)")}:
+            self._db.execute("ALTER TABLE log ADD COLUMN message_l10n TEXT")
         # After the columns: the table made anew keeps them.
         self._never_reuse_ids()
         self._lock = threading.Lock()
@@ -200,6 +212,7 @@ class Store:  # pylint: disable=too-many-public-methods
         values["tags"] = json.loads(values["tags"])
         values["enabled"] = bool(values["enabled"])
         values["once"] = bool(values["once"])
+        values["last_message_l10n"] = loaded(values.get("last_message_l10n"))
         return Job(**values)
 
     def jobs(self, user: str | None = None) -> list[Job]:
@@ -284,16 +297,17 @@ class Store:  # pylint: disable=too-many-public-methods
     def begin(self, job_id: int) -> None:
         """A run starts: the last run's message goes, the page shows the run's progress instead."""
         with self._lock, self._db:
-            self._db.execute("UPDATE jobs SET last_message = NULL WHERE id = ?", (job_id,))
+            self._db.execute("UPDATE jobs SET last_message = NULL, last_message_l10n = NULL WHERE id = ?", (job_id,))
 
     def log(self, job_id: int, level: str, message: str) -> int | None:
         """A line of the job's progress log (info, error, done), and its id; the oldest beyond
-        LOG_KEPT go. Nothing for a job deleted meanwhile (its run goes on to its end)."""
+        LOG_KEPT go. Nothing for a job deleted meanwhile (its run goes on to its end). A said()
+        message keeps its template too (the page translates it)."""
         try:
             with self._lock, self._db:
                 line = self._db.execute(
-                    "INSERT INTO log (job, at, level, message) VALUES (?, ?, ?, ?)",
-                    (job_id, time.time(), level, message[:1000]),
+                    "INSERT INTO log (job, at, level, message, message_l10n) VALUES (?, ?, ?, ?, ?)",
+                    (job_id, time.time(), level, message[:1000], stored(message)),
                 ).lastrowid
                 self._db.execute(
                     "DELETE FROM log WHERE job = ? AND id <= (SELECT id FROM log WHERE job = ? ORDER BY id DESC"
@@ -326,7 +340,7 @@ class Store:  # pylint: disable=too-many-public-methods
         """The user's progress log after the line after (its id), oldest first: of one job, or
         of all theirs; the newest LOG_PAGE when there are more."""
         query = (
-            "SELECT log.id, log.job, jobs.name, log.at, log.level, log.message,"
+            "SELECT log.id, log.job, jobs.name, log.at, log.level, log.message, log.message_l10n,"
             " EXISTS (SELECT 1 FROM shots WHERE shots.log = log.id) AS shot FROM log JOIN jobs ON jobs.id = log.job"
             " WHERE jobs.user = ? AND log.id > ?"
         )
@@ -336,14 +350,15 @@ class Store:  # pylint: disable=too-many-public-methods
             values.append(job_id)
         with self._lock:
             rows = self._db.execute(query + " ORDER BY log.id DESC LIMIT ?", (*values, LOG_PAGE)).fetchall()
-        return [dict(row) for row in reversed(rows)]
+        return [dict(row) | {"message_l10n": loaded(row["message_l10n"])} for row in reversed(rows)]
 
     def finish(self, job_id: int, status: str, message: str, challenge_url: str | None = None) -> None:
         """Records the outcome of a run (and the page that asked for a person, if one did)."""
         with self._lock, self._db:
             self._db.execute(
-                "UPDATE jobs SET last_run = ?, last_status = ?, last_message = ?, challenge_url = ? WHERE id = ?",
-                (time.time(), status, message, challenge_url, job_id),
+                "UPDATE jobs SET last_run = ?, last_status = ?, last_message = ?, last_message_l10n = ?,"
+                " challenge_url = ? WHERE id = ?",
+                (time.time(), status, message, stored(message), challenge_url, job_id),
             )
 
     def mark(self, job_id: int, status: str, message: str) -> None:
@@ -351,7 +366,8 @@ class Store:  # pylint: disable=too-many-public-methods
         schedule counts from, stays."""
         with self._lock, self._db:
             self._db.execute(
-                "UPDATE jobs SET last_status = ?, last_message = ? WHERE id = ?", (status, message, job_id)
+                "UPDATE jobs SET last_status = ?, last_message = ?, last_message_l10n = ? WHERE id = ?",
+                (status, message, stored(message), job_id),
             )
 
     def add_summary(self, job_id: int, summary: dict, good: bool) -> None:

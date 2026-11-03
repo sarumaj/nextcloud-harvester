@@ -358,9 +358,12 @@ def test_the_form_checks_the_zone_and_explains_the_schedule_in_it():
             main.JobIn(**body, timezone=wrong)
     explained = main.explain_schedule("0 6 * * *", "Europe/Warsaw")
     assert explained["description"] == "every day at 06:00"
+    assert explained["description_l10n"]["text"] == "every day at {times}", "and as a template for the page"
     first = datetime.datetime.fromtimestamp(explained["next"][0], schedule.zone("Europe/Warsaw"))
     assert (first.hour, first.minute) == (6, 0)
-    assert "error" in main.explain_schedule("0 6 * * *", "Mars/Olympus")
+    wrong = main.explain_schedule("0 6 * * *", "Mars/Olympus")
+    assert wrong["error"] == "unknown time zone “Mars/Olympus” (an IANA name, e.g. Europe/Berlin)"
+    assert wrong["error_l10n"]["params"] == {"zone": "Mars/Olympus"}
 
 
 # Releases: the newest only.

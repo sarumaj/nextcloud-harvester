@@ -9,6 +9,7 @@ import time
 from collections.abc import Callable
 from typing import BinaryIO
 
+from .l10n import Said, listed, said, said_n
 from .patterns import render_tags, stable_url
 from .sources import (
     FULL_PASS,
@@ -96,6 +97,10 @@ class Placed:
 
 # A line of a run's progress: its level (info, error) and its text.
 Report = Callable[[str, str], None]
+# When the files a run left are tried again (Tally.later): a scheduled job's next run.
+NEXT_RUN = said("next run")
+# A fetch's (an address sent to an on-demand job): when the address comes again.
+SENT_AGAIN = said("when the address is sent again")
 
 
 def size_text(size: int) -> str:
@@ -160,7 +165,7 @@ def place(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     fetched = file_id is None
     if file_id is None:
         pause()
-        report("info", f"Downloading {item.url if item.pending else path}")
+        report("info", said("Downloading {file}", file=item.url if item.pending else path))
         with tempfile.TemporaryFile() as content:
             named = source.fetch(item, content)
             if item.pending:
@@ -170,12 +175,12 @@ def place(  # pylint: disable=too-many-arguments,too-many-positional-arguments
             content.seek(0)
             if file_id is None:
                 file_id = library.put(path, content)
-                report("info", f"Saved {path} ({size_text(size)})")
+                report("info", said("Saved {path} ({size})", path=path, size=size_text(size)))
             else:
                 fetched = False
-                report("info", f"Already in the folder, tagged: {path}")
+                report("info", said("Already in the folder, tagged: {path}", path=path))
     else:
-        report("info", f"Already in the folder, tagged: {path}")
+        report("info", said("Already in the folder, tagged: {path}", path=path))
     # The job's tags are templates of the link's values: {year} is the link's year.
     tags = render_tags(job.tags, item.values)
     if tags:
@@ -247,7 +252,7 @@ def retag_earlier(  # pylint: disable=too-many-arguments
                 record(Placed(item.key, None, dict(item.values), []))
                 continue
             record(Placed(item.key, file_id, dict(item.values), wanted))
-            report("info", f"Tagged: {posixpath.join(job.target, item.path)}")
+            report("info", said("Tagged: {path}", path=posixpath.join(job.target, item.path)))
             tagged += 1
     except Stopped:
         return tagged, False
@@ -264,9 +269,9 @@ def signed_in_again(source: Source, error: WebPage, report: Report) -> bool:
     except (AuthError, ChallengeError):
         raise
     except SourceError as failed:
-        report("error", f"Signing in anew failed: {failed}")
+        report("error", said("Signing in anew failed: {error}", error=str(failed)))
         return False
-    report("info", f"A web page came instead of a file ({error}): signed in anew")
+    report("info", said("A web page came instead of a file ({error}): signed in anew", error=str(error)))
     return True
 
 
@@ -281,18 +286,32 @@ class Tally:
     failures: list[str] = dataclasses.field(default_factory=list)
     denied: int = 0
     # When what is left is tried again: the next run, or (a fetch's) the address sent again.
-    later: str = "next run"
+    later: str = NEXT_RUN
 
-    def sentence(self) -> str:
-        """The run's outcome, as the jobs' list shows it."""
-        message = f"{self.downloaded} downloaded"
+    def sentence(self) -> Said:
+        """The run's outcome, as the jobs' list shows it: its figures, each a whole phrase."""
+        figures = [said_n("%n downloaded", "%n downloaded", self.downloaded)]
         if self.adopted:
-            message += f", {self.adopted} already there"
+            figures.append(said_n("%n already there", "%n already there", self.adopted))
         if self.skipped:
-            message += f", {self.skipped} skipped (not of the job's file types, or too large)"
+            figures.append(
+                said_n(
+                    "%n skipped (not of the job's file types, or too large)",
+                    "%n skipped (not of the job's file types, or too large)",
+                    self.skipped,
+                )
+            )
         if self.failures:
-            message += f", {len(self.failures)} failed (tried again {self.later}): {self.failures[0]}"
-        return message
+            figures.append(
+                said_n(
+                    "%n failed (tried again {later}): {error}",
+                    "%n failed (tried again {later}): {error}",
+                    len(self.failures),
+                    later=self.later,
+                    error=self.failures[0],
+                )
+            )
+        return listed(figures, "unit")
 
 
 def run(  # pylint: disable=too-many-arguments,too-many-locals,too-many-branches,too-many-statements  # the run's parts, each given by the executor
@@ -308,7 +327,7 @@ def run(  # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
     stopped: Callable[[], bool] = lambda: False,
     record: Callable[[Placed], None] = lambda placed: None,
     owners: dict[int, str] | None = None,
-    later: str = "next run",
+    later: str = NEXT_RUN,
 ) -> str:
     """Downloads up to max_items new items (and stops at until, a time.monotonic(), or a
     function giving it) and returns what was done, in a sentence; report hears of each step
@@ -333,21 +352,29 @@ def run(  # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
     in_a_row = 0
     source.report = report
     source.remember = mark_seen
-    report("info", "Looking for new files")
+    report("info", said("Looking for new files"))
     try:
         for item in source.items(seen):
             if stopped():
-                report("info", f"Stopped: the rest comes {later}")
+                report("info", said("Stopped: the rest comes {later}", later=later))
                 halted = True
                 complete = False
                 break
             # -1: no limit of files (the time limit still holds).
             if 0 <= limit <= tally.downloaded:
-                report("info", f"{limit} files this run (Files per run): the rest comes {later}")
+                report(
+                    "info",
+                    said_n(
+                        "%n file this run (Files per run): the rest comes {later}",
+                        "%n files this run (Files per run): the rest comes {later}",
+                        limit,
+                        later=later,
+                    ),
+                )
                 complete = False
                 break
             if until is not None and time.monotonic() > (until() if callable(until) else until):
-                report("info", f"The run's time is up: the rest comes {later}")
+                report("info", said("The run's time is up: the rest comes {later}", later=later))
                 complete = False
                 break
             # A pause between two downloads, not before the first.
@@ -371,7 +398,7 @@ def run(  # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
                 # Not of the job's types or too large: the same next run, so it is not tried again
                 # (until the job's types or sizes change: REFUSED marks it for that).
                 tally.skipped += 1
-                report("info", f"Skipped {item.path or item.url}: {error}")
+                report("info", said("Skipped {file}: {error}", file=item.path or item.url, error=str(error)))
                 mark_seen(item.key)
                 mark_seen(REFUSED + item.key)
                 continue
@@ -387,14 +414,22 @@ def run(  # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
                 if len(tally.failures) >= MAX_FAILURES and not tally.downloaded:
                     break
                 if in_a_row >= MAX_IN_A_ROW:
-                    report("info", f"{in_a_row} files in a row failed: the rest comes {later}")
+                    report(
+                        "info",
+                        said_n(
+                            "%n file in a row failed: the rest comes {later}",
+                            "%n files in a row failed: the rest comes {later}",
+                            in_a_row,
+                            later=later,
+                        ),
+                    )
                     break
                 continue
             mark_seen(item.key)
     except Stopped:
         # Stopped during a wait (a listing, a retry, the site asking to wait): the file it was at
         # is not marked and comes next run.
-        report("info", f"Stopped: the rest comes {later}")
+        report("info", said("Stopped: the rest comes {later}", later=later))
         halted = True
         complete = False
     if tally.failures and not (tally.downloaded or tally.adopted or tally.skipped):
@@ -407,8 +442,17 @@ def run(  # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
     if complete and source.gaps:
         # Pages that should have listed files gave none (signed out, an error): those files may
         # be missing, and known files must not end the next runs before they are found.
-        report("info", f"{source.gaps} listing pages gave nothing: the run does not count as a complete pass")
+        report(
+            "info",
+            said_n(
+                "%n listing page gave nothing: the run does not count as a complete pass",
+                "%n listing pages gave nothing: the run does not count as a complete pass",
+                source.gaps,
+            ),
+        )
     elif complete:
         # The whole site is known now: later runs may stop at known files (stop_at_seen).
         mark_seen(FULL_PASS)
-    return f"{tally.sentence()}; stopped, the rest comes {later}" if halted else tally.sentence()
+    if halted:
+        return said("{outcome}; stopped, the rest comes {later}", outcome=tally.sentence(), later=later)
+    return tally.sentence()

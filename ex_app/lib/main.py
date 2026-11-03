@@ -18,7 +18,7 @@ from nc_py_api import AsyncNextcloudApp
 from nc_py_api.ex_app import AppAPIAuthMiddleware, anc_app, persistent_storage, run_app, set_handlers
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
-from harvester import browser, ondemand, recipe_file, schedule, settings, watch
+from harvester import browser, l10n, ondemand, recipe_file, schedule, settings, watch
 from harvester.rclone_wizard import AUTHORIZE_ORIGIN, Authorization, WizardError, Wizards, remote_types
 from harvester.browser.recorder import Recorder
 from harvester.executor import (
@@ -259,14 +259,18 @@ def explain_schedule(
     expression: Annotated[str, Query(max_length=100)], timezone: Annotated[str, Query(max_length=64)] = "UTC"
 ) -> dict:
     """The schedule in words and its next runs (timestamps), in the time zone (the browser's),
-    for the job's form as it is typed."""
+    for the job's form as it is typed. The words in English, and as a template the page
+    translates (description_l10n, error_l10n: harvester.l10n)."""
     try:
+        description = schedule.describe(expression)
         return {
-            "description": schedule.describe(expression),
+            "description": description,
+            "description_l10n": l10n.template_of(description),
             "next": schedule.next_runs(expression, timezone=schedule.checked_zone(timezone)),
         }
     except ValueError as error:
-        return {"error": str(error)}
+        reason = error.args[0] if error.args else ""
+        return {"error": str(error), "error_l10n": l10n.template_of(reason)}
 
 
 @APP.get("/api/jobs")
@@ -287,6 +291,7 @@ async def list_jobs(nc: NC) -> list[dict]:
             "queued": job.id in queued,
             "paused": executor.paused(job.id or 0),
             "waiting": waits.get(job.id or 0, ""),
+            "waiting_l10n": l10n.template_of(waits.get(job.id or 0)),
             "fetches": fetches.get(job.id or 0, []),
         }
         for job in jobs
@@ -325,11 +330,14 @@ async def progress_log(nc: NC, job: int | None = None, after: int = 0) -> dict:
     mine = {listed.id for listed in jobs}
     executor = STATE["executor"]
     queued = executor.queued
+    waits = executor.waits(jobs)
     return {
         "lines": store().log_lines(user, job, max(after, 0)),
         "running": [job_id for job_id in executor.running if job_id in mine],
         "queued": [job_id for job_id in queued if job_id in mine],
-        "waiting": {str(job_id): reason for job_id, reason in executor.waits(jobs).items()},
+        "waiting": {str(job_id): reason for job_id, reason in waits.items()},
+        # The reasons' templates, which the page translates (harvester.l10n).
+        "waiting_l10n": {str(job_id): l10n.template_of(reason) for job_id, reason in waits.items()},
         "status": executor.status(),
         # The on-demand jobs' waiting addresses (their ids): the page draws the list again
         # when they change.
@@ -683,7 +691,7 @@ async def record(websocket: WebSocket, nc: NC) -> None:
     allowed, job = await admit(websocket, nc)
     if not allowed:
         return
-    recorder = Recorder(websocket.send_json)
+    recorder = Recorder(l10n.sending(websocket.send_json))
     try:
         # The job's (or the form's) HTTP/1.1 only: known before the browser starts. Within the
         # try: whatever goes wrong from here on, the browser's slot is released.
@@ -736,7 +744,7 @@ async def sign_in(websocket: WebSocket, nc: AsyncNextcloudApp, wizard: str) -> N
         return
     # Never through the jobs' proxy: the listener is this container's own. This browser's guard
     # alone lets it through (Chromium sends even 127.0.0.1 to its guard), while loopback is set.
-    recorder = Recorder(websocket.send_json)
+    recorder = Recorder(l10n.sending(websocket.send_json))
     recorder.loopback = AUTHORIZE_ORIGIN
     try:
         try:
@@ -776,7 +784,7 @@ async def admit_sign_in(websocket: WebSocket, user: str, wizard: str) -> Authori
         authorization = None
         refusal = busy_browsers()
     if authorization is None:
-        await websocket.send_json({"type": "error", "message": refusal})
+        await websocket.send_json(l10n.with_templates({"type": "error", "message": refusal}))
         await websocket.close(code=1008)
     return authorization
 
@@ -831,15 +839,15 @@ async def admit(websocket: WebSocket, nc: AsyncNextcloudApp) -> tuple[bool, Job 
     if not refusal and not browser.SLOTS.acquire(blocking=False):  # pylint: disable=consider-using-with
         refusal = busy_browsers()
     if refusal:
-        await websocket.send_json({"type": "error", "message": refusal})
+        await websocket.send_json(l10n.with_templates({"type": "error", "message": refusal}))
         await websocket.close(code=1008)
         return False, None
     return True, job
 
 
-def busy_browsers() -> str:
+def busy_browsers() -> l10n.Said:
     """The recorder's refusal when every browser is open: what holds them, without whose."""
-    return f"No browser is free: {browsers_in_use()}. Try again in a few minutes."
+    return l10n.said("No browser is free: {browsers}. Try again in a few minutes.", browsers=browsers_in_use())
 
 
 def switched_on(job: Job, name: str) -> bool:
@@ -879,7 +887,7 @@ async def test_as_job(websocket: WebSocket, recorder: Recorder, message: dict, n
         job = None
     if job is None or job.source != "site":
         refusal = "Save the job first: the test as the job runs signs in with its stored account."
-        await websocket.send_json({"type": "error", "message": refusal})
+        await websocket.send_json(l10n.with_templates({"type": "error", "message": refusal}))
         return
     account = {
         name: await nc.preferences_ex.get_value(credential_key(job, name)) or ""
@@ -903,7 +911,7 @@ async def keep_session(websocket: WebSocket, recorder: Recorder, job: Job, nc: A
 async def save_answer(job: Job, session: dict, nc: AsyncNextcloudApp) -> None:
     """Keeps the session the user left the browser with, and runs the job again with it."""
     await save_session(nc, job, session)
-    store().finish(job.id or 0, "ok", "continued in the browser")
+    store().finish(job.id or 0, "ok", l10n.said("continued in the browser"))
     STATE["executor"].request(job.id)
 
 

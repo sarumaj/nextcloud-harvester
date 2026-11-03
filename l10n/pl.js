@@ -1,6 +1,7 @@
 OC.L10N.register(
     "harvester",
     {
+        "Monday": "poniedziałek",
         "the proxy": "proxy",
         "Every 15 minutes": "Co 15 minut",
         "Every 30 minutes": "Co 30 minut",
@@ -679,13 +680,250 @@ OC.L10N.register(
         "What the job's form calls it, as in \"Through the proxy\": e.g. \"the home connection\".": "Jak nazywa je formularz zadania, tak jak w „Przez proxy”: np. „łącze domowe”.",
         "Browser network guard": "Strażnik sieci przeglądarek",
         "On: every connection of the browsers goes through a guard that refuses local and private addresses, also those the browser's own checks do not see (a web worker's WebSockets) and names that change after their check (DNS rebinding). Off: the browsers connect by themselves, a little faster, and only the network's firewall keeps those two off the private network. Switch it off only when the External Apps' network is already firewalled from private networks and the cloud's metadata service (169.254.169.254). A change applies to browsers started afterwards.": "Włączony: każde połączenie przeglądarek przechodzi przez strażnika, który odrzuca adresy lokalne i prywatne, także te, których nie widzą własne kontrole przeglądarki (WebSockets w web workerze), oraz nazwy, które zmieniają się po sprawdzeniu (DNS rebinding). Wyłączony: przeglądarki łączą się same, nieco szybciej, a tylko zapora sieci trzyma te dwa przypadki z dala od sieci prywatnej. Wyłącz go tylko wtedy, gdy sieć External Apps jest już odgrodzona zaporą od sieci prywatnych i od usługi metadanych chmury (169.254.169.254). Zmiana dotyczy przeglądarek uruchomionych później.",
+        "In this recipe, {warning}.": "W tym przepisie: {warning}.",
+        "{used} of {limit} in use ({jobs} by jobs, {recordings} by recordings)": "zajęte: {used} z {limit} (przez zadania: {jobs}, przez nagrania: {recordings})",
+        "Through {proxy}: sites see {address}": "Przez {proxy}: strony widzą {address}",
+        "all {limit} in use ({jobs} by jobs, {recordings} by recordings)": "wszystkie ({limit}) zajęte (przez zadania: {jobs}, przez nagrania: {recordings})",
+        "Through {proxy}: the address sites see is unknown": "Przez {proxy}: adres widziany przez strony jest nieznany",
+        "Through {proxy}: sites see {address} ({country})": "Przez {proxy}: strony widzą {address} ({country})",
+        "The site seems to have changed: {reason}": "Strona chyba się zmieniła: {reason}",
+        "_The recipe's test: {files} file links on %n page_::_The recipe's test: {files} file links on %n pages_": [
+            "Test przepisu: linki do plików ({files}) na %n stronie",
+            "Test przepisu: linki do plików ({files}) na %n stronach",
+            "Test przepisu: linki do plików ({files}) na %n stronach",
+            "Test przepisu: linki do plików ({files}) na %n strony"
+        ],
         "Harvester: {job} done": "Harvester: zadanie {job} zakończone",
         "{result}. The one-time job is deleted; its files stay.": "{result}. Zadanie jednorazowe zostało usunięte; jego pliki zostają.",
+        "_Tags brought up to date on %n file; stopped, the others get them at the job's next turn_::_Tags brought up to date on %n files; stopped, the others get them at the job's next turn_": [
+            "Zaktualizowano tagi %n pliku; zatrzymano, pozostałe dostaną je przy następnej kolejce zadania",
+            "Zaktualizowano tagi %n plików; zatrzymano, pozostałe dostaną je przy następnej kolejce zadania",
+            "Zaktualizowano tagi %n plików; zatrzymano, pozostałe dostaną je przy następnej kolejce zadania",
+            "Zaktualizowano tagi %n pliku; zatrzymano, pozostałe dostaną je przy następnej kolejce zadania"
+        ],
+        "Through {proxy}: the check of the address failed ({error})": "Przez {proxy}: sprawdzenie adresu nie powiodło się ({error})",
+        "The site seems to have changed: {detail}": "Strona chyba się zmieniła: {detail}",
         "Harvester: {job} — the site seems to have changed: {reason}": "Harvester: zadanie {job} — strona chyba się zmieniła: {reason}",
         "{detail}. Test the recipe (its form's recorder) and pick the links anew.": "{detail}. Przetestuj przepis (rejestrator w jego formularzu) i wybierz linki od nowa.",
+        "Testing the recipe (nothing is downloaded)": "Testowanie przepisu (nic nie jest pobierane)",
         "Harvester: {job} needs you": "Harvester: zadanie {job} czeka na Ciebie",
         "{address} asks for a person ({kind}).": "{address} pyta, czy jesteś człowiekiem ({kind}).",
         "Harvester: {job} failed": "Harvester: zadanie {job} nie powiodło się",
+        "{place}. in the queue: waits for its site ({site}), used by another job": "{place}. w kolejce: czeka na swoją stronę ({site}), której używa inne zadanie",
+        "_{reason}; %n address queued_::_{reason}; %n addresses queued_": [
+            "{reason}; %n adres w kolejce",
+            "{reason}; %n adresy w kolejce",
+            "{reason}; %n adresów w kolejce",
+            "{reason}; %n adresu w kolejce"
+        ],
+        "{change}; {outcome}": "{change}; {outcome}",
+        "Test: {problem}": "Test: {problem}",
+        "{summary}; it ended: {problem}": "{summary}; zakończył się: {problem}",
+        "{summary}; stopped": "{summary}; zatrzymano",
+        "{summary}; it failed: {problem}": "{summary}; nie powiódł się: {problem}",
+        "{summary}: as before": "{summary}: tak jak wcześniej",
+        "_Tags brought up to date on %n file_::_Tags brought up to date on %n files_": [
+            "Zaktualizowano tagi %n pliku",
+            "Zaktualizowano tagi %n plików",
+            "Zaktualizowano tagi %n plików",
+            "Zaktualizowano tagi %n pliku"
+        ],
+        "_%n of the files at {address} was fetched before: not again_::_%n of the files at {address} were fetched before: not again_": [
+            "%n z plików pod {address} pobrano już wcześniej: nie ponownie",
+            "%n z plików pod {address} pobrano już wcześniej: nie ponownie",
+            "%n z plików pod {address} pobrano już wcześniej: nie ponownie",
+            "%n z plików pod {address} pobrano już wcześniej: nie ponownie"
+        ],
+        "_Looking for %n file saved before its tags were kept (nothing is downloaded)_::_Looking for %n files saved before their tags were kept (nothing is downloaded)_": [
+            "Szukanie %n pliku zapisanego, zanim zapamiętywano jego tagi (nic nie jest pobierane)",
+            "Szukanie %n plików zapisanych, zanim zapamiętywano ich tagi (nic nie jest pobierane)",
+            "Szukanie %n plików zapisanych, zanim zapamiętywano ich tagi (nic nie jest pobierane)",
+            "Szukanie %n pliku zapisanego, zanim zapamiętywano jego tagi (nic nie jest pobierane)"
+        ],
+        "The job's tags changed: bringing them to its files": "Tagi zadania się zmieniły: przenoszenie ich na jego pliki",
+        "Fetching {address}": "Pobieranie {address}",
+        "Resumed": "Wznowiono",
+        "Waits for a browser: {browsers}": "Czeka na przeglądarkę: {browsers}",
+        "_{place}. in the queue: waits for a runner, all {runners} busy (%n job ahead)_::_{place}. in the queue: waits for a runner, all {runners} busy (%n jobs ahead)_": [
+            "{place}. w kolejce: czeka na wykonawcę, wszyscy ({runners}) zajęci (przed nim %n zadanie)",
+            "{place}. w kolejce: czeka na wykonawcę, wszyscy ({runners}) zajęci (przed nim %n zadania)",
+            "{place}. w kolejce: czeka na wykonawcę, wszyscy ({runners}) zajęci (przed nim %n zadań)",
+            "{place}. w kolejce: czeka na wykonawcę, wszyscy ({runners}) zajęci (przed nim %n zadania)"
+        ],
+        "{place}. in the queue: starts in a moment": "{place}. w kolejce: zaraz się zacznie",
+        "{address}: {outcome}": "{address}: {outcome}",
+        "The recipe's test failed: {error}": "Test przepisu nie powiódł się: {error}",
+        "The recipe's test found the site as before": "Test przepisu zastał stronę taką jak wcześniej",
+        "the listing's address carries {names}: a token of this visit, likely spent when the job runs. Pick on the page the steps lead to, without browsing away first: the job starts where its steps end then.": "adres listy zawiera {names}: to token tej wizyty, prawdopodobnie zużyty, gdy zadanie się uruchomi. Wybieraj na stronie, do której prowadzą kroki, bez przechodzenia wcześniej gdzie indziej: zadanie zacznie wtedy tam, gdzie kończą się jego kroki.",
+        "step {number} fills a value of its own into {selector}, which looks like a password field: mark it as the account's password (the recorder's Steps), and change the password if the recipe was shared": "krok {number} wpisuje własną wartość w {selector}, które wygląda na pole hasła: oznacz je jako hasło konta w „Krokach” rejestratora i zmień hasło, jeśli przepis był udostępniony",
+        "step {number} opens an address with {names}: a token of this visit, likely spent when the job runs. Record the clicks that lead there instead (undo the step).": "krok {number} otwiera adres z {names}: to token tej wizyty, prawdopodobnie zużyty, gdy zadanie się uruchomi. Nagraj zamiast tego kliknięcia, które tam prowadzą (cofnij krok).",
+        "next run": "przy następnym przebiegu",
+        "when the address is sent again": "gdy adres zostanie wysłany ponownie",
+        "A web page came instead of a file ({error}): signed in anew": "Zamiast pliku przyszła strona internetowa ({error}): zalogowano ponownie",
+        "Looking for new files": "Szukanie nowych plików",
+        "{outcome}; stopped, the rest comes {later}": "{outcome}; zatrzymano, reszta {later}",
+        "Downloading {file}": "Pobieranie {file}",
+        "Already in the folder, tagged: {path}": "Już w folderze, otagowano: {path}",
+        "_%n downloaded_::_%n downloaded_": [
+            "%n pobrany",
+            "%n pobrane",
+            "%n pobranych",
+            "%n pobranego"
+        ],
+        "_%n listing page gave nothing: the run does not count as a complete pass_::_%n listing pages gave nothing: the run does not count as a complete pass_": [
+            "%n strona listy nic nie dała: przebieg nie liczy się jako pełny",
+            "%n strony listy nic nie dały: przebieg nie liczy się jako pełny",
+            "%n stron listy nic nie dało: przebieg nie liczy się jako pełny",
+            "%n strony listy nic nie dało: przebieg nie liczy się jako pełny"
+        ],
+        "Tagged: {path}": "Otagowano: {path}",
+        "Signing in anew failed: {error}": "Ponowne logowanie nie powiodło się: {error}",
+        "_%n already there_::_%n already there_": [
+            "%n już był",
+            "%n już były",
+            "%n już było",
+            "%n już były"
+        ],
+        "_%n skipped (not of the job's file types, or too large)_::_%n skipped (not of the job's file types, or too large)_": [
+            "%n pominięty (nie jest z typów plików zadania albo za duży)",
+            "%n pominięte (nie są z typów plików zadania albo za duże)",
+            "%n pominiętych (nie są z typów plików zadania albo za duże)",
+            "%n pominiętego (nie jest z typów plików zadania albo za duży)"
+        ],
+        "_%n failed (tried again {later}): {error}_::_%n failed (tried again {later}): {error}_": [
+            "%n nieudany (ponowna próba {later}): {error}",
+            "%n nieudane (ponowna próba {later}): {error}",
+            "%n nieudanych (ponowna próba {later}): {error}",
+            "%n nieudanego (ponowna próba {later}): {error}"
+        ],
+        "Stopped: the rest comes {later}": "Zatrzymano: reszta {later}",
+        "Saved {path} ({size})": "Zapisano {path} ({size})",
+        "_%n file this run (Files per run): the rest comes {later}_::_%n files this run (Files per run): the rest comes {later}_": [
+            "%n plik w tym przebiegu (Plików na przebieg): reszta {later}",
+            "%n pliki w tym przebiegu (Plików na przebieg): reszta {later}",
+            "%n plików w tym przebiegu (Plików na przebieg): reszta {later}",
+            "%n pliku w tym przebiegu (Plików na przebieg): reszta {later}"
+        ],
+        "The run's time is up: the rest comes {later}": "Czas przebiegu minął: reszta {later}",
+        "Skipped {file}: {error}": "Pominięto {file}: {error}",
+        "_%n file in a row failed: the rest comes {later}_::_%n files in a row failed: the rest comes {later}_": [
+            "%n plik z rzędu się nie powiódł: reszta {later}",
+            "%n pliki z rzędu się nie powiodły: reszta {later}",
+            "%n plików z rzędu się nie powiodło: reszta {later}",
+            "%n pliku z rzędu się nie powiodło: reszta {later}"
+        ],
+        "Sunday": "niedziela",
+        "Tuesday": "wtorek",
+        "Wednesday": "środa",
+        "Thursday": "czwartek",
+        "Friday": "piątek",
+        "Saturday": "sobota",
+        "January": "styczeń",
+        "February": "luty",
+        "March": "marzec",
+        "April": "kwiecień",
+        "May": "maj",
+        "June": "czerwiec",
+        "July": "lipiec",
+        "August": "sierpień",
+        "September": "wrzesień",
+        "October": "październik",
+        "November": "listopad",
+        "December": "grudzień",
+        "days {day}, months {month}, days of the week {weekday}": "dni {day}, miesiące {month}, dni tygodnia {weekday}",
+        "minute {minute}, hour {hour}, {when}": "minuta {minute}, godzina {hour}, {when}",
+        "days {day}, months {month}, days of the week {weekday}, at {times}": "dni {day}, miesiące {month}, dni tygodnia {weekday}, o {times}",
+        "_every minute, {when}_::_every %n minutes, {when}_": [
+            "co minutę, {when}",
+            "co %n minuty, {when}",
+            "co %n minut, {when}",
+            "co %n minuty, {when}"
+        ],
+        "every hour at minute {minutes}, {when}": "co godzinę w minucie {minutes}, {when}",
+        "_every hour at minute {minutes}, {when}_::_every %n hours at minute {minutes}, {when}_": [
+            "co godzinę w minucie {minutes}, {when}",
+            "co %n godziny w minucie {minutes}, {when}",
+            "co %n godzin w minucie {minutes}, {when}",
+            "co %n godziny w minucie {minutes}, {when}"
+        ],
+        "unknown time zone “{zone}” (an IANA name, e.g. Europe/Berlin)": "nieznana strefa czasowa „{zone}” (nazwa IANA, np. Europe/Warsaw)",
+        "not a cron expression: minute hour day month weekday, e.g. 0 6 * * *": "to nie jest wyrażenie cron: minuta godzina dzień miesiąc dzień-tygodnia, np. 0 6 * * *",
+        "five fields, please: minute hour day month weekday": "potrzeba pięciu pól: minuta godzina dzień miesiąc dzień-tygodnia",
+        "_every minute_::_every %n minutes_": [
+            "co minutę",
+            "co %n minuty",
+            "co %n minut",
+            "co %n minuty"
+        ],
+        "every minute": "co minutę",
+        "every minute, {when}": "co minutę, {when}",
+        "every hour at minute {minutes}": "co godzinę w minucie {minutes}",
+        "_every hour at minute {minutes}_::_every %n hours at minute {minutes}_": [
+            "co godzinę w minucie {minutes}",
+            "co %n godziny w minucie {minutes}",
+            "co %n godzin w minucie {minutes}",
+            "co %n godziny w minucie {minutes}"
+        ],
+        "every day at {times}": "codziennie o {times}",
+        "every day": "codziennie",
+        "on weekdays at {times}": "w dni robocze o {times}",
+        "on weekdays": "w dni robocze",
+        "on weekends at {times}": "w weekendy o {times}",
+        "on weekends": "w weekendy",
+        "on {days} at {times}": "w dni tygodnia: {days}, o {times}",
+        "on {days}": "w dni tygodnia: {days}",
+        "on the last day of every month": "w ostatni dzień każdego miesiąca",
+        "_on day {days} of every month_::_on days {days} of every month_": [
+            "w dniu {days} każdego miesiąca",
+            "w dniach {days} każdego miesiąca",
+            "w dniach {days} każdego miesiąca",
+            "w dniach {days} każdego miesiąca"
+        ],
+        "on the last day of every month at {times}": "w ostatni dzień każdego miesiąca o {times}",
+        "_on day {days} of every month at {times}_::_on days {days} of every month at {times}_": [
+            "w dniu {days} każdego miesiąca o {times}",
+            "w dniach {days} każdego miesiąca o {times}",
+            "w dniach {days} każdego miesiąca o {times}",
+            "w dniach {days} każdego miesiąca o {times}"
+        ],
+        "every day in {months}": "codziennie w miesiącach: {months}",
+        "_on day {days} in {months}_::_on days {days} in {months}_": [
+            "w dniu {days} w miesiącach: {months}",
+            "w dniach {days} w miesiącach: {months}",
+            "w dniach {days} w miesiącach: {months}",
+            "w dniach {days} w miesiącach: {months}"
+        ],
+        "every day in {months} at {times}": "codziennie w miesiącach: {months}, o {times}",
+        "_on day {days} in {months} at {times}_::_on days {days} in {months} at {times}_": [
+            "w dniu {days} w miesiącach: {months}, o {times}",
+            "w dniach {days} w miesiącach: {months}, o {times}",
+            "w dniach {days} w miesiącach: {months}, o {times}",
+            "w dniach {days} w miesiącach: {months}, o {times}"
+        ],
+        "step {number} ({label}, optional) skipped: {why}": "krok {number} ({label}, opcjonalny) pominięty: {why}",
+        "The kept session no longer reaches the listing: signing in anew": "Zachowana sesja nie dociera już do listy: ponowne logowanie",
+        "step {number} ({label}): pausing {seconds} s before it": "krok {number} ({label}): pauza {seconds} s przed nim",
+        "step {number} ({label}) failed, trying again in {seconds} s (attempt {attempt} of {of}): {why}": "krok {number} ({label}) nie powiódł się, ponowna próba za {seconds} s (próba {attempt} z {of}): {why}",
+        "the listing (page {number}, {address}) gave nothing: {why}": "lista (strona {number}, {address}) nic nie dała: {why}",
+        "a level {level} page (page {number}, {address}) gave nothing: {why}": "strona poziomu {level} (strona {number}, {address}) nic nie dała: {why}",
+        "the next page {address} was read already (a loop): its listing ends": "następna strona {address} była już czytana (pętla): jej lista się tu kończy",
+        "level {level} found nothing (it found {found} before)": "poziom {level} nic nie znalazł (wcześniej: {found})",
+        "level {level}: the pattern no longer matches (none of {found} links; {matched} matched before)": "poziom {level}: wzorzec już nie pasuje (do żadnego z linków: {found}; wcześniej pasowało: {matched})",
+        "the listing found nothing (it found {found} before)": "lista nic nie znalazła (wcześniej: {found})",
+        "the listing: the pattern no longer matches (none of {found} links; {matched} matched before)": "lista: wzorzec już nie pasuje (do żadnego z linków: {found}; wcześniej pasowało: {matched})",
+        "_{reason}; file links {selector}, on %n page, first at {address}_::_{reason}; file links {selector}, on %n pages, first at {address}_": [
+            "{reason}; linki do plików {selector}, na %n stronie, pierwsza: {address}",
+            "{reason}; linki do plików {selector}, na %n stronach, pierwsza: {address}",
+            "{reason}; linki do plików {selector}, na %n stronach, pierwsza: {address}",
+            "{reason}; linki do plików {selector}, na %n strony, pierwsza: {address}"
+        ],
+        "_{reason}; links to follow {selector}, on %n page, first at {address}_::_{reason}; links to follow {selector}, on %n pages, first at {address}_": [
+            "{reason}; linki do przejścia {selector}, na %n stronie, pierwsza: {address}",
+            "{reason}; linki do przejścia {selector}, na %n stronach, pierwsza: {address}",
+            "{reason}; linki do przejścia {selector}, na %n stronach, pierwsza: {address}",
+            "{reason}; linki do przejścia {selector}, na %n strony, pierwsza: {address}"
+        ],
+        "No browser is free: {browsers}. Try again in a few minutes.": "Żadna przeglądarka nie jest wolna: {browsers}. Spróbuj ponownie za kilka minut.",
         "no such job": "nie ma takiego zadania",
         "Only an on-demand job is deleted after its run.": "Tylko zadanie na żądanie jest usuwane po swoim przebiegu.",
         "no such template": "nie ma takiego szablonu",
@@ -694,7 +932,8 @@ OC.L10N.register(
         "Only a website job with a listing of its own has a recipe to test.": "Tylko zadanie strony internetowej z własną listą ma przepis do przetestowania.",
         "The address is being fetched: Stop ends that.": "Adres jest właśnie pobierany: „Zatrzymaj” to kończy.",
         "The address is not waiting (fetched already?).": "Adres nie czeka (już pobrany?).",
-        "The job is not running.": "Zadanie nie jest uruchomione."
+        "The job is not running.": "Zadanie nie jest uruchomione.",
+        "continued in the browser": "kontynuowano w przeglądarce"
     },
     "nplurals=4; plural=(n==1 ? 0 : (n%10>=2 && n%10<=4) && (n%100<12 || n%100>14) ? 1 : n!=1 && (n%10>=0 && n%10<=1) || n!=1 && (n%10>=5 && n%10<=9) || (n%100>=12 && n%100<=14) ? 2 : 3);"
 );

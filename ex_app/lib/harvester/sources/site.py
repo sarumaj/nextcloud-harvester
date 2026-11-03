@@ -37,6 +37,7 @@ from .. import browser
 from .. import cookies as cookie_jar
 from .. import jsonlist, otp, pagination, patterns, selectors
 from .. import recipe as recipes
+from ..l10n import said
 from ..browser import engine
 from ..browser.guard import Guard
 from ..schedule import zone
@@ -425,8 +426,9 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes
 
 
 def skipped_line(skipped: dict) -> str:
-    """The progress log's line of an optional step the run went on without."""
-    return f"step {skipped['number']} ({skipped['label']}, optional) skipped: {skipped['why']}"
+    """The progress log's line of an optional step the run went on without (a said() text)."""
+    values = {"number": skipped["number"], "label": skipped["label"], "why": str(skipped["why"])}
+    return said("step {number} ({label}, optional) skipped: {why}", **values)
 
 
 def guard(route: Route) -> None:
@@ -801,7 +803,7 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
     def _give_up_session(self) -> None:
         """Forgets the kept session for this run (and, unless the run keeps a new one, for the
         next: stale), and the driver that used it."""
-        self.report("info", "The kept session no longer reaches the listing: signing in anew")
+        self.report("info", said("The kept session no longer reaches the listing: signing in anew"))
         self.kept = None
         self.stale = True
         if self.driver is not None:

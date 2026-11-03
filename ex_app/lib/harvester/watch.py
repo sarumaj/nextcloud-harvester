@@ -12,6 +12,7 @@ import random
 
 from croniter import croniter
 
+from .l10n import Said, said, said_n
 from .schedule import zone
 from .sources import SOURCES, Option
 from .store import Job
@@ -35,11 +36,6 @@ WATCH_OPTIONS = {
 def options_of(source: str) -> dict[str, Option]:
     """The options the watch adds to the source's (a website's only: its recipe has levels)."""
     return WATCH_OPTIONS if source == "site" else {}
-
-
-def where(level: int) -> str:
-    """A level's name for people: the listing the recipe starts at, or a level of its links."""
-    return "the listing" if level == 0 else f"level {level}"
 
 
 class Watch:
@@ -86,13 +82,25 @@ class Watch:
         for number, level in sorted(self.levels.items()):
             reason = self._judge(number, level)
             if reason:
-                pages = f"{level['pages']} page{'s' if level['pages'] != 1 else ''}"
-                kind = "file links" if level["kind"] == "links" else "links to follow"
-                detail = f"{reason}; {kind} {level['selector']}, on {pages}, first at {level['url']}"
+                values = {"reason": reason, "selector": level["selector"], "address": level["url"]}
+                if level["kind"] == "links":
+                    detail = said_n(
+                        "{reason}; file links {selector}, on %n page, first at {address}",
+                        "{reason}; file links {selector}, on %n pages, first at {address}",
+                        level["pages"],
+                        **values,
+                    )
+                else:
+                    detail = said_n(
+                        "{reason}; links to follow {selector}, on %n page, first at {address}",
+                        "{reason}; links to follow {selector}, on %n pages, first at {address}",
+                        level["pages"],
+                        **values,
+                    )
                 return {"level": number, "reason": reason, "detail": detail, "url": level["url"]}
         return None
 
-    def _judge(self, number: int, now: dict) -> str:
+    def _judge(self, number: int, now: dict) -> Said | str:
         """What a level (or one page of it) found less than the job's last good runs that read
         it with the same selector: nothing where they found links, or no match where links
         matched ("" when not). A level that never found anything is no change: some listings
@@ -105,11 +113,20 @@ class Watch:
         found = next((level["found"] for level in earlier if level["found"]), 0)
         matching = next((level["matching"] for level in earlier if level["matching"]), 0)
         if not now["found"] and found:
-            return f"{where(number)} found nothing (it found {found} before)"
+            if number == 0:
+                return said("the listing found nothing (it found {found} before)", found=found)
+            return said("level {level} found nothing (it found {found} before)", level=number, found=found)
         if now["found"] and not now["matching"] and matching:
-            return (
-                f"{where(number)}: the pattern no longer matches (none of {now['found']} links; "
-                f"{matching} matched before)"
+            values = {"found": now["found"], "matched": matching}
+            if number == 0:
+                return said(
+                    "the listing: the pattern no longer matches (none of {found} links; {matched} matched before)",
+                    **values,
+                )
+            return said(
+                "level {level}: the pattern no longer matches (none of {found} links; {matched} matched before)",
+                level=number,
+                **values,
             )
         return ""
 

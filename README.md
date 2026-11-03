@@ -17,8 +17,9 @@ the app's browser or taken from a template, not by code.
   recipes to export and import as files.
 - **Sign-ins:** passwords, one-time codes, codes by e-mail, cookies, OAuth2 for mail; kept
   sessions; when a site asks for a person, the job waits for you in its browser.
-- **Languages:** English, German and Polish: the page, the admin's settings and the
-  notifications follow each person's language in Nextcloud (others are English).
+- **Languages:** English, German and Polish: the page (also the progress log and the schedule
+  in words), the admin's settings and the notifications follow each person's language in
+  Nextcloud (others are English).
 - **Careful with sites and with the server:** one job per site at a time, the pauses a site asks
   for, files fetched once; the browsers and downloads reach only public addresses.
 
