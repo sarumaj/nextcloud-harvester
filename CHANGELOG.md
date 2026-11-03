@@ -17,6 +17,10 @@
   a script opens) as file links or links to follow that are clicked: their pattern proposed on
   their texts, the panel saying the job clicks them, **Click in the browser** to switch it; *Test
   the recipe* walks such levels by clicking and lists clicked file links by their text.
+- Pictures picked as file links (`img`, `picture`) are taken at their full size: the largest
+  candidate of `srcset` and `<source>`, an attribute naming the full size, the lazy-loading ones
+  (`data-src`, `data-original`, …) over a placeholder `src`; in the browser, over HTTP and in the
+  recorder.
 
 ### Changed
 

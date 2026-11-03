@@ -329,6 +329,13 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   no items, or the job's *Pages*. The job asks for it as for a file: the guarded HTTP client,
   with the browser's cookies when it has a browser (not the browser's own `context.request`,
   which passes by its routes); at most 16 MB, 64 levels deep and 1000 items a page.
+- **Pictures at full size:** file links may be pictures (`img`, `picture`): a picture's address
+  is its largest candidate of `srcset` and its `<picture>`'s `<source>`s (by width, else by
+  density), before it an attribute that names the full size (`data-full`, `data-zoom-image`,
+  `data-large-file`, …) and after it the lazy-loading ones (`data-src`, `data-srcset`,
+  `data-original`, `data-lazy-src`, …), its `src` last unless it is a placeholder (a `data:`
+  address, `blank.gif`, `spacer.png`, `1x1.gif`, a name with `placeholder`); its text is its
+  `alt` (`harvester/images.py`). Alike over HTTP and in the browser, in the recorder too.
 - **Codes by e-mail:** a step `{"action": "mail-code", "selector": ..., "from": ..., "subject":
   ...}` types a code the site sends by e-mail. The job waits (`"wait"`: 180 s by default, 10 to
   600) for a message of that sender and subject (patterns, empty: any) that came into the
@@ -383,7 +390,8 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   than the one it was picked on is its entry's (its file links are picked there); a dialog or
   panel on the listing's own address is not, so pick the file links in it, not another level.
   **Test the recipe** clicks such levels as a run does; it lists file links that are clicked by
-  their text (`(clicked: “Get A”)`) without clicking them, and as the job runs it probes none.
+  their text (`(clicked: “Get A”)`) without clicking them, and as the job runs it probes none. A
+  picture picked as a file link is taken at its full size, its examples show that address.
   Picking a number of a numbered pagination as the next page proposes numbered pages, showing
   this page's number and the next one's (**Use the picked link alone** switches back).
   **Add: scroll to load more** (while recording) adds that step and scrolls the page.

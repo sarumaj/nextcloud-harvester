@@ -7,13 +7,14 @@ listing (json_pages, read_json), and the code of a step "mail-code" (mail_code).
 from collections.abc import Iterator
 from typing import Any
 
-from .. import jsonlist, patterns
+from .. import images, jsonlist, patterns
 from . import download, mail
 from .base import SourceError, check_stop
 
 # A level's links with the texts of its values (harvester.recipe: "values"): each value's element
 # (the link's closest match of closest, then the match of selector in it), its attribute or its
-# text; null where there is none, or a selector the page cannot read.
+# text; null where there is none, or a selector the page cannot read. Last, an image's attributes
+# (harvester.images.INFO).
 VALUES = """(els, specs) => els.map(e => [e.href || '', (e.innerText || '').trim(), specs.map(s => {
   try {
     let at = s.closest ? e.closest(s.closest) : e
@@ -21,7 +22,7 @@ VALUES = """(els, specs) => els.map(e => [e.href || '', (e.innerText || '').trim
     if (!at) return null
     return s.attribute ? at.getAttribute(s.attribute) : (at.innerText || at.textContent || '').trim()
   } catch (error) { return null }
-})])"""
+}), (""" + images.INFO + ")(e)])"
 
 
 def soup_value(link: Any, spec: dict) -> str | None:

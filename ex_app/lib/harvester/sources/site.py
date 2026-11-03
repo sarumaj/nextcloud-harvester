@@ -34,7 +34,7 @@ from playwright.sync_api import Error as PlaywrightError, Route, WebSocketRoute
 
 from .. import browser
 from .. import cookies as cookie_jar
-from .. import jsonlist, otp, pagination, patterns, selectors
+from .. import images, jsonlist, otp, pagination, patterns, selectors
 from .. import recipe as recipes
 from ..l10n import said
 from ..browser import engine
@@ -337,10 +337,12 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes,too
             load_more(page, spec["load_more"])
 
     def links(self, page: Any, selector: str) -> list[tuple[str, str]]:
-        return page.eval_on_selector_all(selector, "els => els.map(e => [e.href || '', (e.innerText || '').trim()])")
+        # An image's address is the one of its full size (harvester.images).
+        return images.resolved(page.eval_on_selector_all(selector, images.LINKS))
 
     def valued_links(self, page: Any, selector: str, specs: list[dict]) -> list[tuple[str, str, list]]:
-        return [tuple(link) for link in page.eval_on_selector_all(selector, near.VALUES, specs)]
+        found = page.eval_on_selector_all(selector, near.VALUES, specs)
+        return [(*images.link(href, text, info), values) for href, text, values, info in found]
 
     def targets(self, page: Any, selector: str) -> list[str]:
         return page.eval_on_selector_all(selector, clicks.TARGETS)

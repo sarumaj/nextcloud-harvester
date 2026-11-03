@@ -390,9 +390,23 @@
 		return href
 	}
 
-	// An element's text as the job tells it by: its text, a button's value, else its label.
+	// An element's text as the job tells it by: its text, a button's value, else its label (an
+	// image's alt).
 	function labelOf(el) {
-		return (el.innerText || el.value || el.getAttribute('aria-label') || el.getAttribute('title') || '').trim()
+		return (el.innerText || el.value || el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('alt') || '').trim()
+	}
+
+	// An image's attributes (an <img>, a <picture>: its own and its sources'), from which the
+	// recorder takes its address at full size (harvester.images, which reads them alike); null for
+	// another element.
+	function imageInfo(e) {
+		const tag = (e.tagName || '').toLowerCase()
+		const img = tag === 'img' ? e : tag === 'picture' ? e.querySelector('img') : null
+		if (!img && tag !== 'picture') return null
+		const parent = img && img.parentElement
+		const box = tag === 'picture' ? e : parent && parent.tagName.toLowerCase() === 'picture' ? parent : null
+		const attrs = (el) => el ? Object.fromEntries([...el.attributes].map((a) => [a.name, a.value])) : {}
+		return { img: attrs(img), sources: box ? [...box.querySelectorAll('source')].map(attrs) : [], base: document.baseURI }
 	}
 
 	// The elements of the container whose own text is a number (1 2 3, not "Page 2 of 9").
@@ -710,7 +724,7 @@
 		const next = state.mode === 'next' ? candidates(el, true) : []
 		const selector = state.mode === 'next' ? next[0] || unique(el) : similar(el)
 		const alternatives = state.mode === 'next' ? next.slice(1) : similarAlternatives(el, selector)
-		const matches = query(selector).slice(0, 300).map((match) => [addressOf(match), labelOf(match).slice(0, 80)])
+		const matches = query(selector).slice(0, 300).map((match) => [addressOf(match), labelOf(match).slice(0, 80), imageInfo(match)])
 		if (state.mode === 'next') highlight(selector, '')
 		const numbered = state.mode === 'next' ? pagination(el) : null
 		report({ action: 'pick', target: state.mode, selector, alternatives, found: count(selector), matches, numbered })

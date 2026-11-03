@@ -80,7 +80,7 @@ from playwright.async_api import (
     WebSocketRoute,
 )
 
-from .. import browser, pagination, patterns
+from .. import browser, images, pagination, patterns
 from ..recipe import SCROLL_ROUNDS, frame_address, in_this_recipe, leaked_passwords, token_warnings, uses_browser
 from ..sources import site
 from ..sources.base import SourceError
@@ -586,7 +586,7 @@ class Recorder(LinkPicks, Popups):  # pylint: disable=too-many-instance-attribut
         if level == 0:
             self.start_url = "" if self._starts_at_steps_end(url) else url
         # Elements without an address (buttons, rows a script opens): the job clicks them.
-        proposal, clicked = link_proposal(event.get("matches", []), str(target))
+        proposal, clicked = link_proposal(images.resolved(event.get("matches", [])), str(target))
         spec = {"selector": event["selector"], "pattern": proposal["pattern"]} | self._alternatives(event)
         spec |= {"click": True} if clicked else {}
         if target == "follow":

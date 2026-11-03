@@ -7,14 +7,15 @@ the picks and shows them.
 
 A pick whose elements all lack an address becomes one that is clicked ("click": true), its
 pattern proposed on the elements' texts (text_pattern); the page's {type: click, target, level,
-click} switches a pick between the two, its pattern proposed anew from the page.
+click} switches a pick between the two, its pattern proposed anew from the page. Images (an <img>,
+a <picture>) are picked by their address at full size (harvester.images).
 """
 
 import asyncio
 import os
 import re
 
-from .. import patterns
+from .. import images, patterns
 from .datapicks import DataPicks, search_all
 from .engine import main_world
 
@@ -25,13 +26,18 @@ HIGHLIGHT = (
     "([selector, pattern, hits]) => window.__harvester ? window.__harvester.highlight(selector, pattern, hits) : null"
 )
 # A pick's elements: the address a job can open (an http(s) link's that goes elsewhere than the
-# page; else none: an element the job clicks), and the text it tells them by (sources.clicks).
-MATCHES = """els => els.map(e => {
+# page; else none: an element the job clicks), the text it tells them by (sources.clicks), and an
+# image's attributes (its address at full size, images.best_image).
+MATCHES = (
+    """els => els.map(e => {
   const href = typeof e.href === 'string' ? e.href : ''
   const opens = /^https?:/i.test(href) && !(e.getAttribute('href') || '').trim().startsWith('#')
   const text = e.innerText || e.value || e.getAttribute('aria-label') || e.getAttribute('title') || ''
-  return [opens ? href : '', text.trim().slice(0, 80)]
+  return [opens ? href : '', text.trim().slice(0, 80), ("""
+    + images.INFO
+    + """)(e)]
 })"""
+)
 
 
 def _shared(texts: list[str]) -> str:
@@ -80,6 +86,14 @@ def link_proposal(matches: list, target: str) -> tuple[dict, bool]:
     return proposal, True
 
 
+async def _matches(page, selector: str) -> tuple[list[tuple[str, str]], bool]:
+    """A pick's elements on the page (MATCHES: their addresses, an image's at full size, and
+    texts), and whether any is an image: its address is Python's, so the outlines follow its
+    matches."""
+    found = await page.eval_on_selector_all(selector, MATCHES)
+    return images.resolved(found), any(entry[2] for entry in found if len(entry) > 2)
+
+
 class LinkPicks(DataPicks):  # pylint: disable=too-few-public-methods
     """The recorder's picks of links (mixed into Recorder, whose state and methods these are)."""
 
@@ -100,7 +114,7 @@ class LinkPicks(DataPicks):  # pylint: disable=too-few-public-methods
             await self._update()
             return
         clicked = bool(spec.get("click"))
-        found = await page.eval_on_selector_all(spec["selector"], MATCHES)
+        found, pictured = await _matches(page, spec["selector"])
         try:
             matches = await asyncio.to_thread(
                 search_all, pattern.pattern, [text if clicked else href for href, text in found]
@@ -124,7 +138,7 @@ class LinkPicks(DataPicks):  # pylint: disable=too-few-public-methods
         try:
             await page.evaluate(
                 HIGHLIGHT,
-                [spec["selector"], None if clicked else patterns.js_regex(pattern.pattern), hits],
+                [spec["selector"], None if clicked or pictured else patterns.js_regex(pattern.pattern), hits],
                 **main_world(page),
             )
         except Exception:  # pylint: disable=broad-exception-caught
@@ -144,7 +158,7 @@ class LinkPicks(DataPicks):  # pylint: disable=too-few-public-methods
             return
         self._remember()
         try:
-            found = await self._page.eval_on_selector_all(spec["selector"], MATCHES)
+            found, _ = await _matches(self._page, spec["selector"])
         except Exception:  # pylint: disable=broad-exception-caught
             found = []  # a selector the page cannot read: the pattern stays
         key = "links" if chosen[0] == "links" else f"follow{chosen[1]}"

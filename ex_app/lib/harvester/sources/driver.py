@@ -18,7 +18,7 @@ from urllib.parse import urljoin, urlparse
 import httpx
 from bs4 import BeautifulSoup
 
-from .. import browser, pagination, patterns, selectors
+from .. import browser, images, pagination, patterns, selectors
 from . import download, near
 from .base import AuthError, ChallengeError, SourceError
 from .download import Response
@@ -94,6 +94,11 @@ class Driver(abc.ABC):
     def sign_in_again(self) -> bool:
         """Signs in anew (the session ended in the middle of a run); False without a sign-in."""
         return False
+
+    def capture(self, where: Any, settings: dict, spec: dict) -> tuple[list, str, str]:
+        """The files of the types spec captures that the page a file link leads to loads (keep
+        .Captured each), its title and address. Only the browser loads pages."""
+        raise SourceError("the files the pages load are captured, which only the browser can")
 
     @abc.abstractmethod
     def links(self, page: Any, selector: str) -> list[tuple[str, str]]:
@@ -215,25 +220,23 @@ class HttpDriver(Driver):
         base = page.soup.find("base", href=True)
         return urljoin(page.url, str(base["href"])) if base else page.url
 
+    @staticmethod
+    def _address(link: Any, base: str) -> tuple[str, str]:
+        """A link's address and text; an image's at its full size and its alt (harvester.images)."""
+        if link.get("href"):
+            return urljoin(base, str(link.get("href"))), link.get_text(" ", strip=True)
+        info = images.soup_info(link)
+        return images.best_image(info, base), images.alt(info)
+
     def links(self, page: Any, selector: str) -> list[tuple[str, str]]:
         base = self._base(page)
-        return [
-            (urljoin(base, str(link.get("href"))), link.get_text(" ", strip=True))
-            for link in selectors.soup_select(page.soup, selector)
-            if link.get("href")
-        ]
+        found = [self._address(link, base) for link in selectors.soup_select(page.soup, selector)]
+        return [(url, text) for url, text in found if url]
 
     def valued_links(self, page: Any, selector: str, specs: list[dict]) -> list[tuple[str, str, list]]:
         base = self._base(page)
-        return [
-            (
-                urljoin(base, str(link.get("href"))),
-                link.get_text(" ", strip=True),
-                [near.soup_value(link, spec) for spec in specs],
-            )
-            for link in page.soup.select(selector)
-            if link.get("href")
-        ]
+        found = [(self._address(link, base), link) for link in page.soup.select(selector)]
+        return [(url, text, [near.soup_value(link, spec) for spec in specs]) for (url, text), link in found if url]
 
     def next(self, page: Any, selector: str) -> Any:
         found = self.links(page, selector)
