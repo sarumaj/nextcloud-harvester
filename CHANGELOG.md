@@ -61,6 +61,10 @@
 - The image is some 270 MB smaller: without Playwright's headless shell, which nothing starts
   (the browsers are the full Chromium); an empty `HARVESTER_BROWSER_CHANNEL` means it too.
 - The app's modules are compiled in the image, not again at each start (some 0.25 s).
+- The container's health check runs every 15 seconds instead of every 2 (a shell and `pgrep`
+  each time, for the container's whole life): a deploy waits some 15 seconds for *healthy*
+  (HaRP waits up to 90); failures in the first five minutes do not count, then four in a row
+  make the container *unhealthy*.
 
 ### Fixed
 

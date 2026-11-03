@@ -22,6 +22,11 @@ occ app_api:daemon:registry:add <daemon> --registry-from=ghcr.io/sarumaj --regis
 The homelab registers the app with its own local image (`local.homelab/harvester`) and needs
 neither.
 
+**The container's health check** (`healthcheck.sh`: whether frpc, HaRP's tunnel, runs) comes every
+15 seconds, the first 15 seconds after the start: a deploy waits that long for *healthy* (HaRP
+waits up to 90 seconds). Failures in the first five minutes do not count, then four in a row (a
+minute) make the container *unhealthy*.
+
 **Translations** (German and Polish; the page, the settings below and the notifications):
 installed from the app store, AppAPI copies the release archive's `l10n/` into the server's
 writable apps folder (`<apps>/harvester/l10n/`), where Nextcloud finds them. An app registered

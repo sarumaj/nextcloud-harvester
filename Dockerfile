@@ -132,4 +132,10 @@ COPY --chmod=775 start.sh /
 # Set working directory and define entrypoint/healthcheck.
 WORKDIR /ex_app/lib
 ENTRYPOINT ["/start.sh", "python3", "main.py"]
-HEALTHCHECK --interval=2s --timeout=2s --retries=300 CMD /healthcheck.sh
+# The health check (whether frpc runs) every 15 s, not every 2 s for the container's whole life
+# (a bash and a pgrep each time). AppAPI waits for "healthy" after a deploy: through HaRP for 90 s
+# (its wait_for_start, 180 times 0.5 s), else for 900 s; the first check, after 15 s, is in time,
+# and five more come within HaRP's wait. Failures in the first 5 minutes do not count (start
+# period), then 4 in a row (a minute) make it unhealthy. No --start-interval (faster checks while
+# starting): Docker before 25 ignores it, and the deploy daemons' Docker is not known.
+HEALTHCHECK --interval=15s --timeout=5s --start-period=300s --retries=4 CMD /healthcheck.sh
