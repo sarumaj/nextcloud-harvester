@@ -23,6 +23,12 @@
   Nextcloud cannot be asked, nothing is downloaded and the log says so. An unpacked ZIP counts as
   there while its archive or its folder is.
 
+- More consent managers whose cookie banners **Dismiss cookie banners** answers by their own
+  reject buttons: Sourcepoint (its message's frame, never the page itself), CookieYes and its
+  older CookieLawInfo, Complianz, Osano, Iubenda, consentmanager.net, Cookie Script, Termly,
+  Axeptio, Cookie Notice and Google's Funding Choices (*Do not consent*); a recorded click on
+  one of their banners is optional then.
+
 ### Changed
 
 - An address sent to an on-demand job again brings back its files deleted in Nextcloud since,

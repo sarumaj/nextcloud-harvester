@@ -279,10 +279,10 @@ STEALTH = Option(
 CONSENT = Option(
     "Dismiss cookie banners",
     1,
-    "The browser answers the common cookie banners (OneTrust, Cookiebot, Usercentrics, Didomi, Quantcast, "
-    "TrustArc, Borlabs, Klaro, and banners with a button “Reject all”, “Only necessary”, …) with “Reject all”, "
-    "else “Only necessary”, as they show: in the job's steps and pages, and in the recorder. It clicks nothing "
-    "else.",
+    "The browser answers the common cookie banners (OneTrust, Cookiebot, Usercentrics, Didomi, Sourcepoint, "
+    "CookieYes, Complianz and other consent managers, and banners with a button “Reject all”, “Only necessary”, …) "
+    "with “Reject all”, else “Only necessary”, as they show: in the job's steps and pages, and in the recorder. "
+    "It clicks nothing else.",
     kind="flag",
     before=0,
 )

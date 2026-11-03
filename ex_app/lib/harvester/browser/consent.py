@@ -3,8 +3,10 @@
 sources.base.CONSENT): consent.js, added to every page and frame of the job's browser (its steps
 and its walk) and of the recorder's (its recording and its recipe's test), answers the common
 consent managers' banners (OneTrust, Cookiebot, Usercentrics, Didomi, Quantcast's TCF, TrustArc,
-Borlabs, Klaro) with "Reject all", else "Only necessary", and buttons of exactly such a text (in
-English, German or Polish) in a dialog or a floating banner that speaks of cookies; nothing else.
+Borlabs, Klaro, Sourcepoint's frame, CookieYes and its CookieLawInfo, Complianz, Osano, Iubenda,
+consentmanager.net, Cookie Script, Termly, Axeptio, Cookie Notice, Google's Funding Choices) with
+"Reject all", else "Only necessary", and buttons of exactly such a text (in English, German or
+Polish) in a dialog or a floating banner that speaks of cookies; nothing else.
 It clicks without recording: recorder.js leaves the clicks it makes alone.
 
 A recipe recorded before may still click such a banner itself: with the banners dismissed, its
@@ -18,7 +20,8 @@ from pathlib import Path
 SCRIPT = (Path(__file__).parent / "consent.js").read_text(encoding="utf-8")
 # What names a consent manager's element in a selector, or its frame's address.
 MANAGERS = re.compile(
-    r"onetrust|cybotcookiebot|cookiebot|usercentrics|didomi|qc-cmp|truste|borlabs|brlbs|klaro|cookie|consent",
+    r"onetrust|cybotcookiebot|cookiebot|usercentrics|didomi|qc-cmp|truste|borlabs|brlbs|klaro|cookie|consent|"
+    r"sp_message|sp_choice|privacy-mgmt|cky-|cmplz|osano|iubenda|cmpbox|cmpwrapper|termly|axeptio|fc-cta|fc-consent",
     re.IGNORECASE,
 )
 # A button's text that reads like a banner's (the recorder's own hint for optional steps).

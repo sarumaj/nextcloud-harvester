@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Cookie banners dismissed on their own (harvester.browser.consent, consent.js) in Chromium
 against route-served pages (no network): the known consent managers' banners (also in a frame, in
-a shadow root, shown late) and banners of exact texts in German, English and Polish, answered with
-"Reject all", else "Only necessary"; nothing else clicked (a dialog that is no cookie banner, a
-button outside a banner, a cookie page that does not float); the job's steps and pages, its
+a shadow root, shown late; Sourcepoint's in a frame of its own, never on the page itself) and
+banners of exact texts in German, English and Polish, answered with "Reject all", else "Only
+necessary"; nothing else clicked (a dialog that is no cookie banner, a button outside a banner, a
+cookie page that does not float); the job's steps and pages, its
 option (on for new jobs, off for those saved before) and the recorder's browser, which records no
 step of it; a recorded click on a banner made optional."""
 
@@ -67,6 +68,46 @@ PAGES = {
 }
 
 
+def managed(banner: str, reject: str, text: str = "Reject all") -> str:
+    """A consent manager's banner: its container's attributes (banner), an Accept all and the
+    manager's reject button (its attributes, its text)."""
+    return (
+        CLICKED + f'<div {banner} style="position: fixed; bottom: 0"><p>We use cookies.</p>'
+        "<button onclick=\"pressed('accept')\">Accept all</button>"
+        f"<button {reject} onclick=\"pressed('reject')\">{text}</button></div>"
+    )
+
+
+# The consent managers added later: each banner's container and its reject button, as they ship.
+MANAGED = {
+    "/cookieyes": managed('class="cky-consent-container"', 'class="cky-btn cky-btn-reject"'),
+    "/cookielawinfo": managed('id="cookie-law-info-bar"', 'id="cookie_action_close_header_reject"', "Reject"),
+    "/complianz": managed('id="cmplz-cookiebanner-container"', 'class="cmplz-btn cmplz-deny"', "Deny"),
+    "/osano": managed('class="osano-cm-window"', 'class="osano-cm-denyAll osano-cm-button"', "Reject"),
+    "/iubenda": managed('id="iubenda-cs-banner"', 'class="iubenda-cs-reject-btn"', "Ablehnen"),
+    "/consentmanager": managed('id="cmpbox"', 'class="cmpboxbtn cmpboxbtnno"', "Odrzuć"),
+    "/cookiescript": managed('id="cookiescript_injected"', 'id="cookiescript_reject"', "Decline all"),
+    "/termly": managed('id="termly-code-snippet-support"', 'data-tid="banner-decline"', "Decline"),
+    "/axeptio": managed('id="axeptio_overlay"', 'id="axeptio_btn_dismiss"', "Non merci"),
+    "/cookienotice": managed('id="cookie-notice"', 'id="cn-refuse-cookie"', "Nein"),
+    "/fundingchoices": managed('class="fc-consent-root"', 'class="fc-button fc-cta-do-not-consent"', "Do not consent"),
+    # Sourcepoint's message in its frame of another host, which tells the page what was pressed.
+    "/sourcepoint": CLICKED
+    + """<script>addEventListener('message', (event) => pressed(event.data))</script>
+  <div id="sp_message_container_1"><iframe id="sp_message_iframe_1" src="https://cmp.example/sp"></iframe></div>""",
+    # Sourcepoint's classes outside its frame: the page itself is no banner of it.
+    "/sp-top": CLICKED
+    + """<button class="sp_choice_type_11" onclick="pressed('accept')">Accept</button>
+  <button class="sp_choice_type_13" onclick="pressed('reject')">Reject all</button>""",
+}
+PAGES |= MANAGED
+PAGES["/sp"] = """<div class="message"><p>We and our partners use cookies.</p>
+  <button class="message-component message-button sp_choice_type_11" onclick="parent.postMessage('accept', '*')">Accept
+  </button><button class="message-component message-button sp_choice_type_12">Settings</button>
+  <button class="message-component message-button sp_choice_type_13" onclick="parent.postMessage('reject', '*')">Reject
+  </button></div>"""
+
+
 def serve(route) -> None:
     path = "/" + route.request.url.split("://", 1)[1].split("/", 1)[1]
     body = f"<html><body>{PAGES.get(path, 'nothing')}</body></html>"
@@ -110,6 +151,19 @@ def test_banners_are_answered_and_nothing_else_is_clicked(monkeypatch, path, exp
 
 
 @needs_chromium
+def test_more_consent_managers_are_answered_by_their_own_reject_buttons(monkeypatch):
+    monkeypatch.setattr(site_module, "guard", serve)
+    driver = site_module.BrowserDriver([], {}, consent=True)
+    try:
+        for path in MANAGED:
+            driver.main.goto(SITE + path)
+            expected = [] if path == "/sp-top" else ["reject"]
+            assert clicked(driver.main, len(expected)) == expected, path
+    finally:
+        driver.close()
+
+
+@needs_chromium
 def test_without_the_option_banners_stay(monkeypatch):
     monkeypatch.setattr(site_module, "guard", serve)
     driver = site_module.BrowserDriver([{"action": "goto", "url": SITE + "/de"}], {})
@@ -138,6 +192,8 @@ def test_which_recorded_clicks_are_made_optional():
         {"action": "click", "selector": "button.x", "alternatives": ["#CybotCookiebotDialogBodyButtonAccept"]},
         {"action": "click", "selector": "button", "frame": [{"url": "https://cmp.usercentrics.eu/x"}]},
         {"action": "click", "selector": "button.primary", "text": "Alle akzeptieren"},
+        {"action": "click", "selector": ".cky-btn-accept"},
+        {"action": "click", "selector": "button[title=Accept]", "frame": [{"selector": "#sp_message_iframe_1"}]},
     ):
         assert consent.relaxed(step) == step | {"optional": True}, step
     for step in (

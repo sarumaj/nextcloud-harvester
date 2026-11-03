@@ -4,7 +4,9 @@
 // kinds of element are ever clicked:
 //
 // - a known consent manager's button, inside its own banner (MANAGERS: its container, and the
-//   container's open shadow root), by its selector or by one of the exact texts below;
+//   container's open shadow root; for a manager whose banner is a frame of its own, as
+//   Sourcepoint's, the document of a frame that holds the manager's own elements), by its
+//   selector or by one of the exact texts below;
 // - a button whose whole text is one of the exact texts below (TEXTS), inside an element that
 //   looks like a cookie banner: a dialog (role dialog or alertdialog, aria-modal, an open
 //   <dialog>) or an element named cookie, consent or gdpr that floats (fixed or sticky), and whose
@@ -25,15 +27,29 @@
 		{ name: 'TrustArc', banner: '#truste-consent-track, #truste-consent-content', buttons: ['#truste-consent-required', '#truste-consent-reject'] },
 		{ name: 'Borlabs', banner: '#BorlabsCookieBox, #BorlabsCookieBoxWrap', buttons: ['[data-cookie-refuse]', '._brlbs-refuse-btn a', '._brlbs-refuse a', '[data-borlabs-cookie-actions="reject"]'] },
 		{ name: 'Klaro', banner: '.klaro .cookie-notice, .klaro .cookie-modal, #klaro', buttons: ['.cn-decline', '.cm-btn-decline'] },
+		// Sourcepoint's message is a frame of its own (sp_message_iframe_…, often at a site's own
+		// name): its whole document is the banner, known by the choices' classes (13: reject all).
+		{ name: 'Sourcepoint', frame: '[class*="sp_choice_type_"]', banner: 'body', buttons: ['.sp_choice_type_REJECT_ALL', '.sp_choice_type_13'] },
+		{ name: 'CookieYes', banner: '.cky-consent-container, .cky-modal', buttons: ['.cky-btn-reject'] },
+		{ name: 'CookieLawInfo', banner: '#cookie-law-info-bar', buttons: ['#cookie_action_close_header_reject'] },
+		{ name: 'Complianz', banner: '#cmplz-cookiebanner-container, .cmplz-cookiebanner', buttons: ['.cmplz-btn.cmplz-deny'] },
+		{ name: 'Osano', banner: '.osano-cm-window, .osano-cm-dialog', buttons: ['.osano-cm-denyAll', '.osano-cm-button--type_denyAll'] },
+		{ name: 'Iubenda', banner: '#iubenda-cs-banner', buttons: ['.iubenda-cs-reject-btn'] },
+		{ name: 'consentmanager', banner: '#cmpwrapper, #cmpbox', buttons: ['.cmpboxbtnno'] },
+		{ name: 'Cookie Script', banner: '#cookiescript_injected, #cookiescript_injected_wrapper', buttons: ['#cookiescript_reject'] },
+		{ name: 'Termly', banner: '#termly-code-snippet-support', buttons: ['[data-tid="banner-decline"]'] },
+		{ name: 'Axeptio', banner: '#axeptio_overlay', buttons: ['#axeptio_btn_dismiss'] },
+		{ name: 'Cookie Notice', banner: '#cookie-notice', buttons: ['#cn-refuse-cookie'] },
+		{ name: 'Google Funding Choices', banner: '.fc-consent-root', buttons: ['.fc-cta-do-not-consent'] },
 	]
 	// The buttons' whole texts, lower case, in the order they are preferred: to reject all first,
 	// then to accept only the necessary ones.
 	const TEXTS = [
 		'reject all', 'reject all cookies', 'decline all', 'deny all', 'refuse all', 'reject', 'decline', 'deny',
-		'disagree', 'i do not agree', 'do not agree', 'reject optional cookies', 'reject non-essential cookies',
+		'disagree', 'i do not agree', 'do not agree', 'do not consent', 'reject optional cookies', 'reject non-essential cookies',
 		'reject additional cookies', 'continue without accepting',
 		'alle ablehnen', 'alles ablehnen', 'alle cookies ablehnen', 'ablehnen', 'optionale cookies ablehnen',
-		'nicht zustimmen', 'ich stimme nicht zu', 'weiter ohne einwilligung', 'ohne einwilligung fortfahren',
+		'nicht zustimmen', 'ich stimme nicht zu', 'nicht einwilligen', 'weiter ohne einwilligung', 'ohne einwilligung fortfahren',
 		'ohne zustimmung fortfahren',
 		'odrzuć wszystkie', 'odrzuć wszystko', 'odrzuć wszystkie pliki cookie', 'odrzuć', 'odrzucam',
 		'nie zgadzam się', 'nie wyrażam zgody', 'kontynuuj bez akceptacji',
@@ -107,6 +123,8 @@
 	function sweep() {
 		if (window.__harvesterConsent.length >= CLICKS || !document.documentElement) return
 		for (const manager of MANAGERS) {
+			// A manager whose banner is a frame: only in such a frame (never the page itself).
+			if (manager.frame && (window === window.top || !document.querySelector(manager.frame))) continue
 			for (const banner of document.querySelectorAll(manager.banner)) {
 				const scopes = banner.shadowRoot ? [banner, banner.shadowRoot] : [banner]
 				const button = best(scopes, manager.buttons)
