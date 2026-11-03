@@ -18,10 +18,10 @@ When a site asks for a person, the job waits for you to answer it in its browser
     <website>https://git.ciepiela.org/dawid/nextcloud-harvester</website>
     <bugs>https://git.ciepiela.org/dawid/nextcloud-harvester/issues</bugs>
     <repository type="git">https://git.ciepiela.org/dawid/nextcloud-harvester</repository>
-    <screenshot>https://raw.githubusercontent.com/sarumaj/nextcloud-harvester/main/screenshots/1-jobs.png</screenshot>
-    <screenshot>https://raw.githubusercontent.com/sarumaj/nextcloud-harvester/main/screenshots/2-new-job.png</screenshot>
-    <screenshot>https://raw.githubusercontent.com/sarumaj/nextcloud-harvester/main/screenshots/3-job.png</screenshot>
-    <screenshot>https://raw.githubusercontent.com/sarumaj/nextcloud-harvester/main/screenshots/4-recorder.png</screenshot>
+    <screenshot>https://git.ciepiela.org/dawid/nextcloud-harvester/raw/branch/main/screenshots/1-jobs.png</screenshot>
+    <screenshot>https://git.ciepiela.org/dawid/nextcloud-harvester/raw/branch/main/screenshots/2-new-job.png</screenshot>
+    <screenshot>https://git.ciepiela.org/dawid/nextcloud-harvester/raw/branch/main/screenshots/3-job.png</screenshot>
+    <screenshot>https://git.ciepiela.org/dawid/nextcloud-harvester/raw/branch/main/screenshots/4-recorder.png</screenshot>
     <dependencies>
         <nextcloud min-version="32" max-version="36"/>
     </dependencies>
