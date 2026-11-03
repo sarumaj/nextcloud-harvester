@@ -47,6 +47,8 @@
   installing itself as `urllib3` (`URLLIB3_NO_OVERRIDE`), so gallery-dl gets upstream urllib3 again.
   0.13.1's urllib3 2.7.0 did not help: the fork stood in its place, and lacks
   `urllib3.connection.create_urllib3_context`.
+- *Test the recipe* in the recorder failed at a recorded click on a cookie banner that **Dismiss
+  cookie banners** had answered already; it skips the click as optional, as a run does.
 
 ## 0.13.1 - 2026-11-03
 

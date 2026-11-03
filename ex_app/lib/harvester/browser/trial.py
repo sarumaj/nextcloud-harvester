@@ -121,12 +121,21 @@ class TrialDriver(site.BrowserDriver):
     recorder's, whose slot it holds). Its requests over HTTP (a JSON listing, the probe) are the
     job's: the context's cookies, the browser's user agent, its proxy."""
 
-    def __init__(
-        self, context: Blocking, user_agent: str = "", proxy: str = "", told: Callable[[dict], None] | None = None
-    ):  # pylint: disable=super-init-not-called
+    def __init__(  # pylint: disable=super-init-not-called,too-many-arguments,too-many-positional-arguments
+        self,
+        context: Blocking,
+        user_agent: str = "",
+        proxy: str = "",
+        told: Callable[[dict], None] | None = None,
+        consent: bool = False,
+    ):
         self.context = context
         self.user_agent = user_agent
         self.proxy = proxy
+        # The test's context dismisses cookie banners as the recorder's does (consent.py): a
+        # recorded click on one that is gone is skipped as optional, as a run with them dismissed
+        # skips it.
+        self.consent = consent
         # The steps' pauses and retries end with the test (its stop, its deadline); each step's
         # progress goes to the recorder's page (told).
         self.nap = context.nap
@@ -212,12 +221,14 @@ def survey(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     proxy: str = "",
     send: Callable[[dict], Awaitable[None]] | None = None,
     desk: needs.Desk | None = None,
+    consent: bool = False,
 ) -> dict:
     """The test, in a worker thread: the steps (skipped while the session reaches the listing, as
     for a job with a kept session), each told to send as it is played (teller), then the walk
     (Site.survey). As the job runs: the account's cookies in the context and its secrets for the
-    steps, and the first file probed. A step that needs the person asks on desk, told to send."""
-    driver = TrialDriver(context, user_agent, proxy, teller(send, context.loop) if send else None)
+    steps, and the first file probed. A step that needs the person asks on desk, told to send.
+    With consent the context dismisses cookie banners: a recorded click on one is optional."""
+    driver = TrialDriver(context, user_agent, proxy, teller(send, context.loop) if send else None, consent)
     source.driver = driver
     secrets = source.secrets if as_job else {}
     if as_job:
@@ -277,6 +288,7 @@ class Trials:  # pylint: disable=too-few-public-methods
     _context: BrowserContext | None
     _page: Page | None
     _home: bool
+    _consent: bool
     _desk: needs.Desk
     _trial_stop: threading.Event | None
     _trial: asyncio.Task | None
@@ -320,9 +332,15 @@ class Trials:  # pylint: disable=too-few-public-methods
             blocking = Blocking(context, asyncio.get_running_loop(), stop, time.monotonic() + TRIAL_SECONDS)
             await self.send({"type": "test-started", "as_job": as_job})
             # The test's requests over HTTP as the browser's (user agent, connection); its steps told.
-            # The test's steps that ask the person, on the test's desk.
-            via = (browser.user_agent(self._browser.version), browser.PROXY if self._home else "", self.send)
-            result = await asyncio.to_thread(survey, source, blocking, recipe, session, as_job, *via, self._desk)  # type: ignore[arg-type]
+            # The test's steps that ask the person, on the test's desk; the cookie banners
+            # dismissed in its context as in the recorder's.
+            via = (
+                browser.user_agent(self._browser.version),
+                browser.PROXY if self._home else "",
+                self.send,
+                self._desk,
+            )
+            result = await asyncio.to_thread(survey, source, blocking, recipe, session, as_job, *via, self._consent)  # type: ignore[arg-type]
             result["as_job"] = as_job
             # Stopped by the person: what the stop cut short is no failure of the recipe.
             if stop.is_set() and result.get("ended") == "failed":

@@ -16,6 +16,7 @@ import json
 import pytest
 from test_browser import FREE, Driver, needs_chromium
 from test_recorder_events import run
+from test_recorder_features import trial_result
 
 import main
 from harvester.browser import consent
@@ -102,6 +103,8 @@ MANAGED = {
   <button class="sp_choice_type_13" onclick="pressed('reject')">Reject all</button>""",
 }
 PAGES |= MANAGED
+# OneTrust's banner over a listing.
+PAGES["/statements"] = PAGES["/onetrust"] + '<a class="file" href="/statement.pdf">Statement</a>'
 PAGES["/sp"] = """<div class="message"><p>We and our partners use cookies.</p>
   <button class="message-component message-button sp_choice_type_11" onclick="parent.postMessage('accept', '*')">Accept
   </button><button class="message-component message-button sp_choice_type_12">Settings</button>
@@ -284,3 +287,36 @@ def test_the_recorders_browser_dismisses_banners_without_recording_them():
     pressed, steps = run(scenario)
     assert pressed == ["reject"]
     assert steps == [{"action": "goto", "url": SITE + "/onetrust"}], "no step of the banner's"
+
+
+@needs_chromium
+def test_the_recorders_test_skips_a_recorded_click_on_a_banner_already_dismissed():
+    async def fulfill(route) -> None:
+        path = "/" + route.request.url.split("://", 1)[1].split("/", 1)[1]
+        body = f"<html><body>{PAGES.get(path, 'nothing')}</body></html>"
+        await route.fulfill(status=200, headers={"content-type": "text/html; charset=utf-8"}, body=body)
+
+    accept = {"action": "click", "selector": "#onetrust-accept-btn-handler", "text": "Accept All", "pause": 1}
+    recipe = {
+        "steps": [{"action": "goto", "url": SITE + "/statements"}, accept],
+        "links": {"selector": "a.file", "pattern": "pdf"},
+    }
+
+    async def scenario():
+        driver = Driver()
+        recorder = Recorder(driver.send)
+        driver.recorder = recorder
+        recorder._guard = fulfill  # type: ignore[method-assign]
+        await recorder.start(consent=True)
+        try:
+            result = await trial_result(driver, recorder, {"recipe": recipe})
+            return result, [message for message in driver.sent if message["type"] == "test-step"]
+        finally:
+            await recorder.close()
+
+    result, played = run(scenario)
+    assert (result["ended"], result["problems"], result["files"]) == ("complete", [], 1)
+    assert [(event["number"], event["state"]) for event in played if event["state"] in ("passed", "skipped")] == [
+        (1, "passed"),
+        (2, "skipped"),
+    ], "as a run with the banners dismissed: gone, so skipped"
