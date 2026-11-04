@@ -183,6 +183,33 @@ at `tryout.LIMIT` (60 s; a helper program is killed), or after 2000 files. The a
 - with `error`, `folders`: a mailbox's folders, the closest to the job's first, when it has not
   the job's (`mail.MissingFolder`; the page offers them for *Folder*), else empty.
 
+## Values of pages and list values
+
+A website's walk (`sources/walk.py`) reads each listing page's values once, before its links:
+`Driver.page_info` gives the raw values (`pageinfo.PAGE_INFO`, one `evaluate` in the browser;
+`pageinfo.soup_info` over HTTP, from the page parsed already) and `pageinfo.values` makes them
+the built-in ones (`page_title`, `site_name`, `page_date` with `page_year`, `page_month` and
+`page_day`, `page_lang`) and those of the level's `page_values` (on the first page its link
+opened, kept for its next pages). The walk's values are the levels' and the pages', a deeper
+page's winning, a link's groups last; the names read from pages never count as a disagreement of
+a link's pattern (`Walk.read_names`). The recipe's keys:
+
+```json
+{"follow": [{"selector": "a.post", "pattern": "/post/(?P<post>\\d+)$",
+  "values": [{"name": "tags", "closest": "div.card", "selector": "ul.chips a", "many": true}],
+  "page_values": [{"name": "tags", "selector": "ul.tags a", "many": true, "regex": ""},
+                  {"name": "author", "selector": ".byline", "attribute": "", "type": "text"}]}]}
+```
+
+`"many": true` makes a value a list (`patterns.page_values`: each entry cleaned by
+`patterns.clean_entry`, `MAX_ENTRIES` at most; text or numbers, no dates; a selector required);
+`page_values` take no `closest` and never a built-in name, and only levels to follow have them
+(`recipe._check_values`). A list value is kept as a list in an item's values (also gallery-dl's
+lists of texts and its dicts of them, `sources/gallery.listed`, and yt-dlp's `tags` and
+`categories`); `patterns.render` joins it with a comma, `patterns.render_tags` makes a tag per entry
+of a template that is the value alone (`MAX_LIST_TAGS`). A source's `tag_values` are offered
+under the form's Tags (`/api/sources`).
+
 ## Translations
 
 Harvester is translated as Nextcloud's PHP apps are, with `l10n/<language>.json` and

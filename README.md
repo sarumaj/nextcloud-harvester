@@ -27,6 +27,9 @@ the app's browser or taken from a template, not by code.
   **Cryptomator vault**: its inbox, which the vault app empties into the vault, or the vault
   itself, encrypted on the server; or photos and videos into your **Immich** account, into an
   album; tagged with Nextcloud's or Immich's tags, Harvester's own labels, or not at all.
+- **Tags from the sites:** a page's tag chips, picked in the recorder beside the links or on
+  the page a link opens, and gallery-dl's and yt-dlp's tags become a tag each; every page a job
+  opens gives its title, site, date and language for file names and tags.
 - **Versions and duplicates:** a file whose content the job saved already from another address
   is not saved again; a known file that changed (asked cheaply with `ETag` and `Last-Modified`) is
   saved over its own, and Nextcloud keeps the one before as a version.

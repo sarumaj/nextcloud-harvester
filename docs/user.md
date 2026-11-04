@@ -316,7 +316,8 @@ is a job like any other; what you upload or move there leaves no name in plain.
     `{date}`, `{year}`, `{filename}`, … The log says what the feed holds (*The feed “Reports”:
     20 entries, 18 file links*).
   - `media`: videos and audio from YouTube, Vimeo and the other sites yt-dlp supports (a video,
-    or the newest entries of a playlist or channel). A format of separate video and audio streams
+    or the newest entries of a playlist or channel). yt-dlp's `{tags}` and `{categories}` are
+    lists: a tag per entry in Tags. A format of separate video and audio streams
     (YouTube's best, from 720p up) is joined with ffmpeg, without re-encoding: into mp4 where the
     codecs fit (H.264, AV1 with AAC), else mkv (VP9 with Opus). ffmpeg runs without the app's
     environment, as the browser does. The log says how many entries a playlist or channel listed
@@ -336,6 +337,10 @@ is a job like any other; what you upload or move there leaves no name in plain.
     [administrator's guide](admin.md#bot-checks-the-browser-disguise-and-impersonation) describes.
   - `gallery`: images of galleries, albums and profiles on the sites gallery-dl supports;
     gallery-dl lists them, Harvester downloads them with its checks and the page as `Referer`.
+    Its values are gallery-dl's for the file; a list of texts stays a list (`{tags}`: a tag per
+    entry in Tags), a site's tags by kind become one list each (e621's `{tags_general}`,
+    `{tags_artist}`, …); Danbooru's `{tag_string}` is one text (the tags separated by spaces).
+    The form offers them under Tags.
     The log says how many files gallery-dl listed; when it lists part of the gallery and then
     fails (a page of many), the files it listed are taken, a warning names its error, and the
     run does not count as a complete pass.
@@ -641,6 +646,24 @@ is a job like any other; what you upload or move there leaves no name in plain.
   pattern's groups do; a value its element or pattern does not find is missing (a file name
   naming it fails that file, a tag naming it is left out). Read alike over HTTP and in the
   browser; a level without values reads its links as before.
+  A value with `"many": true` is a list: the texts of every element `selector` finds in the
+  link's row or card, its tag chips say (`{"name": "tags", "closest": "div.card", "selector":
+  "ul.tags a", "many": true}`); each is cleaned of a leading *#* and a count after it
+  (*sky (123)*, *sea 1.2k*), repeats are left out, and a pattern (if any) keeps those it matches.
+- **Values of the pages** (`harvester/pageinfo.py`): every listing page a walk opens (the
+  listing, each page a level's link opens, the page each file link sits on) gives
+  `{page_title}` (`og:title`, else `<title>`, without a *| Site* or *- Site* at its end that
+  repeats the site's name), `{site_name}` (`og:site_name`, else `application-name`, else the
+  host), `{page_date}` (`article:published_time`, `og:updated_time`, JSON-LD's `datePublished`
+  or the first `<time datetime>`, with `{page_year}`, `{page_month}` and `{page_day}`) and
+  `{page_lang}` (`<html lang>`). A level to follow may read more on the page its links open:
+  `"page_values"`, as its values but without `closest` (`{"name": "author", "selector":
+  ".byline"}`, `{"name": "tags", "selector": "ul.tags a", "many": true}`). They go down to the
+  next levels and the file links as a level's values do, a deeper page's winning; a page value's
+  name never makes a link's pattern disagree with it.
+- **Tags from lists**: a job's tag that is a list value alone (`{tags}`) gives a tag per entry,
+  20 at most per file (the log says once per file how many more were left out); in a file name,
+  or a tag of more than the value, a list's entries are joined with a comma.
 - **Listings in JSON** (`harvester/jsonlist.py`): the file links may be `"kind": "json"`, for a
   site whose page fetches its listing (an XHR): the request's address (`{year}` and the like from
   the levels before), the path to its items (`data.items`: JSONPath's dotted form, with `[n]` and
@@ -834,7 +857,18 @@ is a job like any other; what you upload or move there leaves no name in plain.
   **Pick a value** (with each pick of links), then a click on a text near one of its links (a
   date in its row, a title in its card), adds a value: where it is from the link, and a type and
   pattern proposed from what it reads beside every link (a date's form recognised); the examples
-  show the values, and their names, types and patterns can be changed. **Network** lists the
+  show the values, and their names, types and patterns can be changed. **Pick tags** beside it
+  takes a click on one tag in a link's row or card: the tags alike in each card become a list,
+  `tags`, a tag per entry in the job's Tags (`{tags}`). A level to follow has **Pick a value on
+  its pages** and **Pick tags on its pages** too: on a page one of its links opens (follow one in
+  Browse), a click on a text makes a value of that page (an author, a date), a click on one tag
+  chip outlines it and those like it and makes them a list, as the file links are picked. Under
+  the level, **Values of the pages it opened** lists each page opened since, with its values
+  (`page_title`, `site_name`, … and those picked), and *Test the recipe* shows each file link's
+  values. For example, a gallery whose posts show their tags as chips: level 1 the posts' links,
+  on a post **Pick tags on its pages** and a click on the chip *sky*, the file links the post's
+  image; with Tags `{tags}, {site_name}`, the image of a post tagged *sky (123)*, *#sea* gets
+  the Nextcloud tags `sky`, `sea` and the site's name. **Network** lists the
   page's answers in JSON to its XHR and fetch() requests, GET and POST (address, size; a POST's
   body in a few words: a GraphQL operation's name); **Preview** shows one, indented (its first
   20 000 characters; one larger than 2 MB is not kept, and of the last 30 answers only the

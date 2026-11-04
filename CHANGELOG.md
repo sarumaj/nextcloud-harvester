@@ -4,6 +4,21 @@
 
 ### Added
 
+- **Tags from lists:** a job's tag that is a list value alone (`{tags}`) gives a tag per
+  entry (cleaned, without repeats, 20 at most per file; the log says how many more were left
+  out); elsewhere a list's entries are joined with a comma. gallery-dl's lists of texts are kept
+  (`{tags}`) and its dicts of them become one each (`{tags_general}`, `{tags_artist}`), yt-dlp's
+  `{tags}` and `{categories}` too; the form offers each source's under Tags.
+- **Values of the pages a website job opens:** `{page_title}`, `{site_name}`, `{page_date}`
+  (with `{page_year}`, `{page_month}`, `{page_day}`) and `{page_lang}`, from `<meta>`, JSON-LD
+  and `<time>`, read once per page (one script in the browser, the parsed page over HTTP) and
+  passed down to the next levels and the file links. A level's `page_values` read more on the
+  page its links open, and a value with `"many": true` is a list (tag chips, cleaned of `#` and
+  counts).
+- **Recorder:** **Pick tags** beside a level's links (a chip in a row or card), **Pick a value on
+  its pages** and **Pick tags on its pages** on a page a level's links open (the chip and those
+  like it outlined); each level lists the pages it opened with their values, and *Test the
+  recipe* shows each file link's values.
 - **Save to** in a job's form: the person's files (as before) or **Harvester's private
   library**, in the app's own storage per person, which Nextcloud's Files, Photos, search,
   WebDAV and sync clients never see, with the admin's limits per person (10 GB by default) and
