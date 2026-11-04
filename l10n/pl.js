@@ -1162,6 +1162,13 @@ OC.L10N.register(
             "przechodzi przez %n wyboru: {choices}"
         ],
         "the choice “{choice}” failed: {why}": "wybór „{choice}” się nie powiódł: {why}",
+        "_gallery-dl listed %n file_::_gallery-dl listed %n files_": [
+            "gallery-dl wymienił %n plik",
+            "gallery-dl wymienił %n pliki",
+            "gallery-dl wymienił %n plików",
+            "gallery-dl wymienił %n pliku"
+        ],
+        "gallery-dl listed only part of {address}: {error}": "gallery-dl wymienił tylko część {address}: {error}",
         "_Folder {folder}: %n new message, {matching}_::_Folder {folder}: %n new messages, {matching}_": [
             "Folder {folder}: %n nowa wiadomość, {matching}",
             "Folder {folder}: %n nowe wiadomości, {matching}",
@@ -1220,13 +1227,13 @@ OC.L10N.register(
         "page {number}: only known files: the listing ends here (Stop at known files)": "strona {number}: tylko znane pliki: lista kończy się tutaj (Zatrzymaj na znanych plikach)",
         "Further listing pages are not named one by one": "Kolejne strony listy nie są wymieniane pojedynczo",
         "the next page {address} was read already (a loop): its listing ends": "następna strona {address} była już czytana (pętla): jej lista się tu kończy",
-        "level {level}: clicking “{element}” failed: {why}": "poziom {level}: kliknięcie „{element}” nie powiodło się: {why}",
         "_Read %n page (Pages): older pages are not read this run_::_Read %n pages (Pages): older pages are not read this run_": [
             "Przeczytano %n stronę (Strony): starsze strony nie są czytane w tym przebiegu",
             "Przeczytano %n strony (Strony): starsze strony nie są czytane w tym przebiegu",
             "Przeczytano %n stron (Strony): starsze strony nie są czytane w tym przebiegu",
             "Przeczytano %n strony (Strony): starsze strony nie są czytane w tym przebiegu"
         ],
+        "level {level}: clicking “{element}” failed: {why}": "poziom {level}: kliknięcie „{element}” nie powiodło się: {why}",
         "waiting for {selector} to show, at most {seconds} s": "czekam, aż pojawi się {selector}, najwyżej {seconds} s",
         "The site refused the account: check its fields (a password, a token, the cookies).": "Strona odrzuciła konto: sprawdź jego pola (hasło, token, ciasteczka).",
         "The site asks for a person: a job of this type cannot answer that (a website job can).": "Strona prosi o człowieka: zadanie tego typu nie może na to odpowiedzieć (zadanie strony internetowej może).",

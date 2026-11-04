@@ -1076,6 +1076,11 @@ OC.L10N.register(
             "geht %n Auswahlen durch: {choices}"
         ],
         "the choice “{choice}” failed: {why}": "die Auswahl „{choice}“ ist fehlgeschlagen: {why}",
+        "_gallery-dl listed %n file_::_gallery-dl listed %n files_": [
+            "gallery-dl hat %n Datei gelistet",
+            "gallery-dl hat %n Dateien gelistet"
+        ],
+        "gallery-dl listed only part of {address}: {error}": "gallery-dl hat nur einen Teil von {address} gelistet: {error}",
         "_Folder {folder}: %n new message, {matching}_::_Folder {folder}: %n new messages, {matching}_": [
             "Ordner {folder}: %n neue Nachricht, {matching}",
             "Ordner {folder}: %n neue Nachrichten, {matching}"
@@ -1122,11 +1127,11 @@ OC.L10N.register(
         "page {number}: only known files: the listing ends here (Stop at known files)": "Seite {number}: nur bekannte Dateien: die Übersicht endet hier (Bei bekannten Dateien aufhören)",
         "Further listing pages are not named one by one": "Weitere Seiten der Übersicht werden nicht einzeln genannt",
         "the next page {address} was read already (a loop): its listing ends": "die nächste Seite {address} wurde schon gelesen (eine Schleife): Die Übersicht endet hier",
-        "level {level}: clicking “{element}” failed: {why}": "Ebene {level}: Klick auf „{element}“ fehlgeschlagen: {why}",
         "_Read %n page (Pages): older pages are not read this run_::_Read %n pages (Pages): older pages are not read this run_": [
             "%n Seite gelesen (Seiten): ältere Seiten werden in diesem Durchlauf nicht gelesen",
             "%n Seiten gelesen (Seiten): ältere Seiten werden in diesem Durchlauf nicht gelesen"
         ],
+        "level {level}: clicking “{element}” failed: {why}": "Ebene {level}: Klick auf „{element}“ fehlgeschlagen: {why}",
         "waiting for {selector} to show, at most {seconds} s": "warte darauf, dass {selector} erscheint, höchstens {seconds} s",
         "The site refused the account: check its fields (a password, a token, the cookies).": "Die Website hat das Konto abgelehnt: Prüfe seine Felder (ein Passwort, ein Token, die Cookies).",
         "The site asks for a person: a job of this type cannot answer that (a website job can).": "Die Website verlangt nach einem Menschen: Ein Job dieses Typs kann das nicht beantworten (ein Website-Job kann es).",

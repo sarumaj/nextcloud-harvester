@@ -166,6 +166,9 @@ recorder that makes them, and what a run does. Installing and the admin's settin
     [administrator's guide](admin.md#bot-checks-the-browser-disguise-and-impersonation) describes.
   - `gallery`: images of galleries, albums and profiles on the sites gallery-dl supports;
     gallery-dl lists them, Harvester downloads them with its checks and the page as `Referer`.
+    The log says how many files gallery-dl listed; when it lists part of the gallery and then
+    fails (a page of many), the files it listed are taken, a warning names its error, and the
+    run does not count as a complete pass.
   - `remote`: the files in a folder of a WebDAV, SFTP, FTP or S3 server, a Nextcloud public
     share, Google Drive, Dropbox, OneDrive and other rclone remotes. The job's account is an
     rclone configuration with one remote (OAuth tokens from `rclone authorize` on a computer).

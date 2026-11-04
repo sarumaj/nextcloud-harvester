@@ -17,8 +17,12 @@ import httpx
 import pytest
 import urllib3
 
+from test_runner import FakeLibrary
+
+from harvester import runner
 from harvester.sources import SourceError
 from harvester.sources.gallery import Gallery
+from harvester.store import Job
 
 PAGE = "https://pics.example/album/42"
 JPEG = b"\xff\xd8\xff\xe0" + b"x" * 100
@@ -108,7 +112,30 @@ def test_every_file_of_a_post_of_several():
 def test_a_partial_failure_keeps_what_was_listed():
     stdout = json.dumps([message(1), message(2)])
     partial = gallery(stdout, returncode=1, stderr="[gallery-dl][error] HttpError: 500 for page 3\n")
+    log: list[tuple[str, str]] = []
+    partial.report = lambda level, text: log.append((level, text))
     assert len(list(partial.items(lambda key: False))) == 2
+    assert log == [
+        ("warning", f"gallery-dl listed only part of {PAGE}: [gallery-dl][error] HttpError: 500 for page 3"),
+        ("info", "gallery-dl listed 2 files"),
+    ]
+    assert partial.gaps == 1, "no complete pass"
+
+
+def test_a_partial_listing_is_no_complete_pass_of_the_run():
+    stdout = json.dumps([message(1)])
+
+    def jpeg(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={"content-type": "image/jpeg"}, content=JPEG)
+
+    partial = gallery(stdout, returncode=1, stderr="[gallery-dl][error] HttpError: 500 for page 3\n", handler=jpeg)
+    seen: set[str] = set()
+    log: list[str] = []
+    job = Job(user="u", name="n", source="gallery", target="/In", schedule="* * * * *")
+    outcome = runner.run(job, partial, FakeLibrary(), seen.__contains__, seen.add, lambda s: None,
+                         report=lambda level, text: log.append(text))  # fmt: skip
+    assert outcome == "1 downloaded" and runner.FULL_PASS not in seen
+    assert "1 listing page gave nothing: the run does not count as a complete pass" in log
 
 
 def test_impersonation_is_gallery_dls_own_browser_emulation_in_its_config():

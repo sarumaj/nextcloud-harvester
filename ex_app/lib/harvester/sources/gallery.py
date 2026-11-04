@@ -26,6 +26,7 @@ import httpx
 
 from .. import browser, cookies, patterns
 from ..browser import allowed_url, child_env
+from ..l10n import said, said_n
 from . import download
 from .base import ACCOUNT_HELP, IMPERSONATE, Item, Option, Source, SourceError, stoppable_run
 
@@ -116,11 +117,18 @@ class Gallery(Source):
         except ValueError:
             messages = None
         # gallery-dl exits non-zero also after a partial failure (one page of many): what it did
-        # list is used; only an empty or broken listing is the job's failure.
+        # list is used; only an empty or broken listing is the job's failure. A partial one is a
+        # gap: the run is no complete pass.
         if not isinstance(messages, list):
             raise SourceError(f"gallery-dl gave no JSON for {self.url}" + (f": {lines[-1]}" if lines else ""))
+        error = lines[-1] if lines else f"exit {done.returncode}"
         if done.returncode != 0 and not messages:
-            raise SourceError(f"gallery-dl: {lines[-1] if lines else f'exit {done.returncode}'}")
+            raise SourceError(f"gallery-dl: {error}")
+        if done.returncode != 0:
+            self.gaps += 1
+            self.report(
+                "warning", said("gallery-dl listed only part of {address}: {error}", address=self.url, error=error)
+            )
         return messages
 
     def account_files(self) -> tuple[list[str], list[str]]:
@@ -167,6 +175,7 @@ class Gallery(Source):
                 else f"{data.get('category', 'gallery')}:{url}"
             )
             found.append((key, url, data))
+        self.report("info", said_n("gallery-dl listed %n file", "gallery-dl listed %n files", len(found)))
         self.ahead([key for key, _, _ in found])
         for key, url, data in found:
             if seen(key):

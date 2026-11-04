@@ -45,6 +45,9 @@
 
 ### Fixed
 
+- A gallery job whose gallery-dl lists part of the gallery and then fails (a page of many) says
+  so in a warning with gallery-dl's error, and the run no longer counts as a complete pass; the
+  log says how many files gallery-dl listed.
 - A run whose listing breaks after files came (a next page that fails, a feed cut short) still
   fails, but its reason keeps what it did: *3 downloaded; then the listing failed: …* (only the
   listing's error before).
