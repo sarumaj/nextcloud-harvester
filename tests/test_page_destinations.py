@@ -590,3 +590,25 @@ def test_the_library_is_browsed_chosen_sorted_dragged_and_shown_in_turn(page):
     page.get_by_role("button", name="Recent").click()
     page.wait_for_function("() => document.querySelector('.harvester-crumbs').innerText.includes('Recent')")
     assert any(call[1].startswith("/library?") and "recent=1" in call[1] for call in CALLS)
+
+
+@needs_chromium
+def test_a_library_whose_keys_are_lost_is_reset_after_its_confirmation(page):
+    state = dict(LIBRARY)
+    answers = {
+        "GET /library/state": state,
+        "GET /library/moves": [],
+        "POST /library/reset": {"deleted": 7},
+    }
+    answering(page, answers)
+    page.get_by_role("button", name="Library", exact=True).click()
+    page.get_by_text("Lost the recovery key too?").click()
+    page.get_by_role("button", name="Reset the library…").click()
+    dialog = page.locator("dialog.harvester-dialog")
+    reset = dialog.get_by_role("button", name="Delete everything and reset")
+    assert reset.is_disabled(), "not before the person ticked that they understand"
+    dialog.get_by_label("I understand that everything in my library is deleted.").check()
+    state["setup"] = False
+    reset.click()
+    page.get_by_role("button", name="Next: your recovery key").wait_for()
+    assert ("POST", "/library/reset", {"confirm": "reset"}) in CALLS

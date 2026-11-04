@@ -3555,7 +3555,11 @@
 			field(t('New password'), fresh, t('8 characters at least.')),
 			recoverError,
 			el('button', { class: 'primary', type: 'submit', text: t('Unlock and set the password') })))
-		root.replaceChildren(libraryHeading(root, false), unlock, recover)
+		const lost = el('details', { class: 'harvester-group' },
+			el('summary', {}, el('span', { text: t('Lost the recovery key too?') })),
+			el('p', { text: t('Without the password and the recovery key nobody can open the files in the library. You can delete them and set the library up anew.') }),
+			el('button', { type: 'button', class: 'error', text: t('Reset the library…'), onclick: () => libraryReset(root) }))
+		root.replaceChildren(libraryHeading(root, false), unlock, recover, lost)
 		password.focus()
 	}
 
@@ -3697,8 +3701,37 @@
 		return box
 	}
 
+	// Resetting the library, as before its setup (routes/library.py, reset): everything in it and
+	// its keys deleted, once the person ticked that they understand; then the setup's page.
+	function libraryReset(root) {
+		const { content, buttons, end } = libraryDialog(t('Reset the library'))
+		const understood = el('input', { type: 'checkbox' })
+		const error = el('p', { class: 'harvester-error', role: 'alert' })
+		const reset = el('button', { type: 'button', class: 'error', text: t('Delete everything and reset'), disabled: '' })
+		understood.addEventListener('change', () => { reset.disabled = !understood.checked })
+		reset.addEventListener('click', async () => {
+			error.textContent = ''
+			try {
+				await libraryApi('POST', '/library/reset', { confirm: 'reset' })
+				library.token = ''
+				library.cookie = false
+				end()
+				await renderLibrary(root)
+			} catch (e) {
+				error.textContent = e.message
+			}
+		})
+		content.append(
+			el('p', { text: t('The library goes back to how it was before you set it up: every file, folder and label in it is deleted, for good, and its password and recovery key no longer open anything. Nobody can bring them back, the admin neither.') }),
+			el('p', { class: 'harvester-muted', text: t('Jobs that save into the library wait until you set it up again; with Download deleted files again they then fetch their files anew.') }),
+			el('label', { class: 'harvester-check' }, understood, t('I understand that everything in my library is deleted.')),
+			error)
+		buttons.append(el('button', { type: 'button', text: t('Cancel'), onclick: end }), reset)
+		buttons.firstChild.focus()
+	}
+
 	// The library's password (folded): change it (the current one given) and the minutes it stays
-	// unlocked without use.
+	// unlocked without use; and resetting the library.
 	function libraryLock(root, state) {
 		const current = el('input', { type: 'password', autocomplete: 'current-password', required: '' })
 		const password = el('input', { type: 'password', autocomplete: 'new-password', minlength: '8' })
@@ -3722,7 +3755,9 @@
 				field(t('New password (empty: the same)'), password, t('8 characters at least.')),
 				field(t('Minutes unlocked without use'), minutes),
 				error,
-				el('button', { class: 'primary', type: 'submit', text: t('Save') })))
+				el('button', { class: 'primary', type: 'submit', text: t('Save') })),
+			el('p', { class: 'harvester-muted', text: t('Start over with an empty library and a new password:') }),
+			el('button', { type: 'button', class: 'error', text: t('Reset the library…'), onclick: () => libraryReset(root) }))
 	}
 
 	// The person's Immich account (routes/immich.py): its server (the admin's unless they type

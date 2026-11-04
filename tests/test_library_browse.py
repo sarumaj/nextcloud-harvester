@@ -7,6 +7,7 @@ labelled at once, and a ZIP file of files and folders streamed as it is made."""
 
 import asyncio
 import io
+import json
 import time
 import zipfile
 
@@ -136,3 +137,17 @@ def test_a_zip_is_anna_s_alone_and_lapses(app, monkeypatch):
     with pytest.raises(HTTPException):
         asyncio.run(routes.library_zip(nextcloud(), ticket=asked["ticket"]))
     assert libraryzip.MOST >= 1000
+
+
+def test_a_person_resets_their_own_library_locked_or_not(app):
+    put(app, "/Trip/a.jpg", b"a")
+    with pytest.raises(HTTPException) as unconfirmed:
+        asyncio.run(routes.reset_library(routes.Reset(confirm="yes"), request(), nextcloud()))
+    assert unconfirmed.value.status_code == 422
+    assert app["shelf"].usage("anna") > 0, "nothing deleted without the word"
+    app["keyring"].lock(app["token"])
+    answer = asyncio.run(routes.reset_library(routes.Reset(confirm="reset"), request(), nextcloud()))
+    assert json.loads(answer.body) == {"deleted": 2}
+    assert app["shelf"].usage("anna") == 0 and not app["keyring"].is_set_up("anna"), "as before the setup"
+    state = asyncio.run(routes.library_state(request(), nextcloud()))
+    assert state["setup"] is False and state["unlocked"] is False

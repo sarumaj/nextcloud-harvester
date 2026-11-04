@@ -4,6 +4,9 @@
 
 ### Added
 
+- **Reset the library…** puts a person's library back to how it was before its setup (every
+  file, folder and label deleted with its keys), also from the unlock page for someone who lost
+  the password and the recovery key; only the admin's occ command could before.
 - A listing that loads more as it is scrolled can be **read as it is scrolled**
   (`"next": {"kind": "scroll"}`, the recorder's *Read it as it is scrolled*): a batch at a time,
   each a page, so the job stops scrolling at known files, *Pages* or *Files per run* instead of

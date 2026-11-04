@@ -23,6 +23,9 @@ download is a plain link). Recent lists the newest files of the whole library; a
 name the job that saved it and where it came from (the job's record of it, not encrypted: a job's
 records never are).
 
+A person may reset their own library (reset), locked or not: everything in it and its keys are
+deleted, as the admin's occ command does, and it asks to be set up anew.
+
 Writing (an upload, a new folder) needs the library set up, not unlocked. A file is served with
 its type for what a browser shows safely (pictures but SVG, videos, sounds, PDFs, plain text),
 else as a download, never sniffed (nosniff), and with a sandbox for whatever the browser shows of
@@ -570,6 +573,37 @@ async def delete_library_file(file_id: int, request: Request, nc: NC, x_harveste
     if not shelf().delete(session.user, file_id):
         raise HTTPException(404, "No such file.")
     return {}
+
+
+class Reset(BaseModel):
+    """The person's own reset of their library: confirm is the word RESET_WORD."""
+
+    confirm: str = Field(max_length=20)
+
+
+# What a reset must be sent with: no request deletes a library by mistake.
+RESET_WORD = "reset"
+
+
+@ROUTER.post("/api/library/reset")
+async def reset_library(body: Reset, request: Request, nc: NC, x_harvester_base: Base = "") -> Response:
+    """Deletes the person's library entirely, as before its setup: files, folders, labels and keys
+    (every session of theirs ends), locked or not, so that someone who lost the password and the
+    recovery key can start again; 422 without the confirmation. The number of files and folders
+    deleted."""
+    if body.confirm != RESET_WORD:
+        raise HTTPException(422, "Confirm the reset: everything in the library is deleted, for good.")
+    user = await nc.user
+    with _UPLOADS_LOCK:
+        dropped = [UPLOADS.pop(key) for key, held in list(UPLOADS.items()) if held[0] == user]
+    for upload in dropped:
+        upload[1].abort()
+    count = shelf().reset(user)
+    LOGGER.info("library: a person reset their library (%s files and folders)", count)
+    response = JSONResponse({"deleted": count})
+    if PROXY_PATH.match(x_harvester_base):
+        response.delete_cookie(COOKIE, path=x_harvester_base, httponly=True, samesite="strict")
+    return response
 
 
 # Uploads under way: by ID, [user, Incoming, bytes received, size announced, last use].

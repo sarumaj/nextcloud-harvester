@@ -305,6 +305,12 @@ copy), a sync client's copy on your devices, a backup of the server.
 a new password. Changing the password (the Library's *Library password*, the current one given)
 signs out your other browsers; the recovery key stays the same.
 
+**Starting over.** *Reset the library…* (under *Library password*, or on the unlock page under
+*Lost the recovery key too?*) puts the library back to how it was before you set it up: every
+file, folder and label in it is deleted, for good, with its keys, and it asks to be set up anew
+(a new password and recovery key). It needs no password, for someone who lost both, only your
+tick that you understand. Jobs that save into the library wait until it is set up again.
+
 **What the admin can and cannot do.** The admin sets how much each person may keep (10 GB by
 default, counted as stored, encrypted) and can delete a person's library entirely
 (`occ harvester:library-reset`), for instance after both the password and the recovery key are
