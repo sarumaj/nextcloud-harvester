@@ -4,6 +4,9 @@
 
 ### Added
 
+- **Browse** beside the address of a gallery, video, feed or release job: the recorder's browser
+  alone (nothing recorded), at the field's address, and **Use this address** takes the page it
+  shows into the field.
 - DNS servers of the admin's choice: **DNS servers** (a form of its own in Harvester's admin
   settings, or `HARVESTER_DNS`) sends every name the container looks up (the app and its guard,
   the browsers, the downloads, yt-dlp, gallery-dl, rclone, the mail servers) to plain addresses,

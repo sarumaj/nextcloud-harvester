@@ -173,6 +173,34 @@ def test_a_saved_job_with_a_broken_flag_never_keeps_a_browsers_slot(tmp_path, mo
     assert FakeRecorder.started[-1] == (False, False), "a flag that is no number is off"
 
 
+class BrowseRecorder:
+    """The recorder's browser as Browse starts it: its mode and address, then no browser."""
+
+    started: list[tuple[str, str, bool]] = []
+
+    def __init__(self, send, _send_bytes=None):
+        self.send = send
+        self.mode = "record"
+
+    async def start(self, *_args, url="", consent=False, **_kwargs):
+        BrowseRecorder.started.append((self.mode, url, consent))
+        raise RuntimeError("no browser here")
+
+    async def close(self):
+        pass
+
+
+def test_browse_starts_the_recorders_browser_alone_at_the_address(monkeypatch):
+    monkeypatch.setattr(main, "Recorder", BrowseRecorder)
+    websocket = Socket(0)
+    websocket.query_params = {"browse": "1", "url": "https://pics.example/album/42", "consent": "1"}
+    asyncio.run(main.record(websocket, Nextcloud()))  # type: ignore[arg-type]
+    assert BrowseRecorder.started == [
+        ("browse", "https://pics.example/album/42", True)
+    ], "nothing recorded from its first page on"
+    assert websocket.sent[-1]["message"] == "The browser did not start: no browser here"
+
+
 # The browser's downloads
 
 

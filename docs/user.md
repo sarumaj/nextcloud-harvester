@@ -37,6 +37,12 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   A screen reader hears the log's errors and outcomes as they come, not each line, and a test's
   outcome in the recorder; an error is announced as it shows, and a refused Save marks the field
   it names (and opens its group).
+- **Browse** (`gallery`, `media`, `feed`, `releases`): the button below the form's address
+  opens the recorder's browser alone (`/ws/record?browse=1&url=<the field's address>`): at the
+  field's address if it has one, with the form's browser options (HTTP/1.1, the proxy, the
+  disguise, cookie banners), nothing recorded and no picks. **Use this address** takes the page
+  it shows into the field and goes back to the form; *Cancel* leaves the field as it was. It
+  takes one of the browsers, as the recorder does, and closes when its view is left.
 - **On-demand jobs** (`ex_app/lib/harvester/ondemand.py`): a job of a source with an address
   (`site`: its recipe's listing; `feed`, `media`, `gallery`: their page or feed) may be **On
   demand**: no schedule (it is never due; the list says *On demand*), and it runs when you send it

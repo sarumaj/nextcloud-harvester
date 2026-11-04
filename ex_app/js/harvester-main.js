@@ -1891,6 +1891,66 @@
 		screen.focusKeys()
 	}
 
+	// Browse (a job form's address of a gallery, a video site, a feed or a repository): the
+	// recorder's browser alone, nothing recorded, at the field's address if it has one; "Use this
+	// address" takes the browser's page into the field and goes back to the form, as Cancel does
+	// without it. The form's browser options (HTTP/1.1, the proxy, the disguise, cookie banners)
+	// hold as in the recorder.
+	function openBrowse(root, page, input) {
+		const typed = input.value.trim()
+		const flags = ['http1', 'home', 'stealth', 'consent'].map((name) => page.querySelector(`[data-option="${name}"]`))
+			.filter((box) => box && box.checked).map((box) => `&${box.dataset.option}=1`).join('')
+		const at = /^https?:\/\/\S+$/.test(typed) ? `&url=${encodeURIComponent(typed)}` : ''
+		const socket = new WebSocket(`${RECORDER}?browse=1${at}${flags}`)
+		const send = (message) => socket.readyState === WebSocket.OPEN && socket.send(JSON.stringify(message))
+		const screen = el('img', { class: 'harvester-screen', alt: t('Harvester’s browser') })
+		const url = el('input', { class: 'harvester-url', value: at ? typed : '', placeholder: t('https://… the address to look at'), 'aria-label': t('Address') })
+		url.addEventListener('keydown', (event) => { if (event.key === 'Enter') send({ type: 'goto', url: url.value }) })
+		const starting = t('Starting the browser…')
+		const message = el('p', { class: 'harvester-error', role: 'alert' })
+		const close = () => { socket.close(); root.replaceChildren(page) }
+		const use = el('button', {
+			class: 'primary',
+			text: t('Use this address'),
+			title: t('The browser’s page into the form’s field'),
+			onclick: () => {
+				if (!/^https?:\/\//.test(url.value)) return
+				input.value = url.value
+				// The field's checks follow, as when typed.
+				input.dispatchEvent(new Event('input', { bubbles: true }))
+				close()
+				input.focus()
+			},
+		})
+		socket.addEventListener('message', (event) => {
+			if (typeof event.data !== 'string') return // a frame: the screen shows it (wireScreen)
+			const data = JSON.parse(event.data)
+			if (data.type === 'frame') { if (!left(screen, socket)) screen.frame(data.data) }
+			else if (data.type === 'cursor') screen.style.cursor = data.cursor
+			else if (data.type === 'url') url.value = data.url
+			else if (data.type === 'error') { message.textContent = shown(data.message, data.message_l10n); screen.say(message.textContent) }
+			else if (data.type === 'viewport') screen.resized(data)
+		})
+		socket.addEventListener('close', () => { if (root.contains(screen)) { message.textContent ||= t('The browser closed.'); screen.say(message.textContent) } })
+		const box = wireScreen(screen, send, socket)
+		screen.say(starting)
+		const container = el('div', { class: 'harvester-recorder harvester-browse' })
+		container.append(
+			el('div', { class: 'harvester-header' },
+				el('div', {},
+					el('h2', { text: t('Browse') }),
+					el('p', { class: 'harvester-muted', text: t('Go to the page the job should fetch from (a gallery, a channel, a feed, a repository), then press Use this address. Nothing is recorded.') }))),
+			overlay(
+				el('div', { class: 'harvester-toolbar' }, ...navigation(send), url,
+					el('button', { type: 'button', text: t('Go'), onclick: () => send({ type: 'goto', url: url.value }) }),
+					fullWindow(container, box, send),
+					el('span', { class: 'harvester-toolbar-end' }, use, el('button', { text: t('Cancel'), onclick: close }))),
+				message),
+			el('div', { class: 'harvester-stage' }, box))
+		root.replaceChildren(container)
+		url.focus()
+	}
+
 	// The recorder: the browser's screen, the person's mouse and keys to it, and the recipe so far;
 	// settings() gives the form's settings the recipe's test uses (the file names, the pages, the
 	// file types), jobId() the saved job's id (the test as the job runs uses its account).
@@ -2649,6 +2709,9 @@
 	// source gives them.
 	const optionTitle = (key, option) => (key === 'home' ? t('Through {name}', { name: proxyName(option.proxy) }) : said(option.title))
 
+	// The sources whose address is a web page to find in the browser first (Browse).
+	const BROWSED = ['gallery', 'media', 'feed', 'releases']
+
 	// The job's form; with sent (an address from ?fetch=), the new job fetches it once saved.
 	function renderForm(root, job, prefill, sent) {
 		const value = job || prefill || BLANK
@@ -2817,6 +2880,17 @@
 				optionInputs[key] = optionInput(option, current)
 				optionFields[key] = optionInputs[key]
 				into.append(field(optionTitle(key, option), optionInputs[key], said(option.description)))
+				// A page to find in the browser first: a gallery, a channel, a feed, a repository.
+				if (option.kind === 'url' && BROWSED.includes(chosen.name)) {
+					const input = optionInputs[key]
+					into.append(el('button', {
+						type: 'button',
+						class: 'harvester-browse-button',
+						text: t('Browse'),
+						title: t('Find the page in Harvester’s browser and take its address into this field'),
+						onclick: () => openBrowse(root, page, input),
+					}))
+				}
 				const extra = optionHelp(option, optionInputs[key])
 				if (extra) optionInputs[key].after(extra)
 				if (option.suggestions && option.suggestions.length) (extra || optionInputs[key]).after(suggestionChips(optionInputs[key], option.suggestions))
@@ -3195,6 +3269,7 @@
 		   the pointer is on it, as Nextcloud's tertiary buttons. */
 		#harvester .harvester-tertiary { min-height: 0; margin: 0 0 0 4px; padding: 2px 8px; border: none; border-radius: var(--border-radius); background: none; color: var(--color-primary-element); font-weight: bold; cursor: pointer; }
 		#harvester .harvester-tertiary:hover:not(:disabled) { background: var(--color-background-hover); }
+		#harvester .harvester-browse-button { margin: -4px 0 12px; }
 		/* A narrow window: the recorder's screen above its steps, at the full width. */
 		@media (max-width: 800px) {
 			#harvester .harvester-stage { flex-direction: column; align-items: stretch; }

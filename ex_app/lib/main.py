@@ -725,7 +725,10 @@ async def record(websocket: WebSocket, nc: NC) -> None:
     again; {type: cookies-keep} (the cookies panel's "Use for this job") keeps it and goes on.
 
     With ?rclone=<wizard> (the user's rclone wizard, at its sign-in question) the browser shows
-    the provider's sign-in for `rclone authorize` instead (sign_in)."""
+    the provider's sign-in for `rclone authorize` instead (sign_in).
+
+    With ?browse=1 (a job form's Browse, for an address to take into the form) it is the browser
+    alone: in the mode browse from the start, nothing recorded, at &url= if given."""
     await websocket.accept()
     if websocket.query_params.get("rclone"):
         await sign_in(websocket, nc, websocket.query_params["rclone"])
@@ -753,6 +756,11 @@ async def record(websocket: WebSocket, nc: NC) -> None:
                     await load_session(nc, job), at, http1=http1, home=home, stealth=stealth, consent=consent
                 )
                 await recorder.handle({"type": "mode", "mode": "browse"})
+            elif websocket.query_params.get("browse") == "1":
+                # Browsing before the first page: its navigation is never a step.
+                recorder.mode = "browse"
+                url = websocket.query_params.get("url", "")
+                await recorder.start(url=url, http1=http1, home=home, stealth=stealth, consent=consent)
             else:
                 await recorder.start(http1=http1, home=home, stealth=stealth, consent=consent)
         except Exception as error:  # pylint: disable=broad-exception-caught
