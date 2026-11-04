@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The recorder's picks of data beside the links: values from the page near a level's links
-("Pick a value"), the page's answers in JSON (the Network panel) and one of them as the file links
-(harvester.jsonlist), and a code typed into a field that comes by e-mail instead (a step
-"mail-code"). A part of the Recorder (recorder.py), which keeps the picks and shows them.
+("Pick a value", "Pick tags": a list of a card's chips), values and tags on the page a level's
+links open (its page_values, harvester.pageinfo), the page's answers in JSON (the Network panel)
+and one of them as the file links (harvester.jsonlist), and a code typed into a field that comes
+by e-mail instead (a step "mail-code"). A part of the Recorder (recorder.py), which keeps the picks and shows them.
 """
 
 import asyncio
@@ -16,8 +17,9 @@ from urllib.parse import unquote
 import regex
 from playwright.async_api import Page
 
-from .. import jsonlist, jsonrequest, patterns
+from .. import jsonlist, jsonrequest, pageinfo, patterns
 from ..sources import near
+from .engine import main_world
 
 EXAMPLES = 8
 # How long a person's pattern may take (s): on the links of a page, all together; on a page's
@@ -38,6 +40,13 @@ VALUE_KEYS = ("name", "regex", "type", "attribute", "closest", "selector", "fiel
 JSON_KEYS = ("url", "items", "file", "text", "pattern", "page", "cursor")
 # The page's messages DataPicks.handle_data answers.
 DATA_MESSAGES = frozenset({"value", "value-add", "value-remove", "json-pick", "json-edit", "json-preview"})
+# The picks of values (recorder.js's targets): near a level's links, and on the page they open.
+DATA_PICKS = frozenset({"value", "tags", "page-value", "page-tags"})
+# What a pick on the page a level's links open needs first, said to the person.
+NOT_BELOW = (
+    "Open a page one of the links to follow leads to (Browse, then follow one): values and tags are "
+    "picked there for that level."
+)
 # The page's <meta name> and localStorage entries, where a header's token may come from.
 PAGE_ENTRIES = """() => {
   const meta = [...document.querySelectorAll('meta[name][content]')].map(m => [m.getAttribute('name'), m.content])
@@ -136,6 +145,16 @@ def examples_of(found: list, matches: list, specs: list[dict], texts: list) -> l
     return examples
 
 
+def free_name(name: str, values: list[dict]) -> str:
+    """The name, numbered if a value of the level has it already (tags, tags2, ...), never one of
+    the values every page gives (pageinfo.BUILT_IN)."""
+    taken = {str(value.get("name")) for value in values} | set(pageinfo.BUILT_IN)
+    free, number = name, 2
+    while free in taken:
+        free, number = f"{name}{number}", number + 1
+    return free
+
+
 def timed_search(pattern: str, text: str):
     """A person's pattern searched in a text of the page, within PATTERN_TIMEOUT (else
     TimeoutError), in a thread that leaves the event loop free."""
@@ -156,6 +175,8 @@ class DataPicks:  # pylint: disable=too-few-public-methods
     _page: Page | None
     _context: object
     _json: tuple[str, object] | None
+    # The values of the pages a level's links opened (pageinfo), the newest first: per level.
+    page_examples: dict[int, list[dict]]
 
     def _remember(self) -> None:
         """Keeps the picks as they are, for Undo (the recorder's)."""
@@ -165,6 +186,10 @@ class DataPicks:  # pylint: disable=too-few-public-methods
 
     async def _describe(self, key: str) -> None:
         """Shows what a level's pick matches (the recorder's)."""
+
+    def depth(self, url: str) -> int:  # pylint: disable=unused-argument
+        """How deep the page is: 0 for the listing, n below the nth level (the recorder's)."""
+        return 0
 
     async def handle_data(self, kind: str, message: dict) -> None:
         """The page's messages about values and JSON listings (DATA_MESSAGES); a code by e-mail is
@@ -221,13 +246,92 @@ class DataPicks:  # pylint: disable=too-few-public-methods
         values.append({**proposal, "name": name, **where})
         await self._describe("links" if target == "links" else f"follow{level}")
 
+    async def _pick_data(self, event: dict) -> None:
+        """A pick of values (DATA_PICKS): a value or tags near a level's links, or on a page they
+        open."""
+        target = event.get("target")
+        if target == "value":
+            await self._pick_value(event)
+        elif target == "tags":
+            await self._pick_tags(event)
+        else:
+            await self._pick_on_page(event, target == "page-tags")
+
+    async def _pick_tags(self, event: dict) -> None:
+        """Tags picked beside a level's links (recorder.js: the chip's link's card and the chips in
+        it): a value of many elements, named tags, read near each of the links."""
+        if not self.value_for or self._page is None:
+            return
+        target, level = self.value_for
+        spec = self._spec(target, level)
+        if spec.get("kind") == "json":
+            return
+        if event.get("none") or not event.get("selector"):
+            message = "That tag is near none of the level's links: pick one in a link's row or card."
+            await self.send({"type": "error", "message": message})
+            return
+        values = spec.setdefault("values", [])
+        if len(values) >= patterns.MAX_VALUES:
+            await self.send({"type": "error", "message": f"A level takes at most {patterns.MAX_VALUES} values."})
+            return
+        self._remember()
+        where = {"closest": str(event.get("closest") or ""), "selector": str(event["selector"]), "attribute": ""}
+        values.append({"name": free_name("tags", values), **where, "regex": "", "type": "text", "many": True})
+        await self._describe("links" if target == "links" else f"follow{level}")
+
+    async def _pick_on_page(self, event: dict, many: bool) -> None:
+        """A value (or with many, tags: the chip clicked and those like it) picked on a page a
+        level's links opened: one of that level's page_values, its examples read anew."""
+        page = self._page
+        level = self.depth(page.url) if page is not None else 0
+        if page is None or not level:
+            await self.send({"type": "error", "message": NOT_BELOW})
+            return
+        values = self.follow[level - 1].setdefault("page_values", [])
+        if len(values) >= patterns.MAX_VALUES:
+            await self.send({"type": "error", "message": f"A level takes at most {patterns.MAX_VALUES} values."})
+            return
+        selector = str(event.get("selector") or "")
+        if many:
+            entry = {"name": free_name("tags", values), "selector": selector, "many": True, "regex": "", "type": "text"}
+        else:
+            proposal = patterns.propose_value([str(event.get("text") or "")])
+            entry = proposal | {"name": free_name(proposal["name"], values), "selector": selector}
+            entry["attribute"] = str(event.get("attribute") or "")
+        self._remember()
+        values.append(entry)
+        await self._read_page()
+        await self._update()
+
+    async def _read_page(self) -> None:
+        """The values of the page shown when a level's links lead there (its built-in ones and the
+        level's page_values), kept as that level's newest example (EXAMPLES pages at most)."""
+        page = self._page
+        level = self.depth(page.url) if page is not None and self.follow else 0
+        if page is None or not level:
+            return
+        specs = self.follow[level - 1].get("page_values") or []
+        try:
+            raw = await page.evaluate(pageinfo.PAGE_INFO, specs, **main_world(page))
+        except Exception:  # pylint: disable=broad-exception-caught
+            return  # the page went on (navigated, closed)
+        try:
+            values = await asyncio.to_thread(pageinfo.values, raw, page.url, specs, timed_search, {})
+            entry = {"url": page.url, "values": values}
+        except (TimeoutError, regex.error) as error:
+            entry = {"url": page.url, "values": {}, "error": f"a value's pattern: {error}"}
+        others = [seen for seen in self.page_examples.get(level - 1, []) if seen["url"] != page.url]
+        self.page_examples[level - 1] = [entry, *others][:EXAMPLES]
+
     async def _edit_value(self, kind: str, message: dict) -> None:
-        """A value of a level changed, added (a JSON item's field) or removed."""
+        """A value of a level changed, added (a JSON item's field) or removed; with page, one of
+        its page_values (its examples read anew)."""
         chosen = self._value_target(message)
         if not chosen:
             return
         spec = self._spec(*chosen)
-        values = spec.setdefault("values", [])
+        listed = "page_values" if message.get("page") and chosen[0] == "follow" else "values"
+        values = spec.setdefault(listed, [])
         index = message.get("index")
         self._remember()
         if kind == "value-add":
@@ -243,7 +347,11 @@ class DataPicks:  # pylint: disable=too-few-public-methods
             changes = message.get("changes") if isinstance(message.get("changes"), dict) else {}
             values[index] |= {key: str(changes[key]) for key in VALUE_KEYS if isinstance(changes.get(key), str)}
         if not values:
-            spec.pop("values", None)
+            spec.pop(listed, None)
+        if listed == "page_values":
+            await self._read_page()
+            await self._update()
+            return
         await self._describe("links" if chosen[0] == "links" else f"follow{chosen[1]}")
 
     async def _response(self, page: Page, response) -> None:

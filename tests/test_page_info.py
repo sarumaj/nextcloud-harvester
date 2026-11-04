@@ -4,14 +4,16 @@ language from <meta>, JSON-LD, <time>), a level's page_values (single, and many:
 values of many elements beside the links; the recipe's checks, the walk over HTTP (httpx's
 MockTransport) and in Chromium (route fulfilment). No network."""
 
-# pylint: disable=missing-function-docstring
+# pylint: disable=missing-function-docstring,protected-access
 
+import asyncio
 import json
 
 import httpx
 from bs4 import BeautifulSoup
 from test_browser import FREE, needs_chromium
 from test_page_values import walked
+from test_recorder_features import recording, settled
 
 from harvester import pageinfo, patterns
 from harvester.recipe import check_recipe
@@ -63,6 +65,14 @@ def answer(url: str) -> tuple[int, dict, bytes]:
     if path.startswith("/img/"):
         return 200, {"content-type": "image/jpeg"}, JPEG
     return 404, {"content-type": "text/plain"}, b"not found"
+
+
+class Pages:  # pylint: disable=too-few-public-methods
+    """The gallery for the recorder's browser."""
+
+    @staticmethod
+    def answer(url: str, _method: str = "GET", _cookie: str = "") -> tuple[int, dict, bytes]:
+        return answer(url)
 
 
 def http_site(recipe: dict, **options) -> site_module.Site:
@@ -199,3 +209,77 @@ def test_the_recipes_test_shows_each_file_links_values():
     shown = result["pages"][-1]["files"][0]["values"]
     assert shown["tags"] == ["sky", "sea", "2026"] and shown["page_title"] == "Dune" and shown["post"] == 2
     assert not {"url", "text", "ext"} & set(shown)
+
+
+@needs_chromium
+def test_the_recorder_picks_tags_beside_the_links_and_values_and_tags_on_a_post():
+    async def scenario():
+        driver, recorder = await recording(Pages())
+        try:
+            await recorder.handle({"type": "goto", "url": f"{GALLERY}/latest"})
+            await settled(recorder, "/latest")
+            await driver.mode("follow")
+            await driver.click("a.post")
+            await driver.until(lambda m: m["recipe"].get("follow"))
+            await recorder.handle({"type": "mode", "mode": "tags", "target": "follow", "level": 0})
+            await driver.click(".card:nth-of-type(1) ul.chips li:nth-of-type(2) a")
+            beside = await driver.until(lambda m: m["recipe"]["follow"][0].get("values"))
+            await recorder.handle({"type": "goto", "url": f"{GALLERY}/post/1"})
+            await settled(recorder, "/post/1")
+            await recorder.handle({"type": "mode", "mode": "page-tags", "target": "follow", "level": 0})
+            await driver.click("ul.tags li:nth-of-type(2) a")
+            tagged = await driver.until(lambda m: m["recipe"]["follow"][0].get("page_values"))
+            await recorder.handle({"type": "mode", "mode": "page-value", "target": "follow", "level": 0})
+            await driver.click("p.by")
+            valued = await driver.until(lambda m: len(m["recipe"]["follow"][0].get("page_values", [])) == 2)
+            await recorder.handle(
+                {"type": "value", "target": "follow", "level": 0, "index": 1, "page": True, "changes": {"name": "by"}}
+            )
+            renamed = driver.last()
+            return beside, tagged, valued, renamed
+        finally:
+            await recorder.close()
+
+    beside, tagged, valued, renamed = asyncio.run(scenario())
+    value = beside["recipe"]["follow"][0]["values"][0]
+    assert value | {"selector": ""} == {
+        "name": "tags",
+        "closest": "div.card",
+        "selector": "",
+        "attribute": "",
+        "regex": "",
+        "type": "text",
+        "many": True,
+    }
+    examples = beside["proposals"]["follow0"]["examples"]
+    assert [example["values"]["tags"] for example in examples] == [["sky", "sea"], ["sand"]]
+    level = tagged["recipe"]["follow"][0]
+    assert level["page_values"][0]["many"] and level["page_values"][0]["name"] == "tags"
+    page = tagged["proposals"]["follow0"]["pages"][0]
+    assert page["url"] == f"{GALLERY}/post/1" and page["values"]["tags"] == ["sky", "sea", "2026"]
+    assert page["values"]["page_title"] == "Sunset" and page["values"]["site_name"] == "Pics"
+    picked = valued["recipe"]["follow"][0]["page_values"][1]
+    assert picked["name"] == "title" and picked["type"] == "text"
+    assert valued["proposals"]["follow0"]["pages"][0]["values"]["title"] == "Anna Example"
+    assert renamed["proposals"]["follow0"]["pages"][0]["values"]["by"] == "Anna Example"
+    # The recipe the recorder made reads the same over HTTP.
+    recipe = {"start": f"{GALLERY}/latest", "follow": renamed["recipe"]["follow"], "links": RECIPE["links"]}
+    assert not check_recipe(recipe)
+    items = walked(http_site(recipe, path="{by}/{post}{ext}"))
+    assert [item.path for item in items] == ["Anna Example/1.jpg", "Anna Example/2.jpg"]
+    assert items[0].values["tags"] == ["sky", "sea", "2026"]
+
+
+@needs_chromium
+def test_a_pick_on_the_listing_itself_is_refused_with_why():
+    async def scenario():
+        driver, recorder = await recording(Pages())
+        try:
+            await recorder.handle({"type": "goto", "url": f"{GALLERY}/latest"})
+            await settled(recorder, "/latest")
+            await recorder._pick_on_page({"selector": "h1"}, True)
+            return [message for message in driver.sent if message["type"] == "error"][-1]
+        finally:
+            await recorder.close()
+
+    assert asyncio.run(scenario())["message"].startswith("Open a page one of the links to follow leads to")

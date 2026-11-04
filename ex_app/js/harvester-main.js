@@ -1158,7 +1158,9 @@
 		box.append(el('p', { text: n('On this page: {matching} of %n link matches (solid outline; dashed: left out).', 'On this page: {matching} of %n links match (solid outline; dashed: left out).', proposal.found, { matching: proposal.matching }) }))
 		box.append(examplesList(proposal))
 		box.append(renderValues(spec, send, target, level, false),
-			el('button', { type: 'button', text: t('Pick a value'), title: t('Click a text near one of these links (a date, a title in its row or card): a value for file names and tags'), onclick: () => repick(target, level, 'value') }))
+			el('button', { type: 'button', text: t('Pick a value'), title: t('Click a text near one of these links (a date, a title in its row or card): a value for file names and tags'), onclick: () => repick(target, level, 'value') }),
+			el('button', { type: 'button', text: t('Pick tags'), title: t('Click one tag (a chip, a label) in the row or card of one of these links: the tags alike in each card become a list, {tags}, a tag per entry', { tags: '{tags}' }), onclick: () => repick(target, level, 'tags') }))
+		if (target === 'follow') box.append(renderPageValues(spec, proposal, send, level, repick))
 		if (target === 'links' && proposal.path) {
 			const use = (label, apply) => el('button', { type: 'button', text: label, onclick: (e) => { apply(); e.currentTarget.replaceChildren(glyph('✔'), t('will be used')) } })
 			box.append(el('p', { text: t('Proposed file name: {path}', { path: proposal.path }) }), use(t('Use it'), () => { suggestions.path = proposal.path }))
@@ -1186,18 +1188,37 @@
 			el('span', { text: example.text || example.url }), ' ', ...valueChips(example.values))))
 	}
 
-	// Where a value of the page is read, in words: in the link, or in its row or card.
-	function valueWhere(value) {
+	// The values of the pages a level's links open (its page_values), with the buttons that pick
+	// them there, and what the pages opened so far gave (the built-in values with them).
+	function renderPageValues(spec, proposal, send, level, repick) {
+		const pages = proposal.pages || []
+		const builtIn = { page_title: '{page_title}', site_name: '{site_name}', page_date: '{page_date}', page_lang: '{page_lang}' }
+		return el('div', { class: 'harvester-page-values' },
+			renderValues(spec, send, 'follow', level, false, true),
+			el('button', { type: 'button', text: t('Pick a value on its pages'), title: t('On a page these links open (follow one): click a text, a value for file names and tags'), onclick: () => repick('follow', level, 'page-value') }),
+			el('button', { type: 'button', text: t('Pick tags on its pages'), title: t('On a page these links open: click one tag, and those like it become a list, {tags}, a tag per entry', { tags: '{tags}' }), onclick: () => repick('follow', level, 'page-tags') }),
+			pages.length
+				? el('div', {}, el('h5', { text: t('Values of the pages it opened') }),
+					el('ul', {}, ...pages.map((page) => el('li', {}, el('code', { text: page.url }), ' ',
+						page.error ? el('span', { class: 'harvester-error', text: page.error }) : '', ...valueChips(page.values)))))
+				: el('p', { class: 'harvester-muted', text: t('Each page these links open gives {page_title}, {site_name}, {page_date} and {page_lang}: open one to see them here.', builtIn) }))
+	}
+
+	// Where a value of the page is read, in words: in the link, or in its row or card; on the page
+	// a level's links open (page).
+	function valueWhere(value, page) {
+		if (page) return `${t('on its page')} › ${value.selector || ''}: ${value.attribute ? t('attribute {name}', { name: value.attribute }) : t('its text')}`
 		const where = value.closest ? t('in its {container}', { container: value.closest }) : t('in the link')
 		return `${where}${value.selector ? ` › ${value.selector}` : ''}: ${value.attribute ? t('attribute {name}', { name: value.attribute }) : t('its text')}`
 	}
 
 	// A level's values from the page (or a JSON item's fields): name, type, where (the field),
 	// the pattern on the text; each changed or removed. The examples above show what they give.
-	function renderValues(spec, send, target, level, json) {
-		const values = spec.values || []
+	function renderValues(spec, send, target, level, json, page = false) {
+		const values = (page ? spec.page_values : spec.values) || []
+		const which = page ? { page: true } : {}
 		const rows = values.map((value, index) => {
-			const change = (changes) => send({ type: 'value', target, level, index, changes })
+			const change = (changes) => send({ type: 'value', target, level, index, changes, ...which })
 			const input = (key, label) => {
 				const box = el('input', { class: 'harvester-pattern', value: value[key] || '', spellcheck: 'false', 'aria-label': label, title: label, placeholder: label })
 				box.addEventListener('change', () => change({ [key]: box.value }))
@@ -1210,13 +1231,15 @@
 			}))
 			kind.addEventListener('change', () => change({ type: kind.value }))
 			return el('li', {},
-				input('name', t('Name')), ' ', kind, ' ',
-				json ? input('field', t('Field of the item, e.g. issued')) : el('small', { class: 'harvester-muted', text: valueWhere(value) }),
-				field(t('Pattern on its text (empty: all of it)'), input('regex', t('Pattern'))),
-				el('button', { type: 'button', text: t('Remove'), onclick: () => send({ type: 'value-remove', target, level, index }) }))
+				input('name', t('Name')), ' ', value.many ? el('small', { class: 'harvester-muted', text: t('a list: a tag per entry') }) : kind, ' ',
+				json ? input('field', t('Field of the item, e.g. issued')) : el('small', { class: 'harvester-muted', text: valueWhere(value, page) }),
+				field(value.many ? t('Pattern the tags must match (empty: all of them)') : t('Pattern on its text (empty: all of it)'), input('regex', t('Pattern'))),
+				el('button', { type: 'button', text: t('Remove'), onclick: () => send({ type: 'value-remove', target, level, index, ...which }) }))
 		})
+		if (page && !rows.length) return el('p', { class: 'harvester-muted', text: t('Values from the pages its links open: none picked.') })
 		if (!rows.length) return el('p', { class: 'harvester-muted', text: json ? t('Values: none from the items’ fields.') : t('Values from the page: none (Pick a value).') })
-		return el('div', { class: 'harvester-page-values' }, el('h5', { text: json ? t('Values from the items’ fields') : t('Values from the page') }), el('ul', {}, ...rows))
+		const heading = json ? t('Values from the items’ fields') : page ? t('Values from the pages its links open') : t('Values from the page')
+		return el('div', { class: 'harvester-page-values' }, el('h5', { text: heading }), el('ul', {}, ...rows))
 	}
 
 	// File links from a JSON listing (chosen in the Network panel): the request's address, the
@@ -2128,7 +2151,13 @@
 		}
 		// Pick again: the pick's mode; a level's links replace that level's, the later ones stay.
 		const repick = (target, level, mode) => {
-			if (mode === 'value') {
+			if (mode === 'tags') {
+				choose('tags', t('Click one tag (a chip, a label) in the row or card of one of the links (outlined): the tags alike in each card become a list, {tags}, a tag per entry.', { tags: '{tags}' }), level, target)
+			} else if (mode === 'page-value') {
+				choose('page-value', t('On a page the links of level {level} open (Browse, then follow one): click a text. It becomes a value of that page (a title, an author, a date).', { level: level + 1 }), level, target)
+			} else if (mode === 'page-tags') {
+				choose('page-tags', t('On a page the links of level {level} open (Browse, then follow one): click one tag. It and those like it (outlined) become a list, {tags}, a tag per entry.', { level: level + 1, tags: '{tags}' }), level, target)
+			} else if (mode === 'value') {
 				choose('value', target === 'links'
 					? t('Click a text near one of the file links (outlined): in a link, or in its row or card. It becomes a value (a date, a title); click more for more.')
 					: t('Click a text near one of the links of level {level} (outlined): in a link, or in its row or card. It becomes a value (a date, a title); click more for more.', { level: level + 1 }), level, target)

@@ -27,6 +27,10 @@
 // the link, as the job finds it beside every link: the closest ancestor of the link that is the
 // row or card (one that holds that link alone), then the element in it, and its text.
 //
+// In the mode tags the person clicks one tag chip in a link's row or card: the chips alike in each
+// card become a list value (many). On a page a level's links open, page-value picks one element
+// (a value of that page) and page-tags a chip and those like it (as links are picked), outlined.
+//
 // In the mode until the person clicks the element an approval or a handover waits for (a list of
 // accounts after the sign-in): the pick is a CSS selector that document.querySelector finds it
 // by, as the job looks for it (harvester.sources.attend).
@@ -610,7 +614,9 @@
 	let hovered = null
 	const TYPING = 'textarea, select, input:not([type=submit]):not([type=button]):not([type=checkbox]):not([type=radio]):not([type=image]):not([type=reset])'
 	const SUBMIT = 'button:not([type]), button[type=submit], input[type=submit], input[type=image]'
-	const picking = () => ['follow', 'links', 'next', 'value', 'until'].includes(state.mode)
+	const picking = () => ['follow', 'links', 'next', 'value', 'tags', 'page-value', 'page-tags', 'until'].includes(state.mode)
+	// The modes that pick an element itself (a text, a tag), not a link or a control around it.
+	const ELEMENT_MODES = ['value', 'tags', 'page-value', 'page-tags', 'until']
 
 	// An element by its tag and stable classes: alike in every row or card, unlike an id.
 	function generic(el) {
@@ -655,6 +661,37 @@
 		return null
 	}
 
+	// Tags picked near a level's links (a chip in a link's card): the card as valuePick finds it,
+	// and a selector in it for the chip and its siblings alike (its parent's part and its own),
+	// outlined in every card; null when it is near none of the links.
+	function tagsPick(el) {
+		const found = valuePick(el)
+		if (!found || !found.closest) return null
+		let box = el.parentElement
+		while (box && !box.matches(found.closest)) box = box.parentElement
+		if (!box) return null
+		const parent = el.parentElement
+		const selector = parent && parent !== box ? `${generic(parent)} > ${generic(el)}` : generic(el)
+		highlight(`${found.closest} ${selector}`, '')
+		return { closest: found.closest, selector, attribute: '', text: found.text }
+	}
+
+	// A plain CSS selector that document.querySelector finds the element by (Playwright's role
+	// and text selectors are no CSS: a job reads the page with them, BeautifulSoup does not).
+	function plainSelector(el) {
+		const shown = (selector) => { try { return document.querySelector(selector) === el } catch (e) { return false } }
+		return candidates(el).find(shown) || unique(el)
+	}
+
+	// Tags picked on a page a level's links open: the chip and those like it (as similar links are
+	// picked), outlined, their selector plain CSS.
+	function pageTagsPick(el) {
+		let selector = similar(el)
+		try { document.querySelectorAll(selector) } catch (e) { selector = generic(el) }
+		highlight(selector, '')
+		return { selector, texts: query(selector).slice(0, 50).map((node) => labelOf(node).slice(0, 80)) }
+	}
+
 	// The cursor the page shows where the mouse is (a hand over a link, a bar in a field), or a
 	// crosshair while picking: the recorder's screen shows it, as a browser would.
 	let cursor = ''
@@ -673,7 +710,7 @@
 			return
 		}
 		if (hovered) hovered.style.boxShadow = ''
-		hovered = ['value', 'until'].includes(state.mode) ? event.target : state.mode === 'next' ? link(event.target) : pickable(event.target)
+		hovered = ELEMENT_MODES.includes(state.mode) ? event.target : state.mode === 'next' ? link(event.target) : pickable(event.target)
 		hovered.style.boxShadow = 'inset 0 0 0 9999px rgba(0, 130, 201, 0.15)'
 	}, true)
 
@@ -731,6 +768,21 @@
 		if (state.mode === 'value') {
 			const found = valuePick(event.target)
 			report(found ? { action: 'pick', target: 'value', ...found } : { action: 'pick', target: 'value', none: true })
+			return
+		}
+		if (state.mode === 'tags') {
+			const found = tagsPick(event.target)
+			report(found ? { action: 'pick', target: 'tags', ...found } : { action: 'pick', target: 'tags', none: true })
+			return
+		}
+		if (state.mode === 'page-value') {
+			const target = event.target
+			const attribute = target.matches('time[datetime]') ? 'datetime' : ''
+			report({ action: 'pick', target: 'page-value', selector: plainSelector(target), attribute, text: (target.innerText || target.textContent || '').trim().slice(0, 200) })
+			return
+		}
+		if (state.mode === 'page-tags') {
+			report({ action: 'pick', target: 'page-tags', ...pageTagsPick(event.target) })
 			return
 		}
 		const next = state.mode === 'next' ? candidates(el, true) : []

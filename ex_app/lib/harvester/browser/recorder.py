@@ -30,10 +30,12 @@ binary sender, {type: frame, data}.
   {type: test-stop}, {type: test-code, code} (what a step of the test asks, {type: test-asking},
   trial.py), {type: clear}, {type: screen, visible} (the person's page hidden or shown again: the
   screencast stops or starts), and the cookies panel's (jar.py);
-- values from the page: {type: mode, mode: value, target, level} (pick a value near the level's
-  links), {type: value, target, level, index, changes (name, regex, type, attribute, closest,
+- values from the page: {type: mode, mode: value or tags, target, level} (pick a value, or tags, near
+  the level's links), {type: mode, mode: page-value or page-tags} (on the page a level's links
+  open: its page_values; to the page each level's proposal's "pages", their values), {type: value,
+  target, level, index, page (its page_values), changes (name, regex, type, attribute, closest,
   selector, field)} (one changed), {type: value-add, target, level, field} (a JSON item's field as one),
-  {type: value-remove, target, level, index};
+  {type: value-remove, target, level, index, page};
 - JSON listings: to the page {type: requests, items: [{id, url, size, status, method, summary}]}
   (the page's XHR and fetch answers in JSON to GET and POST, the Network panel); from it {type:
   json-preview, id} (its body to read: to the page {type: request-body, id, text, truncated, kept,
@@ -92,7 +94,7 @@ from ..recipe import SCROLL_ROUNDS, frame_address, in_this_recipe, leaked_passwo
 from ..sources import site
 from . import consent as banners, jar, trial
 from .trial import CLOSE_TIMEOUT, Trials
-from .datapicks import DATA_MESSAGES
+from .datapicks import DATA_MESSAGES, DATA_PICKS
 from .linkpicks import HIGHLIGHT, LinkPicks, link_proposal
 from .engine import disguised, guard_routes_async, main_world, start_async
 from .popups import Popups
@@ -111,9 +113,10 @@ from . import (
 from .guard import Guard
 from .steps import EDITS, StepList
 
-# record: steps; browse: go somewhere unrecorded; follow, links, next: pick links; value: pick a
-# value near a level's links; until: pick the element an approval or a handover waits for.
-MODES = ("record", "browse", "follow", "links", "next", "value", "until")
+# record: steps; browse: go somewhere unrecorded; follow, links, next: pick links; value, tags: pick a
+# value or tags near a level's links; page-value, page-tags: on the page a level's links open;
+# until: pick the element an approval or a handover waits for.
+MODES = ("record", "browse", "follow", "links", "next", "value", "tags", "page-value", "page-tags", "until")
 # Text up to this long is typed key by key; longer (a paste) is inserted at once.
 TYPED = 200
 # Tries to start a page's screencast while it is being attached, and the pause between them.
@@ -225,8 +228,10 @@ class Recorder(LinkPicks, Popups, Trials):  # pylint: disable=too-many-instance-
         self.repick: int | None = None
         # The address each level to follow was picked on (one clicked has no pattern on addresses).
         self._picked_at: dict[int, str] = {}
-        # The level a value is picked for (mode value): ("links", 0) or ("follow", level).
+        # The level a value is picked for (mode value, tags): ("links", 0) or ("follow", level).
         self.value_for: tuple[str, int] | None = None
+        # The values of the pages each level's links opened (DataPicks._read_page).
+        self.page_examples: dict[int, list[dict]] = {}
         # The step whose until an element is picked for (mode until).
         self.until_for: int | None = None
         # The page's answers in JSON (Network), and the one chosen as the listing: (url, data).
@@ -473,6 +478,10 @@ class Recorder(LinkPicks, Popups, Trials):  # pylint: disable=too-many-instance-
         if not self._casting and self._cdp:
             await self._screencast()
         await self._apply_mode()
+        if page is not None and page is self._page and self.follow and self.depth(page.url):
+            # A page a level's links lead to: its values, as the level's newest example.
+            await self._read_page()
+            await self._update()
 
     async def resize(self, width: object, height: object) -> None:
         """The window at the size the person's view has (within the limits): the page lays out
@@ -535,7 +544,7 @@ class Recorder(LinkPicks, Popups, Trials):  # pylint: disable=too-many-instance-
                 await frame.evaluate(SET_MODE, self.mode, **main_world(frame))
             except Exception:  # pylint: disable=broad-exception-caught
                 pass  # navigated meanwhile
-        if self._page and self.mode == "value":
+        if self._page and self.mode in ("value", "tags"):
             # The page's own links only: picks in frames are refused.
             with contextlib.suppress(Exception):
                 await self._page.evaluate(
@@ -546,8 +555,13 @@ class Recorder(LinkPicks, Popups, Trials):  # pylint: disable=too-many-instance-
 
     async def _update(self) -> None:
         recipe = self.recipe
+        # Each level's proposal with the pages its links opened, and their values (pageinfo).
+        proposals = dict(self.proposals)
+        for level, pages in self.page_examples.items():
+            if level < len(self.follow):
+                proposals[f"follow{level}"] = proposals.get(f"follow{level}", {}) | {"pages": pages}
         await self.send(
-            {"type": "recipe", "recipe": recipe, "proposals": self.proposals, "warnings": token_warnings(recipe)}
+            {"type": "recipe", "recipe": recipe, "proposals": proposals, "warnings": token_warnings(recipe)}
         )
 
     def depth(self, url: str) -> int:
@@ -593,8 +607,8 @@ class Recorder(LinkPicks, Popups, Trials):  # pylint: disable=too-many-instance-
                     f"reads the page's own links. Open the frame's address to pick there: {frame.url}",
                 }
             )
-        elif action == "pick" and event.get("target") == "value":
-            await self._pick_value(event)
+        elif action == "pick" and event.get("target") in DATA_PICKS:
+            await self._pick_data(event)
         elif action == "pick" and event.get("target") == "until":
             # The element an approval or a handover waits for (steps.person_edit).
             selector = str(event.get("selector") or "")
@@ -716,6 +730,7 @@ class Recorder(LinkPicks, Popups, Trials):  # pylint: disable=too-many-instance-
             self.proposals.pop("next", None)
         elif target == "follow":
             del self.follow[level]
+            self.page_examples = {}
             proposals = {}
             for key, proposal in self.proposals.items():
                 if key.startswith("follow"):
@@ -874,7 +889,7 @@ class Recorder(LinkPicks, Popups, Trials):  # pylint: disable=too-many-instance-
         self.mode = message["mode"]
         level, step = message.get("level"), message.get("step")
         self.repick = int(level) if self.mode == "follow" and isinstance(level, int) else None
-        self.value_for = self._value_target(message) if self.mode == "value" else None
+        self.value_for = self._value_target(message) if self.mode in ("value", "tags") else None
         self.until_for = step if self.mode == "until" and isinstance(step, int) else None
         await self._apply_mode()
 
@@ -912,6 +927,7 @@ class Recorder(LinkPicks, Popups, Trials):  # pylint: disable=too-many-instance-
         elif kind == "clear":
             self._remember()
             self.start_url, self.follow, self.links, self.next, self.proposals = "", [], {}, {}, {}
+            self.page_examples = {}
             await page.evaluate(HIGHLIGHT, ["", None, None], **main_world(page))
             await self._update()
 
