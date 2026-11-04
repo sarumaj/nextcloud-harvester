@@ -222,7 +222,8 @@ def test_a_file_is_served_whole_or_in_part_and_never_as_a_page(app):
     assert saved.headers["content-disposition"].startswith("attachment")
 
 
-def test_a_password_locks_the_library_until_unlocked_and_after_its_minutes(app, monkeypatch):
+@pytest.mark.usefixtures("app")
+def test_a_password_locks_the_library_until_unlocked_and_after_its_minutes(monkeypatch):
     asyncio.run(routes.set_library_password(routes.Password(password="correct horse", minutes=5), nextcloud()))
     state = asyncio.run(routes.library_state(nextcloud()))
     assert state["password"] and not state["unlocked"]
