@@ -91,7 +91,14 @@ recorder that makes them, and what a run does. Installing and the admin's settin
     there, the headers come a hundred messages at a time, a message larger than the largest file
     is skipped unread, and a message whose attachments were all saved or skipped (or that is not
     the job's) is not read again until the job's server, folder, filters, types or sizes change.
-    Only the attachment the run is at is held in memory.
+    Only the attachment the run is at is held in memory. The progress log says what the search
+    found (*Folder INBOX: 12 new messages, 3 from the sender and with the subject asked for*, or
+    *no new messages, 40 done with in earlier runs*) and names each message of the sender and
+    subject with what the job takes from it (*Message from `shop@example.org` of 2025-10-14,
+    “Invoice”: 1 attachment, 2 links*, or *nothing to fetch: no attachment of the names, types and
+    sizes asked for, no link the patterns take*); the first 50 of a run, the others counted in a
+    line. The other messages are only counted. A message with nothing to fetch is no failure: it
+    is done with, as is one whose files were all saved or skipped.
     **Also the files linked in the message** (off by default, also for jobs saved before;
     `sources/maillinks.py`) downloads the files a message links to too ("Download your
     invoice"): the HTML part's links and the addresses written in the plain text, http(s) only,
@@ -109,8 +116,13 @@ recorder that makes them, and what a run does. Installing and the admin's settin
     job**, one of your on-demand website jobs, whose recipe signs in and downloads it (its queue,
     as *Send to Harvester*; checked as a sent address is); without one, the log says *a page, not
     a file: …*. Such a page, and a link that expired (404, 410) or is closed (401, 403), is a line
-    in the log once and skipped for good, not a failure of the run. *Attachment names* is for
-    attachments only.
+    in the log once and skipped for good, not a failure of the run. A link whose site cannot be
+    reached (a name that does not resolve, a connection that fails after the download's own
+    retries, an error 5xx, a redirect to a private address) is no failure of the run either: the
+    log says *Skipped … this time (tried again next run): … (try 1 of 3)*, the run's outcome
+    counts it as *skipped this time*, and the message is read again next run for it; after its
+    third run it is given up (skipped for good). Only the mailbox's own troubles (its sign-in, its
+    folder, its server) fail a run. *Attachment names* is for attachments only.
   - `feed`: the files of an RSS or Atom feed, newest first: its enclosures (podcast episodes) or
     each entry's link, through the checked download. Values: `{title}`, `{feed}`, `{author}`,
     `{date}`, `{year}`, `{filename}`, …

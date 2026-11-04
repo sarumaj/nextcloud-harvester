@@ -17,8 +17,20 @@
   by the browser's guard and the downloads' checks (*blocked by the DNS server*), and a name they
   do not know as possibly blocked.
 
+### Changed
+
+- A mail job's progress log says what the mailbox search found (*Folder INBOX: 12 new messages,
+  3 from the sender and with the subject asked for*, or no new messages and how many were done
+  with before) and names each message of the sender and subject, with what the job takes from it
+  (*1 attachment, 2 links*) or why nothing (*nothing to fetch: no attachment of the names, types
+  and sizes asked for, no link the patterns take*): up to 50 a run, the rest counted.
+
 ### Fixed
 
+- A linked file whose site cannot be reached (a name that does not resolve, a failed connection,
+  an error 5xx, a redirect to a private address) no longer fails a mail job's run when nothing
+  else came: it is skipped this time with a line in the log (*skipped this time* in the run's
+  outcome), tried again in the next runs and given up after the third.
 - The run's reasons *the start page has none of the recipe's links* and *… asks for a person*,
   and the log's line of a page that loads none of the types to capture, are translated (German,
   Polish), as their neighbours were.

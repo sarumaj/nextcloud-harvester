@@ -334,3 +334,48 @@ def test_a_message_larger_than_the_largest_file_is_skipped_unread():
     assert outcome == "1 downloaded, 1 skipped (not of the job's file types, or too large)"
     assert any(line.startswith("Skipped imap://") and "more than the largest file" in line for line in log)
     assert ("UID", "FETCH", b"3", "(BODY.PEEK[])") not in server.commands
+
+
+def test_the_log_says_what_the_search_found_and_what_each_message_gives():
+    run = Run()
+    outcome, log = run(mailbox(), subject_pattern="Rechnung|Invoice", file_type="pdf")
+    assert outcome == "2 downloaded"
+    found = next(line for line in log if line.startswith("Folder INBOX"))
+    assert found == "Folder INBOX: 3 new messages, 2 from the sender and with the subject asked for"
+    assert found.template["plural"] == "Folder {folder}: %n new messages, {matching}", "translated on the page"
+    told = [line for line in log if line.startswith("Message from")]
+    assert told == [
+        "Message from billing@shop.example of 2025-10-14, “Invoice November”: 1 attachment",
+        "Message from billing@shop.example of 2025-10-14, “Rechnung für Oktober”: 1 attachment",
+    ], "the friend's message only counted; the logo is no pdf"
+    assert log.index(found) < log.index(told[0]) < log.index(next(line for line in log if line.startswith("Saved")))
+    _, log = run(mailbox(), subject_pattern="Rechnung|Invoice", file_type="pdf")
+    assert "Folder INBOX: no new messages, 3 done with in earlier runs" in log
+    assert not [line for line in log if line.startswith("Message from")]
+    _, log = Run()(FakeIMAP({}))
+    assert "Folder INBOX: no messages found" in log
+
+
+def test_a_message_with_nothing_to_fetch_says_so_and_a_long_list_is_cut(monkeypatch):
+    run = Run()
+    outcome, log = run(mailbox(), from_pattern="billing@shop", filename_pattern=r"\.xml$")
+    assert outcome == "0 downloaded"
+    assert (
+        "Message from billing@shop.example of 2025-10-14, “Invoice November”: nothing to fetch: no attachment of the "
+        "names, types and sizes asked for"
+    ) in log, "without links: no word of them"
+    assert f"{mail_source.DONE}INBOX:1700000000:3" in run.seen
+    monkeypatch.setattr(mail_source, "TOLD", 1)
+    _, log = Run()(mailbox(), file_type="pdf")
+    assert len([line for line in log if line.startswith("Message from")]) == 1
+    assert "2 more messages from the sender and with the subject asked for, not listed one by one" in log
+
+
+def test_a_message_larger_than_the_largest_file_is_named_too():
+    server = mailbox()
+    server.messages[b"3"] += b"z" * 1_100_000
+    _, log = Run()(server, file_type="pdf", max_size=1)
+    assert (
+        "Message from billing@shop.example of 2025-10-14, “Invoice November”: larger than the largest file, not read"
+        in log
+    )

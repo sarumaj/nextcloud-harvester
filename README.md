@@ -8,8 +8,9 @@ the app's browser or taken from a template, not by code.
 - **Jobs:** a source, a folder, a schedule in your time zone (or *On demand*: it fetches the
   addresses you send it), tags and an account; a progress log of what the runs do.
 - **Sources:** websites by a recipe, mailbox attachments (IMAP) and the files a message links
-  to, feeds and podcasts, videos and audio (yt-dlp), galleries (gallery-dl), file stores and
-  cloud drives (rclone), release downloads (GitHub, GitLab, Codeberg, Forgejo, Gitea).
+  to (the log names each message of the job and what it takes from it), feeds and podcasts,
+  videos and audio (yt-dlp), galleries (gallery-dl), file stores and cloud drives (rclone),
+  release downloads (GitHub, GitLab, Codeberg, Forgejo, Gitea).
 - **Choices:** one recipe for every account or contract, every year, every child: the steps
   after a choice and the listing are gone through for each option of a list.
 - **Exports prepared first:** after *Create export*, a job waits (reloading if asked) until the

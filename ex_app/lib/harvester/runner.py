@@ -20,6 +20,7 @@ from .sources import (
     ChallengeError,
     Denied,
     Option,
+    Postponed,
     Refused,
     Source,
     SourceError,
@@ -465,8 +466,8 @@ def signed_in_again(source: Source, error: WebPage, report: Report) -> bool:
 class Tally:
     """What a run did: files downloaded, found already there, skipped (refused by type or size),
     duplicates of the job's other files, known files saved over as a new version (updated) or
-    asked again and found unchanged, and the errors of those that failed (denied: how many of them
-    the site refused, 401 or 403)."""
+    asked again and found unchanged, put off (Postponed: tried again next run, no failure), and
+    the errors of those that failed (denied: how many of them the site refused, 401 or 403)."""
 
     downloaded: int = 0
     adopted: int = 0
@@ -474,6 +475,7 @@ class Tally:
     duplicates: int = 0
     updated: int = 0
     unchanged: int = 0
+    postponed: int = 0
     failures: list[str] = dataclasses.field(default_factory=list)
     denied: int = 0
     # When what is left is tried again: the next run, or (a fetch's) the address sent again.
@@ -496,6 +498,15 @@ class Tally:
                     "%n skipped (not of the job's file types, or too large)",
                     "%n skipped (not of the job's file types, or too large)",
                     self.skipped,
+                )
+            )
+        if self.postponed:
+            figures.append(
+                said_n(
+                    "%n skipped this time (tried again {later})",
+                    "%n skipped this time (tried again {later})",
+                    self.postponed,
+                    later=self.later,
                 )
             )
         if self.failures:
@@ -627,6 +638,21 @@ def run(  # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
                 mark_seen(item.key)
                 mark_seen(REFUSED + item.key)
                 continue
+            except Postponed as error:
+                # A trouble of this file that may pass (a linked site that did not answer): no
+                # failure of the run, the file is not marked and comes again next run.
+                tally.postponed += 1
+                report(
+                    "info",
+                    said(
+                        "Skipped {file} this time (tried again {later}): {error}",
+                        file=item.url if item.pending else item.path or item.url,
+                        later=later,
+                        error=str(error),
+                    ),
+                )
+                complete = False
+                continue
             except SourceError as error:
                 if rechecked:
                     # A known file that could not be asked again (gone from the site, a failure):
@@ -665,7 +691,9 @@ def run(  # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
         report("info", said("Stopped: the rest comes {later}", later=later))
         halted = True
         complete = False
-    if tally.failures and not (tally.downloaded or tally.adopted or tally.skipped or tally.duplicates or tally.updated):
+    if tally.failures and not (
+        tally.downloaded or tally.adopted or tally.skipped or tally.duplicates or tally.updated or tally.postponed
+    ):
         more = f" (and {len(tally.failures) - 1} more)" if len(tally.failures) > 1 else ""
         # Every file refused (two at least: one alone may be a file taken away): the account's
         # sign-in, not the files.

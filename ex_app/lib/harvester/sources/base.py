@@ -144,6 +144,12 @@ class Refused(SourceError):
     it is skipped for good (until the job's types or sizes change), not tried again."""
 
 
+class Postponed(SourceError):
+    """One file could not be had this time, for a reason that may pass (a linked site that did
+    not answer): skipped for this run without failing it, and tried again next run. The source
+    decides when to give up on it (then Refused)."""
+
+
 class WebPage(SourceError):
     """A web page came instead of the file: a sign-in page (login: the session ended), or a
     page the download URL gives (a level of links short, or a wrong Download URL)."""

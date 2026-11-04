@@ -13,7 +13,9 @@ the address it ended at).
 A link that gives a web page instead of a file (a portal's sign-in) is no file: handed to an
 on-demand website job of the person when the mail job names one (its recipe signs in and
 downloads it), else a line in the log; either way it is skipped for good (Refused), as is a link
-that expired (404, 410) or is refused to anyone without the site's session (401, 403).
+that expired (404, 410) or is refused to anyone without the site's session (401, 403). Any
+other failure (a site that cannot be reached) is SourceError, which the mail source puts off
+to its next runs (Mail.put_off).
 """
 
 import re

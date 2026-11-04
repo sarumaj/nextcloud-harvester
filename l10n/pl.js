@@ -989,6 +989,12 @@ OC.L10N.register(
             "%n pominiętych (nie są z typów plików zadania albo za duże)",
             "%n pominiętego (nie jest z typów plików zadania albo za duży)"
         ],
+        "_%n skipped this time (tried again {later})_::_%n skipped this time (tried again {later})_": [
+            "%n pominięty tym razem (ponowna próba {later})",
+            "%n pominięte tym razem (ponowna próba {later})",
+            "%n pominiętych tym razem (ponowna próba {later})",
+            "%n pominiętego tym razem (ponowna próba {later})"
+        ],
         "_%n failed (tried again {later}): {error}_::_%n failed (tried again {later}): {error}_": [
             "%n nieudany (ponowna próba {later}): {error}",
             "%n nieudane (ponowna próba {later}): {error}",
@@ -1005,6 +1011,7 @@ OC.L10N.register(
         ],
         "The run's time is up: the rest comes {later}": "Czas przebiegu minął: reszta {later}",
         "Skipped {file}: {error}": "Pominięto {file}: {error}",
+        "Skipped {file} this time (tried again {later}): {error}": "Pominięto tym razem {file} (ponowna próba {later}): {error}",
         "{file} could not be checked for changes: {error}": "Nie udało się sprawdzić zmian w {file}: {error}",
         "_%n file in a row failed: the rest comes {later}_::_%n files in a row failed: the rest comes {later}_": [
             "%n plik z rzędu się nie powiódł: reszta {later}",
@@ -1108,6 +1115,47 @@ OC.L10N.register(
             "przechodzi przez %n wyboru: {choices}"
         ],
         "the choice “{choice}” failed: {why}": "wybór „{choice}” się nie powiódł: {why}",
+        "_Folder {folder}: %n new message, {matching}_::_Folder {folder}: %n new messages, {matching}_": [
+            "Folder {folder}: %n nowa wiadomość, {matching}",
+            "Folder {folder}: %n nowe wiadomości, {matching}",
+            "Folder {folder}: %n nowych wiadomości, {matching}",
+            "Folder {folder}: %n nowej wiadomości, {matching}"
+        ],
+        "Message from {sender} of {date}, “{subject}”: {what}": "Wiadomość od {sender} z {date}, „{subject}”: {what}",
+        "nothing to fetch: no attachment of the names, types and sizes asked for": "nic do pobrania: brak załącznika o żądanych nazwach, typach i rozmiarach",
+        "Folder {folder}: no messages found": "Folder {folder}: nie znaleziono wiadomości",
+        "_Folder {folder}: no new messages, %n done with in an earlier run_::_Folder {folder}: no new messages, %n done with in earlier runs_": [
+            "Folder {folder}: brak nowych wiadomości, %n załatwiona we wcześniejszym przebiegu",
+            "Folder {folder}: brak nowych wiadomości, %n załatwione we wcześniejszych przebiegach",
+            "Folder {folder}: brak nowych wiadomości, %n załatwionych we wcześniejszych przebiegach",
+            "Folder {folder}: brak nowych wiadomości, %n załatwionej we wcześniejszych przebiegach"
+        ],
+        "nothing to fetch: no attachment of the names, types and sizes asked for, no link the patterns take": "nic do pobrania: brak załącznika o żądanych nazwach, typach i rozmiarach, brak linku, który biorą wzorce",
+        "_%n from the sender and with the subject asked for_::_%n from the sender and with the subject asked for_": [
+            "%n od żądanego nadawcy i z żądanym tematem",
+            "%n od żądanego nadawcy i z żądanym tematem",
+            "%n od żądanego nadawcy i z żądanym tematem",
+            "%n od żądanego nadawcy i z żądanym tematem"
+        ],
+        "_%n attachment_::_%n attachments_": [
+            "%n załącznik",
+            "%n załączniki",
+            "%n załączników",
+            "%n załącznika"
+        ],
+        "_%n link_::_%n links_": [
+            "%n link",
+            "%n linki",
+            "%n linków",
+            "%n linku"
+        ],
+        "_%n more message from the sender and with the subject asked for, not listed one by one_::_%n more messages from the sender and with the subject asked for, not listed one by one_": [
+            "%n kolejna wiadomość od żądanego nadawcy i z żądanym tematem, niewymieniona osobno",
+            "%n kolejne wiadomości od żądanego nadawcy i z żądanym tematem, niewymienione osobno",
+            "%n kolejnych wiadomości od żądanego nadawcy i z żądanym tematem, niewymienionych osobno",
+            "%n kolejnej wiadomości od żądanego nadawcy i z żądanym tematem, niewymienionej osobno"
+        ],
+        "larger than the largest file, not read": "większa niż największy plik, nieprzeczytana",
         "step {number} ({label}, optional) skipped: {why}": "krok {number} ({label}, opcjonalny) pominięty: {why}",
         "The kept session no longer reaches the listing: signing in anew": "Zachowana sesja nie dociera już do listy: ponowne logowanie",
         "“{choice}”: the listing has none of the recipe's links": "„{choice}”: lista nie ma żadnego z linków przepisu",

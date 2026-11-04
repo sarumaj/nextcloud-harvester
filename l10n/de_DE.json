@@ -934,6 +934,10 @@
             "%n übersprungen (nicht von den Dateitypen des Jobs oder zu groß)",
             "%n übersprungen (nicht von den Dateitypen des Jobs oder zu groß)"
         ],
+        "_%n skipped this time (tried again {later})_::_%n skipped this time (tried again {later})_": [
+            "%n diesmal übersprungen (wird {later} erneut versucht)",
+            "%n diesmal übersprungen (werden {later} erneut versucht)"
+        ],
         "_%n failed (tried again {later}): {error}_::_%n failed (tried again {later}): {error}_": [
             "%n fehlgeschlagen (wird {later} erneut versucht): {error}",
             "%n fehlgeschlagen (werden {later} erneut versucht): {error}"
@@ -946,6 +950,7 @@
         ],
         "The run's time is up: the rest comes {later}": "Die Zeit des Durchlaufs ist um: Der Rest kommt {later}",
         "Skipped {file}: {error}": "{file} übersprungen: {error}",
+        "Skipped {file} this time (tried again {later}): {error}": "{file} diesmal übersprungen (wird {later} erneut versucht): {error}",
         "{file} could not be checked for changes: {error}": "{file} ließ sich nicht auf Änderungen prüfen: {error}",
         "_%n file in a row failed: the rest comes {later}_::_%n files in a row failed: the rest comes {later}_": [
             "%n Datei in Folge fehlgeschlagen: Der Rest kommt {later}",
@@ -1029,6 +1034,35 @@
             "geht %n Auswahlen durch: {choices}"
         ],
         "the choice “{choice}” failed: {why}": "die Auswahl „{choice}“ ist fehlgeschlagen: {why}",
+        "_Folder {folder}: %n new message, {matching}_::_Folder {folder}: %n new messages, {matching}_": [
+            "Ordner {folder}: %n neue Nachricht, {matching}",
+            "Ordner {folder}: %n neue Nachrichten, {matching}"
+        ],
+        "Message from {sender} of {date}, “{subject}”: {what}": "Nachricht von {sender} vom {date}, „{subject}“: {what}",
+        "nothing to fetch: no attachment of the names, types and sizes asked for": "nichts zu holen: kein Anhang der gewünschten Namen, Typen und Größen",
+        "Folder {folder}: no messages found": "Ordner {folder}: keine Nachrichten gefunden",
+        "_Folder {folder}: no new messages, %n done with in an earlier run_::_Folder {folder}: no new messages, %n done with in earlier runs_": [
+            "Ordner {folder}: keine neuen Nachrichten, %n in einem früheren Lauf erledigt",
+            "Ordner {folder}: keine neuen Nachrichten, %n in früheren Läufen erledigt"
+        ],
+        "nothing to fetch: no attachment of the names, types and sizes asked for, no link the patterns take": "nichts zu holen: kein Anhang der gewünschten Namen, Typen und Größen, kein Link, den die Muster nehmen",
+        "_%n from the sender and with the subject asked for_::_%n from the sender and with the subject asked for_": [
+            "%n vom gewünschten Absender und mit dem gewünschten Betreff",
+            "%n vom gewünschten Absender und mit dem gewünschten Betreff"
+        ],
+        "_%n attachment_::_%n attachments_": [
+            "%n Anhang",
+            "%n Anhänge"
+        ],
+        "_%n link_::_%n links_": [
+            "%n Link",
+            "%n Links"
+        ],
+        "_%n more message from the sender and with the subject asked for, not listed one by one_::_%n more messages from the sender and with the subject asked for, not listed one by one_": [
+            "%n weitere Nachricht vom gewünschten Absender und mit dem gewünschten Betreff, nicht einzeln aufgeführt",
+            "%n weitere Nachrichten vom gewünschten Absender und mit dem gewünschten Betreff, nicht einzeln aufgeführt"
+        ],
+        "larger than the largest file, not read": "größer als die größte Datei, nicht gelesen",
         "step {number} ({label}, optional) skipped: {why}": "Schritt {number} ({label}, optional) übersprungen: {why}",
         "The kept session no longer reaches the listing: signing in anew": "Die gespeicherte Sitzung erreicht die Übersicht nicht mehr: neue Anmeldung",
         "“{choice}”: the listing has none of the recipe's links": "„{choice}“: Die Übersicht hat keinen der Links des Rezepts",

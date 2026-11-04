@@ -160,14 +160,74 @@ def test_a_page_is_logged_once_or_handed_to_the_on_demand_job():
     assert len(handed) == 1 and not asked, "remembered: not tried again"
 
 
-def test_a_redirect_to_a_private_address_is_refused():
+def test_a_redirect_to_a_private_address_is_refused_without_failing_the_run():
     asked: list[str] = []
     run = Run()
     html = '<a href="https://t.example/private">Download</a>'
-    with site(asked) as client, pytest.raises(SourceError, match="may not be reached"):
-        run.go(links_source(FakeIMAP({b"1": linking(html, "")}), client, link_text_pattern="Download"))
+    with site(asked) as client:
+        outcome, log = run.go(links_source(FakeIMAP({b"1": linking(html, "")}), client, link_text_pattern="Download"))
+    assert outcome == "0 downloaded, 1 skipped this time (tried again next run)"
+    assert any("Skipped https://t.example/private this time" in line and "may not be reached" in line for line in log)
     assert "http://10.0.0.5/secret.pdf" not in asked
     assert not run.library.files and f"{maillinks.KEY}<l1@shop.example>|https://t.example/private" not in run.seen
+
+
+def unreachable(asked: list[str]) -> httpx.Client:
+    """The fake shop of site(), and a host that cannot be reached (a name that does not resolve,
+    as httpx tells it)."""
+    shop = site(asked)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "down.example":
+            asked.append(str(request.url))
+            raise httpx.ConnectError("[Errno -2] Name or service not known", request=request)
+        return shop.send(request)
+
+    return download.guarded_client(transport=httpx.MockTransport(handler))
+
+
+def test_a_link_that_cannot_be_reached_is_tried_in_three_runs_without_failing_them():
+    asked: list[str] = []
+    run = Run()
+    html = '<a href="https://down.example/invoice.pdf">Download</a><a href="https://t.example/c/abc">Download</a>'
+    key = f"{maillinks.KEY}<l1@shop.example>|https://down.example/invoice.pdf"
+    done = f"{mail_source.DONE}INBOX:1700000000:1"
+    for number in (1, 2, 3):
+        asked.clear()
+        with unreachable(asked) as client:
+            made = links_source(FakeIMAP({b"1": linking(html, "")}), client, link_text_pattern="Download")
+            made.sleep = lambda seconds: None
+            outcome, log = run.go(made)
+        assert asked.count("https://down.example/invoice.pdf") == download.RETRIES + 1, "retried within the run"
+        if number == 1:
+            assert outcome == "1 downloaded, 1 skipped this time (tried again next run)", "the other link's file"
+        elif number == 2:
+            assert outcome == "0 downloaded, 1 skipped this time (tried again next run)", "alone: no failure either"
+        if number < 3:
+            line = next(line for line in log if "Skipped https://down.example/invoice.pdf this time" in line)
+            assert "could not be fetched" in line and f"(try {number} of {mail_source.LINK_TRIES})" in line
+            assert line.template["text"] == "Skipped {file} this time (tried again {later}): {error}"
+            assert key not in run.seen and done not in run.seen, "tried again next run"
+    assert outcome == "0 downloaded, 1 skipped (not of the job's file types, or too large)"
+    assert any(f"(given up after {mail_source.LINK_TRIES} runs)" in line for line in log)
+    assert key in run.seen and done in run.seen, "given up: the message is done"
+
+
+def test_a_message_with_links_only_says_what_it_takes():
+    asked: list[str] = []
+    run = Run()
+    with site(asked) as client:
+        _, log = run.go(links_source(FakeIMAP({b"1": linking()}), client, link_text_pattern="Download|Your invoice"))
+    assert "Folder INBOX: 1 new message, 1 from the sender and with the subject asked for" in log
+    assert "Message from billing@shop.example of 2025-10-14, “Your invoice”: 3 links" in log
+    run = Run()
+    with site(asked) as client:
+        _, log = run.go(links_source(FakeIMAP({b"1": linking()}), client, link_text_pattern="Nothing like it"))
+    assert (
+        "Message from billing@shop.example of 2025-10-14, “Your invoice”: nothing to fetch: no attachment of the "
+        "names, types and sizes asked for, no link the patterns take"
+    ) in log
+    assert f"{mail_source.DONE}INBOX:1700000000:1" in run.seen, "nothing to take: done with"
 
 
 def test_hand_over_only_to_the_persons_on_demand_website_jobs(tmp_path):

@@ -12,6 +12,11 @@ by the server, the headers come a hundred messages at a time, and a message whos
 were all handled (or that is not the job's) is remembered and not read again, until the job's
 filters change.
 
+The progress log says what the search found and names each message of the sender and subject
+(up to TOLD a run) with what the job takes from it, or why nothing. A linked file whose site
+cannot be reached is one link's trouble, not the run's: put off to the next runs, given up after
+LINK_TRIES (put_off).
+
 The same access reads a code a website sends by e-mail for its sign-in (code_from_mail, the site
 source's step "mail-code"): read-only too, and the code is never logged.
 """
@@ -34,8 +39,9 @@ from typing import Any, BinaryIO, ClassVar
 from bs4 import BeautifulSoup
 
 from .. import browser, patterns
+from ..l10n import Said, listed, said, said_n
 from . import download, maillinks
-from .base import MARK, AuthError, Item, Option, Refused, Source, SourceError, pattern_search
+from .base import MARK, AuthError, Item, Option, Postponed, Refused, Source, SourceError, pattern_search
 
 # Month names IMAP's SINCE expects, whatever the locale.
 MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
@@ -47,6 +53,14 @@ BATCH = 100
 DONE = MARK + "mail:"
 # A sender pattern the server can search for (an address or a domain, dots escaped or not).
 PLAIN_SENDER = re.compile(r"[A-Za-z0-9._+-]*@?[A-Za-z0-9.-]+")
+# The messages of the sender and subject asked for that a run names in its progress log, each
+# with what the job takes from it; the others are only counted (a first run of a full mailbox).
+TOLD = 50
+# The runs a linked file whose site did not answer (a name that does not resolve, a connection
+# that fails, an error 5xx) is tried in, before it is given up (skipped for good); the mark of
+# each failed try: TRIED, the try's number and the link's key.
+LINK_TRIES = 3
+TRIED = MARK + "mail-link-tried:"
 
 
 # How a job signs in: a password, or OAuth2's XOAUTH2 with a refresh token at a provider.
@@ -127,7 +141,7 @@ def fetched_bytes(data: list) -> bytes:
     return b""
 
 
-class Mail(Source):
+class Mail(Source):  # pylint: disable=too-many-public-methods
     """Attachments of an IMAP mailbox."""
 
     name = "mail"
@@ -305,6 +319,8 @@ class Mail(Source):
         self.current: tuple[str, bytes] | None = None
         # The waits of the linked files' downloads (the executor's, which a stop ends).
         self.sleep: Callable[[float], None] = time.sleep
+        # The failed tries of the listed links (by key, TRIED), for their fetch.
+        self.tries: dict[str, int] = {}
 
     def links(self) -> bool:
         """Whether the job takes the files linked in the messages too."""
@@ -385,18 +401,64 @@ class Mail(Source):
         imap = self.imap or self.open()
         _, validity = imap.response("UIDVALIDITY")
         validity = (validity[0] if validity and validity[0] else b"0").decode()
-        policy = email.policy.default
         largest = download.largest(self.settings)
 
         def done(uid: bytes) -> str:
             return f"{DONE}{self.settings['folder']}:{validity}:{uid.decode()}"
 
         # The messages done with are left out before anything of them is fetched.
-        fresh = [uid for uid in self.search(imap) if not seen(done(uid))]
-        for start in range(0, len(fresh), BATCH):
-            batch = fresh[start : start + BATCH]
-            # The headers first, of many messages at once: only messages of the sender and subject
-            # asked for are fetched whole.
+        found = self.search(imap)
+        fresh = [uid for uid in found if not seen(done(uid))]
+        matching = self.matching_headers(imap, fresh, done)
+        self.report("info", self.found_line(len(found), len(fresh), len(matching)))
+        for number, (uid, size, header) in enumerate(matching):
+            told = number < TOLD
+            if number == TOLD:
+                self.report(
+                    "info",
+                    said_n(
+                        "%n more message from the sender and with the subject asked for, not listed one by one",
+                        "%n more messages from the sender and with the subject asked for, not listed one by one",
+                        len(matching) - TOLD,
+                    ),
+                )
+            if size > largest:
+                if told:
+                    self.report("info", self.message_line(header, said("larger than the largest file, not read")))
+                # Skipped (and so remembered as done) by the run, which says so in its log.
+                yield Item(
+                    key=done(uid),
+                    path="",
+                    url=self.address(uid.decode()),
+                    problem=Refused(f"message {uid.decode()} is {size // download.MB} MB, more than the largest file"),
+                )
+                continue
+            status, data = imap.uid("FETCH", uid, "(BODY.PEEK[])")
+            if status != "OK":
+                raise SourceError(f"the IMAP server could not give message {uid.decode()}")
+            message = email.message_from_bytes(fetched_bytes(data), policy=email.policy.default)
+            where = f"{validity}:{uid.decode()}"
+            attached = self.wanted_attachments(message, where)  # type: ignore[arg-type]
+            links = self.wanted_links(message, where, seen) if self.links() else []  # type: ignore[arg-type]
+            if told:
+                self.report("info", self.message_line(header, self.taken_line(len(attached), len(links))))
+            keys: list[str] = []
+            yield from self.attachments(message, where, attached, seen, keys)  # type: ignore[arg-type]
+            yield from self.linked(message, where, links, seen, keys)  # type: ignore[arg-type]
+            # Back here once the run took each of them (a run that ends before does not come
+            # back): the message is done when every one is saved or skipped.
+            if all(seen(key) for key in keys):
+                self.remember(done(uid))
+
+    def matching_headers(
+        self, imap: Any, uids: list[bytes], done: Callable[[bytes], str]
+    ) -> list[tuple[bytes, int, EmailMessage]]:
+        """The UID, size and header of the messages of the sender and subject asked for, in the
+        order of uids; their headers fetched BATCH at a time. The others are done with
+        (remembered), as nothing of them is the job's."""
+        found = []
+        for start in range(0, len(uids), BATCH):
+            batch = uids[start : start + BATCH]
             status, data = imap.uid("FETCH", uid_set(batch), HEADERS)
             if status != "OK":
                 raise SourceError(f"the IMAP server could not give the messages' headers in {self.settings['folder']}")
@@ -405,32 +467,61 @@ class Mail(Source):
                 if uid not in headers:
                     continue
                 size, raw = headers[uid]
-                if not self.matches(email.message_from_bytes(raw, policy=policy)):  # type: ignore[arg-type]
+                header = email.message_from_bytes(raw, policy=email.policy.default)
+                if self.matches(header):  # type: ignore[arg-type]
+                    found.append((uid, size, header))
+                else:
                     self.remember(done(uid))
-                    continue
-                if size > largest:
-                    # Skipped (and so remembered as done) by the run, which says so in its log.
-                    yield Item(
-                        key=done(uid),
-                        path="",
-                        url=self.address(uid.decode()),
-                        problem=Refused(
-                            f"message {uid.decode()} is {size // download.MB} MB, more than the largest file"
-                        ),
-                    )
-                    continue
-                status, data = imap.uid("FETCH", uid, "(BODY.PEEK[])")
-                if status != "OK":
-                    raise SourceError(f"the IMAP server could not give message {uid.decode()}")
-                message = email.message_from_bytes(fetched_bytes(data), policy=policy)
-                keys: list[str] = []
-                yield from self.attachments(message, f"{validity}:{uid.decode()}", seen, keys)  # type: ignore[arg-type]
-                if self.links():
-                    yield from self.linked(message, f"{validity}:{uid.decode()}", seen, keys)  # type: ignore[arg-type]
-                # Back here once the run took each of them (a run that ends before does not come
-                # back): the message is done when every one is saved or skipped.
-                if all(seen(key) for key in keys):
-                    self.remember(done(uid))
+        return found  # type: ignore[return-value]
+
+    def found_line(self, found: int, fresh: int, matching: int) -> Said:
+        """What the search found in the folder, for the progress log."""
+        folder = str(self.settings["folder"])
+        if not found:
+            return said("Folder {folder}: no messages found", folder=folder)
+        if not fresh:
+            return said_n(
+                "Folder {folder}: no new messages, %n done with in an earlier run",
+                "Folder {folder}: no new messages, %n done with in earlier runs",
+                found,
+                folder=folder,
+            )
+        return said_n(
+            "Folder {folder}: %n new message, {matching}",
+            "Folder {folder}: %n new messages, {matching}",
+            fresh,
+            folder=folder,
+            matching=said_n(
+                "%n from the sender and with the subject asked for",
+                "%n from the sender and with the subject asked for",
+                matching,
+            ),
+        )
+
+    @staticmethod
+    def message_line(header: EmailMessage, what: Said) -> Said:
+        """A message of the sender and subject asked for, and what the job takes from it."""
+        values = Mail.message_values(header)
+        return said(
+            "Message from {sender} of {date}, “{subject}”: {what}",
+            sender=values["from"] or values["sender"],
+            date=values["date"],
+            subject=values["subject"],
+            what=what,
+        )
+
+    def taken_line(self, attachments: int, links: int) -> Said:
+        """What the job takes from a message: its attachments and links, or why nothing."""
+        parts = [said_n("%n attachment", "%n attachments", attachments)] if attachments else []
+        if links:
+            parts.append(said_n("%n link", "%n links", links))
+        if parts:
+            return listed(parts, "unit")
+        if self.links():
+            return said(
+                "nothing to fetch: no attachment of the names, types and sizes asked for, no link the patterns take"
+            )
+        return said("nothing to fetch: no attachment of the names, types and sizes asked for")
 
     def newest_code(self, imap: Any, after: float, pattern: str) -> str:
         """The code in the newest message of the sender and subject asked for that came in after
@@ -464,14 +555,12 @@ class Mail(Source):
         """A message's address, for the progress log."""
         return f"imap://{self.settings['host']}/{self.settings['folder']};UID={uid}"
 
-    def attachments(
-        self, message: EmailMessage, uid: str, seen: Callable[[str], bool], keys: list[str]
-    ) -> Iterator[Item]:
-        """The message's new attachments of the names, type and size asked for (their keys added
-        to keys)."""
+    def wanted_attachments(self, message: EmailMessage, uid: str) -> list[tuple[str, str, int, EmailMessage]]:
+        """The message's attachments of the names, type and size asked for, known or not: their
+        keys, file names, positions and parts."""
         message_id = str(message.get("Message-ID", "")).strip() or uid
-        values = self.message_values(message)
         names = str(self.settings["filename_pattern"])
+        found = []
         index = 0
         for part in message.walk():
             filename = part.get_filename()
@@ -479,27 +568,59 @@ class Mail(Source):
                 continue
             index += 1
             filename = safe(filename, 200) or f"attachment-{index}"
-            key = f"mail:{message_id}#{index}:{filename}"
-            if not pattern_search(names, filename) or seen(key):
+            if not pattern_search(names, filename):
                 continue
             payload = part.get_payload(decode=True)
-            if not isinstance(payload, bytes) or not self.wanted(payload, part.get_content_type()):
+            if isinstance(payload, bytes) and self.wanted(payload, part.get_content_type()):
+                found.append((f"mail:{message_id}#{index}:{filename}", filename, index, part))
+        return found  # type: ignore[return-value]
+
+    def attachments(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self,
+        message: EmailMessage,
+        uid: str,
+        wanted: list[tuple[str, str, int, EmailMessage]],
+        seen: Callable[[str], bool],
+        keys: list[str],
+    ) -> Iterator[Item]:
+        """The wanted attachments (wanted_attachments) not known yet (their keys added to keys),
+        each read when the run is at it."""
+        values = self.message_values(message)
+        for key, filename, index, part in wanted:
+            if seen(key):
                 continue
-            self.current = (key, payload)
+            payload = part.get_payload(decode=True)
+            self.current = (key, payload if isinstance(payload, bytes) else b"")
             keys.append(key)
             yield self.item(key, filename, values | {"index": index}, uid)
             self.current = None
 
-    def linked(self, message: EmailMessage, uid: str, seen: Callable[[str], bool], keys: list[str]) -> Iterator[Item]:
-        """The files of the message's links the job takes, not fetched yet (their keys added to
-        keys): named as their answer names them (pending), a stand-in from the address before."""
+    def wanted_links(self, message: EmailMessage, uid: str, seen: Callable[[str], bool]) -> list[tuple[str, str, str]]:
+        """The message's links the job takes, known or not: their keys, addresses and texts. The
+        failed tries of each (TRIED) are kept for its fetch."""
         message_id = str(message.get("Message-ID", "")).strip() or uid
-        values = self.message_values(message)
         found = maillinks.wanted_links(
             message, str(self.settings["link_pattern"]), str(self.settings["link_text_pattern"])
         )
+        taken = []
         for address, text in found:
             key = f"{maillinks.KEY}{message_id}|{patterns.stable_url(address)}"
+            self.tries[key] = next((n for n in range(LINK_TRIES, 0, -1) if seen(f"{TRIED}{n}:{key}")), 0)
+            taken.append((key, address, text))
+        return taken
+
+    def linked(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self,
+        message: EmailMessage,
+        uid: str,
+        wanted: list[tuple[str, str, str]],
+        seen: Callable[[str], bool],
+        keys: list[str],
+    ) -> Iterator[Item]:
+        """The files of the wanted links (wanted_links) not fetched yet (their keys added to
+        keys): named as their answer names them (pending), a stand-in from the address before."""
+        values = self.message_values(message)
+        for key, address, text in wanted:
             if seen(key):
                 continue
             keys.append(key)
@@ -551,14 +672,19 @@ class Mail(Source):
     def fetch(self, item: Item, dest: BinaryIO) -> Item | None:
         if item.key.startswith(maillinks.KEY):
             target = int(self.settings["link_job"] or 0)
-            name = maillinks.fetch_link(
-                self.client,
-                item.url,
-                dest,
-                self.settings,
-                self.sleep,
-                lambda url: self.hand_over(target, url) if target else maillinks.NO_JOB,
-            )
+            try:
+                name = maillinks.fetch_link(
+                    self.client,
+                    item.url,
+                    dest,
+                    self.settings,
+                    self.sleep,
+                    lambda url: self.hand_over(target, url) if target else maillinks.NO_JOB,
+                )
+            except (Refused, AuthError):
+                raise
+            except SourceError as error:
+                raise self.put_off(item.key, error) from error
             named = self.item(item.key, name, item.values, item.url)
             path = download.with_extension(named.path, self.settings) if named.path else ""
             return dataclasses.replace(item, path=path or item.path, values=named.values, pending=False)
@@ -566,6 +692,16 @@ class Mail(Source):
             raise SourceError(f"{item.path} was not read from the mailbox")
         dest.write(self.current[1])
         return None
+
+    def put_off(self, key: str, error: SourceError) -> SourceError:
+        """A linked file whose site did not answer (or refused a redirect, or broke off): one
+        link's trouble, not the mailbox's, so no failure of the run. Tried again in the next
+        runs (Postponed), given up for good (Refused) after LINK_TRIES runs."""
+        tries = self.tries.get(key, 0) + 1
+        self.remember(f"{TRIED}{tries}:{key}")
+        if tries >= LINK_TRIES:
+            return Refused(f"{error} (given up after {LINK_TRIES} runs)")
+        return Postponed(f"{error} (try {tries} of {LINK_TRIES})")
 
     def access_token(self) -> str:
         """An access token for the mailbox, from the refresh token (and the provider's newer
