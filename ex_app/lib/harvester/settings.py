@@ -80,7 +80,10 @@ def form(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         section_type="admin",
         section_id="additional",
         title="Harvester",
-        description="Each change is saved as you make it (there is no Save button) and takes effect within a minute; running jobs and open browsers finish first.",
+        description=(
+            "Each change is saved as you make it (there is no Save button) and takes effect within a minute; "
+            "running jobs and open browsers finish first."
+        ),
         fields=[
             SettingsField(
                 id=RUNNERS,

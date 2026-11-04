@@ -37,6 +37,9 @@ JSON names a folder the Nextcloud server can read, `"translations_folder": "/pat
 
 ## Settings
 
+- **Where its settings are:** *Administration settings > Additional settings > Harvester* (and
+  *Harvester: DNS servers* below it); an admin also gets there by **Settings** at the top of
+  Harvester's page. Each change is saved as it is made: the forms have no Save button.
 - **Admin settings:** *Administration settings > Additional settings > Harvester* sets the
   numbers of jobs and browsers at once (1 to 8 each), the proxy, and the **Browser network
   guard** (on by default; see *Safety*), the limits of the private library (**Private library

@@ -26,6 +26,7 @@ class Sink:
         self.parts: list[bytes] = []
 
     def write(self, data: bytes) -> int:
+        """Keeps what zipfile wrote, for the stream to take."""
         self.parts.append(bytes(data))
         return len(data)
 

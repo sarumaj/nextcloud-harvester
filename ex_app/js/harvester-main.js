@@ -413,6 +413,7 @@
 					el('h2', { text: 'Harvester' }),
 					el('p', { class: 'harvester-muted', text: t('Fetches files from websites into your folders on a schedule, and tags them.') })),
 				el('div', { class: 'harvester-header-buttons' },
+					adminSettings(),
 					el('button', { text: t('Library'), title: t('Harvester’s private library: the files of the jobs that save there'), onclick: () => renderLibrary(root) }),
 					el('button', { class: 'primary', text: t('New job'), onclick: () => renderStart(root) }))),
 			load,
@@ -2967,6 +2968,18 @@
 			;(document.getElementById('harvester') || document.body).append(dialog)
 			dialog.showModal()
 			input.select()
+		})
+	}
+
+	// For admins: the way to Harvester's settings (Administration settings > Additional settings,
+	// its form's element harvester_admin: settings.ADMIN_FORM). Nobody else sees it.
+	function adminSettings() {
+		if (!(window.OC && typeof OC.isUserAdmin === 'function' && OC.isUserAdmin())) return ''
+		return el('a', {
+			class: 'button',
+			href: `${OC.generateUrl('/settings/admin/additional')}#harvester_admin`,
+			text: t('Settings'),
+			title: t('Harvester’s settings for everyone (admins): jobs and browsers at once, the proxy, the library’s limits, DNS servers, Immich'),
 		})
 	}
 

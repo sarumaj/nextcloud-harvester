@@ -9,7 +9,7 @@ their switch "optional" with its hint for consent buttons, and "Acting in"; the 
 browser views; the server's texts with values (templates) in the person's language, older plain
 ones as they came."""
 
-# pylint: disable=missing-function-docstring
+# pylint: disable=missing-function-docstring,too-many-lines
 
 import json
 import pathlib
@@ -241,7 +241,7 @@ def level(page, target: str, number: int = 0):
 
 
 @needs_chromium
-def test_the_recorders_controls(page):
+def test_the_recorders_controls(page):  # pylint: disable=too-many-statements
     page.get_by_role("button", name="Edit").click()
     page.get_by_role("button", name="Record in the browser").click()
     page.wait_for_function("window.__sockets.length && window.__sockets[0].sent.length")

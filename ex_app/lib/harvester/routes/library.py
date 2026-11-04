@@ -586,7 +586,7 @@ RESET_WORD = "reset"
 
 
 @ROUTER.post("/api/library/reset")
-async def reset_library(body: Reset, request: Request, nc: NC, x_harvester_base: Base = "") -> Response:
+async def reset_library(body: Reset, nc: NC, x_harvester_base: Base = "") -> Response:
     """Deletes the person's library entirely, as before its setup: files, folders, labels and keys
     (every session of theirs ends), locked or not, so that someone who lost the password and the
     recovery key can start again; 422 without the confirmation. The number of files and folders

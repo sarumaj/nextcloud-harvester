@@ -489,7 +489,7 @@ BROWSED = [
 
 
 @needs_chromium
-def test_the_library_is_browsed_chosen_sorted_dragged_and_shown_in_turn(page):
+def test_the_library_is_browsed_chosen_sorted_dragged_and_shown_in_turn(page):  # pylint: disable=too-many-statements
     listing = {"folder": "/", "entries": BROWSED, "labels": ["sea"], "folders": ["/Box", "/Old"]}
     details = BROWSED[2] | {
         "job_name": "Gallery",
@@ -612,3 +612,15 @@ def test_a_library_whose_keys_are_lost_is_reset_after_its_confirmation(page):
     reset.click()
     page.get_by_role("button", name="Next: your recovery key").wait_for()
     assert ("POST", "/library/reset", {"confirm": "reset"}) in CALLS
+
+
+@needs_chromium
+def test_admins_find_harvesters_settings_from_its_page(page):
+    header = page.locator(".harvester-header-buttons").first
+    assert not header.get_by_role("link", name="Settings").count(), "nobody but an admin sees the link"
+    page.evaluate("window.OC.isUserAdmin = () => true")
+    answering(page, {"GET /library/state": (403, {"detail": "no"}), "GET /library/moves": []})
+    page.get_by_role("button", name="Library", exact=True).click()
+    page.get_by_role("button", name="Back to the jobs").click()
+    link = page.locator(".harvester-header-buttons").first.get_by_role("link", name="Settings")
+    assert link.get_attribute("href") == "/settings/admin/additional#harvester_admin", "the admin's form, by its id"

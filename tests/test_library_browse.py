@@ -142,11 +142,11 @@ def test_a_zip_is_anna_s_alone_and_lapses(app, monkeypatch):
 def test_a_person_resets_their_own_library_locked_or_not(app):
     put(app, "/Trip/a.jpg", b"a")
     with pytest.raises(HTTPException) as unconfirmed:
-        asyncio.run(routes.reset_library(routes.Reset(confirm="yes"), request(), nextcloud()))
+        asyncio.run(routes.reset_library(routes.Reset(confirm="yes"), nextcloud()))
     assert unconfirmed.value.status_code == 422
     assert app["shelf"].usage("anna") > 0, "nothing deleted without the word"
     app["keyring"].lock(app["token"])
-    answer = asyncio.run(routes.reset_library(routes.Reset(confirm="reset"), request(), nextcloud()))
+    answer = asyncio.run(routes.reset_library(routes.Reset(confirm="reset"), nextcloud()))
     assert json.loads(answer.body) == {"deleted": 2}
     assert app["shelf"].usage("anna") == 0 and not app["keyring"].is_set_up("anna"), "as before the setup"
     state = asyncio.run(routes.library_state(request(), nextcloud()))

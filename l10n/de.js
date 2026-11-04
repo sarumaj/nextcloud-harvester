@@ -611,6 +611,8 @@ OC.L10N.register(
         "Tag or label": "Schlagwort oder Label",
         "(where unknown)": "(Ort unbekannt)",
         "No files recorded yet.": "Noch keine Dateien verzeichnet.",
+        "Settings": "Einstellungen",
+        "Harvester’s settings for everyone (admins): jobs and browsers at once, the proxy, the library’s limits, DNS servers, Immich": "Harvesters Einstellungen für alle (Admins): Jobs und Browser gleichzeitig, der Proxy, die Grenzen der Bibliothek, DNS-Server, Immich",
         "Lock now": "Jetzt sperren",
         "Your hidden, encrypted space: only you see it, here, not in Files, Photos or the search. Jobs save into it, and you upload or move files into it.": "Dein versteckter, verschlüsselter Bereich: nur du siehst ihn, hier, nicht in Dateien, Fotos oder der Suche. Jobs speichern hinein, und du lädst Dateien hoch oder verschiebst sie hinein.",
         "_%n was not done:_::_%n were not done:_": [

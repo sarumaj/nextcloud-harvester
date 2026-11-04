@@ -3,8 +3,9 @@
 photos and videos uploaded (other files skipped for good), a content Immich has already adopted
 and still filed, the album made once and reused, Immich's tags, a file gone from Immich uploaded
 again, the locked folder (uploads and a content there already moved into it, no album nor
-Immich tags, the files known by their content's SHA-1), a refused key asking for the account again, the person's account (tested, its key never
-sent back), and the upload streamed from the file in pieces."""
+Immich tags, the files known by their content's SHA-1), a refused key asking for the account
+again, the person's account (tested, its key never sent back), and the upload streamed from the
+file in pieces."""
 
 # pylint: disable=missing-function-docstring,missing-class-docstring
 

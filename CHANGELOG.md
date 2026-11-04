@@ -4,6 +4,8 @@
 
 ### Added
 
+- **Settings** at the top of Harvester's page takes an admin to Harvester's settings
+  (*Administration settings > Additional settings*); nobody else sees it.
 - **Reset the library…** puts a person's library back to how it was before its setup (every
   file, folder and label deleted with its keys), also from the unlock page for someone who lost
   the password and the recovery key; only the admin's occ command could before.

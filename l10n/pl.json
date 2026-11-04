@@ -634,6 +634,8 @@
         "Tag or label": "Tag lub etykieta",
         "(where unknown)": "(miejsce nieznane)",
         "No files recorded yet.": "Nie zapisano jeszcze plików.",
+        "Settings": "Ustawienia",
+        "Harvester’s settings for everyone (admins): jobs and browsers at once, the proxy, the library’s limits, DNS servers, Immich": "Ustawienia Harvestera dla wszystkich (administratorzy): zadania i przeglądarki naraz, proxy, limity biblioteki, serwery DNS, Immich",
         "Lock now": "Zablokuj teraz",
         "Your hidden, encrypted space: only you see it, here, not in Files, Photos or the search. Jobs save into it, and you upload or move files into it.": "Twoja ukryta, zaszyfrowana przestrzeń: widzisz ją tylko ty, tutaj, nie w Plikach, Zdjęciach ani w wyszukiwaniu. Zadania zapisują do niej, a ty przesyłasz lub przenosisz do niej pliki.",
         "_%n was not done:_::_%n were not done:_": [
