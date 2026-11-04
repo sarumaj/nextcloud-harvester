@@ -254,7 +254,8 @@ def test_an_optional_step_in_a_frame_not_there_is_skipped_and_logged(monkeypatch
             "info",
             "step 2 (click “Akzeptieren” in frame consent.example, optional) skipped: "
             "the frame https://consent.example/cmp (level 1) is not on the page",
-        )
+        ),
+        ("info", f"page 1 ({SITE}/list?p=1): 2 of 2 links match, 2 new"),
     ]
     assert source.shot is None, "no picture of a failure: there was none"
 
