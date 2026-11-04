@@ -463,7 +463,7 @@
 				el('code', { text: fetch.url }),
 				fetch.running
 					? el('span', { class: 'harvester-muted', text: ` ${t('fetching')}` })
-					: el('button', { class: 'harvester-link', text: t('Cancel'), 'aria-label': t('Cancel the fetch of {address}', { address: fetch.url }), onclick: act(job, `/fetch/${fetch.id}`, 'DELETE') }))))
+					: el('button', { class: 'harvester-tertiary', text: t('Cancel'), 'aria-label': t('Cancel the fetch of {address}', { address: fetch.url }), onclick: act(job, `/fetch/${fetch.id}`, 'DELETE') }))))
 	}
 
 	// Fetch a URL…: a row below the job's with the address to fetch; Fetch queues it (checked
@@ -615,7 +615,7 @@
 				// person): kept for its newest failure only, so an older line's may be gone.
 				entry.shot ? el('button', {
 					type: 'button',
-					class: 'harvester-link',
+					class: 'harvester-tertiary',
 					text: t('Show what the browser saw'),
 					onclick: () => showShot(root, jobs.find((job) => job.id === entry.job) || { id: entry.job, name: entry.name }),
 				}) : ''))
@@ -1103,7 +1103,7 @@
 		const box = el('div', { class: 'harvester-level', 'data-target': target, 'data-level': String(level) },
 			el('div', { class: 'harvester-level-head' }, el('h4', { text: title }),
 				el('button', { type: 'button', text: t('Pick again'), title: t('Pick this on the page again (in its picking mode)'), onclick: () => repick(target, level) }),
-				el('button', { type: 'button', class: 'error', text: t('Remove'), title: target === 'follow' ? t('Remove this level (the levels after it move up)') : t('Remove this pick'), onclick: () => send({ type: 'remove', target, level }) })),
+				el('button', { type: 'button', text: t('Remove'), title: target === 'follow' ? t('Remove this level (the levels after it move up)') : t('Remove this pick'), onclick: () => send({ type: 'remove', target, level }) })),
 			field(target === 'next' && spec.kind === 'number' ? t('The numbers’ container (CSS selector)') : t('Element (selector)'), selector))
 		if (spec.alternatives && spec.alternatives.length) {
 			box.append(el('p', { class: 'harvester-muted', text: t('Alternatives, tried in this order when it finds nothing: {alternatives}', { alternatives: spec.alternatives.join('  ·  ') }) }))
@@ -1193,7 +1193,7 @@
 				input('name', t('Name')), ' ', kind, ' ',
 				json ? input('field', t('Field of the item, e.g. issued')) : el('small', { class: 'harvester-muted', text: valueWhere(value) }),
 				field(t('Pattern on its text (empty: all of it)'), input('regex', t('Pattern'))),
-				el('button', { type: 'button', class: 'error', text: t('Remove'), onclick: () => send({ type: 'value-remove', target, level, index }) }))
+				el('button', { type: 'button', text: t('Remove'), onclick: () => send({ type: 'value-remove', target, level, index }) }))
 		})
 		if (!rows.length) return el('p', { class: 'harvester-muted', text: json ? t('Values: none from the items’ fields.') : t('Values from the page: none (Pick a value).') })
 		return el('div', { class: 'harvester-page-values' }, el('h5', { text: json ? t('Values from the items’ fields') : t('Values from the page') }), el('ul', {}, ...rows))
@@ -1249,7 +1249,7 @@
 		const fieldName = el('input', { class: 'harvester-pattern', spellcheck: 'false', 'aria-label': t('Field'), placeholder: t('e.g. issued or meta.date') })
 		const box = el('div', { class: 'harvester-level', 'data-target': 'links', 'data-level': '0' },
 			el('div', { class: 'harvester-level-head' }, el('h4', { text: `${title} (JSON)` }),
-				el('button', { type: 'button', class: 'error', text: t('Remove'), title: t('Remove this pick'), onclick: () => send({ type: 'remove', target: 'links', level: 0 }) })),
+				el('button', { type: 'button', text: t('Remove'), title: t('Remove this pick'), onclick: () => send({ type: 'remove', target: 'links', level: 0 }) })),
 			el('p', { class: 'harvester-muted', text: t('The files are the items of an answer the page fetched: the job asks for it itself (with its cookies), page by page.') }),
 			input('url', t('Request'), t('Its page parameter is set for each page; {year} and the like take the levels’ values.', { year: '{year}' })),
 			input('items', t('Items (path in the answer, e.g. data.items)')),
@@ -1695,7 +1695,7 @@
 							return el('tr', { 'data-cookie': cookie.name },
 								el('td', {}, el('code', { text: cookie.name })),
 								el('td', {}, known ? el('code', { class: 'harvester-cookie-value', text: values[key(cookie)] }) : el('span', { class: 'harvester-muted', text: `•••• (${cookie.size})` }),
-									el('button', { type: 'button', class: 'harvester-link', text: known ? t('Hide') : t('Show'), onclick: () => {
+									el('button', { type: 'button', class: 'harvester-tertiary', text: known ? t('Hide') : t('Show'), onclick: () => {
 										if (known) { delete values[key(cookie)]; render() } else send({ type: 'cookie-show', name: cookie.name, domain: cookie.domain, path: cookie.path })
 									} })),
 								el('td', { text: cookie.path }),
@@ -2160,7 +2160,7 @@
 				details.push(value)
 			}
 			if (step.action === 'select') {
-				details.push(el('button', { type: 'button', class: 'harvester-link', text: t('Repeat for each option'), title: t('The steps after this one and the listing are gone through once for each option of the list, its text {choice} in file names and tags', { choice: '{choice}' }), onclick: () => send({ type: 'each', step: index }) }))
+				details.push(el('button', { type: 'button', class: 'harvester-tertiary', text: t('Repeat for each option'), title: t('The steps after this one and the listing are gone through once for each option of the list, its text {choice} in file names and tags', { choice: '{choice}' }), onclick: () => send({ type: 'each', step: index }) }))
 			}
 			if (step.action === 'each') details.push(eachEditor(step, index))
 			if (step.action === 'approve' || step.action === 'handover') details.push(personEditor(step, index))
@@ -2170,7 +2170,7 @@
 				const what = address && shown ? t('then waits for an address like {address} and {selector} to show', { address, selector: shown })
 					: address ? t('then waits for an address like {address}', { address }) : t('then waits for {selector} to show', { selector: shown })
 				details.push(el('small', { class: 'harvester-muted', text: `${what} ` }),
-					el('button', { type: 'button', class: 'harvester-link', text: t('wait for the network instead'), onclick: () => edit({ wait: null }) }))
+					el('button', { type: 'button', class: 'harvester-tertiary', text: t('wait for the network instead'), onclick: () => edit({ wait: null }) }))
 			}
 			details.push(timing(step, index, edit))
 			const classes = [step.frame && step.frame.length ? 'harvester-framed' : '', mark ? `harvester-step-${mark.state}` : '']
@@ -2186,7 +2186,7 @@
 				// An approval or a handover is never optional: its until says when it is not needed.
 				['approve', 'handover'].includes(step.action) ? '' : el('label', { class: 'harvester-optional-label', title: t('Best effort: when it fails (not there, not visible), the job waits a few seconds at most and goes on without it') }, box, ` ${t('optional')}`),
 				!step.optional && looksLikeConsent(step)
-					? el('button', { type: 'button', class: 'harvester-link harvester-hint', text: t('make optional?'), title: t('A consent banner often shows only on the first visit'), onclick: () => toggle(true) })
+					? el('button', { type: 'button', class: 'harvester-tertiary harvester-hint', text: t('make optional?'), title: t('A consent banner often shows only on the first visit'), onclick: () => toggle(true) })
 					: '',
 				tools,
 				details.length ? el('div', { class: 'harvester-step-details' }, ...details) : '')
@@ -2239,9 +2239,9 @@
 				step.action === 'approve' ? el('label', {}, ` ${t('for up to')} `, minutes, ` ${t('min')}`) : '',
 				el('span', { class: 'harvester-muted', text: step.action === 'approve' ? t('Goes on once the page shows:') : t('Not needed once the page shows (optional):') }),
 				el('label', {}, `${t('Address')} `, address),
-				el('button', { type: 'button', class: 'harvester-link', text: t('this page’s address'), onclick: () => edit({ here: true }) }),
+				el('button', { type: 'button', class: 'harvester-tertiary', text: t('this page’s address'), onclick: () => edit({ here: true }) }),
 				el('label', {}, `${t('Element')} `, element),
-				el('button', { type: 'button', class: 'harvester-link', text: t('Pick an element'), onclick: () => pickUntil(index) }))
+				el('button', { type: 'button', class: 'harvester-tertiary', text: t('Pick an element'), onclick: () => pickUntil(index) }))
 		}
 
 		// What the test did with a step: playing (its attempt, when it has more), pausing (a
@@ -3173,7 +3173,6 @@
 		   the pointer is on it, as Nextcloud's tertiary buttons. */
 		#harvester .harvester-tertiary { min-height: 0; margin: 0 0 0 4px; padding: 2px 8px; border: none; border-radius: var(--border-radius); background: none; color: var(--color-primary-element); font-weight: bold; cursor: pointer; }
 		#harvester .harvester-tertiary:hover:not(:disabled) { background: var(--color-background-hover); }
-		#harvester .harvester-link { border: none; background: none; min-height: 0; padding: 0 0 0 8px; color: var(--color-primary-element); text-decoration: underline; cursor: pointer; }
 		/* A narrow window: the recorder's screen above its steps, at the full width. */
 		@media (max-width: 800px) {
 			#harvester .harvester-stage { flex-direction: column; align-items: stretch; }

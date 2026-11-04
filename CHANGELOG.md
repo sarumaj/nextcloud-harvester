@@ -132,6 +132,11 @@
   `confirm()` before); Escape is No, and a deletion's dialog has the focus on Cancel. The
   recorder's **Clear picks** offers **Undo** for 15 seconds, and its **Cancel** asks before it
   drops changes to the recipe.
+- Buttons alike: the actions in a row or a line of text (a waiting address's *Cancel*, *Show
+  what the browser saw*, a cookie's *Show*, the Steps list's *this page’s address*, *Pick an
+  element*, *make optional?*) are borderless buttons as Nextcloud's tertiary ones (underlined
+  links before), and red is kept for what cannot be undone: a pick's, a level's and a value's
+  *Remove* in the recorder are plain buttons (*Undo pick* takes them back).
 
 ### Fixed
 
