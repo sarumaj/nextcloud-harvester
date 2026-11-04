@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, BinaryIO
 from . import unpack, versions
 from .destinations import OPTIONS as DESTINATION_OPTIONS
 from .l10n import Said, error_text, listed, said, said_n
-from .patterns import render_tags, stable_url
+from .patterns import MAX_LIST_TAGS, render_tags, stable_url, tags_left_out
 from .sources import download
 from .sources.keep import CAPTURED
 from .sources import (
@@ -210,10 +210,23 @@ def free_path(job: Job, library: Library, item, owners: dict[int, str]) -> tuple
 DOWNLOADED, ADOPTED, DUPLICATE, UPDATED, UNCHANGED = "downloaded", "adopted", "duplicates", "updated", "unchanged"
 
 
-def _tagged(job: Job, library: Library, item, file_id: int, record: Callable[[Placed], None]) -> None:
+def _tagged(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    job: Job, library: Library, item, file_id: int, record: Callable[[Placed], None], report: Report
+) -> None:
     """Gives the item's file the job's tags (templates of the link's values: {year} is the
-    link's year) and records it."""
+    link's year) and records it; a list value's tags beyond MAX_LIST_TAGS left out, said once."""
     tags = render_tags(job.tags, item.values)
+    left_out = tags_left_out(job.tags, item.values)
+    if left_out:
+        report(
+            "info",
+            said(
+                "{file}: the first {kept} tags of a list kept, {more} more left out",
+                file=item.path or item.url,
+                kept=MAX_LIST_TAGS,
+                more=left_out,
+            ),
+        )
     if tags:
         library.tag(file_id, tags)
     record(Placed(item.key, file_id, dict(item.values), tags))
@@ -273,7 +286,7 @@ def place(  # pylint: disable=too-many-arguments,too-many-positional-arguments,t
     )
     if file_id is not None:
         report("info", said("Already in the folder, tagged: {path}", path=path))
-        _tagged(job, library, item, file_id, record)
+        _tagged(job, library, item, file_id, record, report)
         return ADOPTED
     pause()
     report("info", said("Downloading {file}", file=item.url if item.pending else path))
@@ -289,7 +302,7 @@ def place(  # pylint: disable=too-many-arguments,too-many-positional-arguments,t
             path, file_id = free_path(job, library, item, owners)
         if file_id is not None:
             report("info", said("Already in the folder, tagged: {path}", path=path))
-            _tagged(job, library, item, file_id, record)
+            _tagged(job, library, item, file_id, record, report)
             return ADOPTED
         size = content.tell()
         value = versions.digest(content)
@@ -306,7 +319,7 @@ def place(  # pylint: disable=too-many-arguments,too-many-positional-arguments,t
             report("info", said("Saved {path} ({size})", path=path, size=size_text(size)))
         if source.contents is not None:
             source.contents.keep(item.key, value, path, check)
-    _tagged(job, library, item, file_id, record)
+    _tagged(job, library, item, file_id, record, report)
     return ADOPTED if there else DOWNLOADED
 
 
@@ -356,7 +369,7 @@ def _recheck(  # pylint: disable=too-many-arguments,too-many-positional-argument
         file_id, path, _ = _put(job, source, library, item, path, content, report, fresh=False)
         report("info", said("Changed: {path} saved over as its new version ({size})", path=path, size=size_text(size)))
         contents.keep(item.key, value, path, check)
-    _tagged(job, library, item, file_id, record)
+    _tagged(job, library, item, file_id, record, report)
     return UPDATED
 
 

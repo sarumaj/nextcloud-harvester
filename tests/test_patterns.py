@@ -9,7 +9,7 @@ import re
 import pytest
 
 from harvester import ondemand
-from harvester.patterns import group_values, propose, render_path, render_tags
+from harvester.patterns import MAX_LIST_TAGS, group_values, propose, render_path, render_tags, tags_left_out
 from harvester.presets import PRESETS, make_job
 from harvester.sources.site import Site
 
@@ -39,6 +39,22 @@ def test_values_and_templates():
     assert values == {"year": 2025, "issue": 3}
     assert render_path("../{year}/iX {year}-{issue:02d}.pdf", values) == "2025/iX 2025-03.pdf"
     assert render_tags(["iX", "{year}", "{missing}", ""], values) == ["iX", "2025"]
+
+
+def test_a_list_value_alone_is_a_tag_per_entry_and_joined_elsewhere():
+    values = {"tags": ["sky", " blue  sky ", "", "sky", "x" * 80], "year": 2026}
+    assert render_tags(["{tags}", " {year} "], values) == ["sky", "blue sky", "x" * 64, "2026"]
+    # In a template of more than itself, and in a file name, its entries are joined.
+    assert render_tags(["{year}: {tags}"], {"tags": ["a", "b"], "year": 2026}) == ["2026: a, b"]
+    assert render_path("{year}/{tags}.jpg", {"tags": ["a", "b"], "year": 2026}) == "2026/a, b.jpg"
+    assert not render_tags(["{tags}"], {"tags": []}) and not render_tags(["{tags}"], {})
+    assert tags_left_out(["{tags}"], values) == 0
+
+
+def test_a_long_list_gives_its_first_tags_and_counts_the_rest():
+    values = {"tags": [f"tag {number}" for number in range(MAX_LIST_TAGS + 7)]}
+    assert render_tags(["{tags}"], values) == [f"tag {number}" for number in range(MAX_LIST_TAGS)]
+    assert tags_left_out(["{tags}", "{other}"], values) == 7
 
 
 def test_heise_template_makes_a_valid_job():

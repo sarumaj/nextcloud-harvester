@@ -1129,6 +1129,7 @@
         "Downloading {file}": "Lade {file} herunter",
         "A web page came instead of a file ({error}): signed in anew": "Statt einer Datei kam eine Webseite ({error}): neu angemeldet",
         "{outcome}; stopped, the rest comes {later}": "{outcome}; gestoppt, der Rest kommt {later}",
+        "{file}: the first {kept} tags of a list kept, {more} more left out": "{file}: die ersten {kept} Tags einer Liste behalten, {more} weitere weggelassen",
         "Already in the folder, tagged: {path}": "Schon im Ordner, mit Tags versehen: {path}",
         "Changed: {path} saved over as its new version ({size})": "Geändert: {path} als neue Version darüber gespeichert ({size})",
         "_Looking for %n file saved before its tags were kept (nothing is downloaded)_::_Looking for %n files saved before their tags were kept (nothing is downloaded)_": [

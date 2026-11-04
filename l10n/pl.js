@@ -1172,6 +1172,7 @@ OC.L10N.register(
         "Downloading {file}": "Pobieranie {file}",
         "A web page came instead of a file ({error}): signed in anew": "Zamiast pliku przyszła strona internetowa ({error}): zalogowano ponownie",
         "{outcome}; stopped, the rest comes {later}": "{outcome}; zatrzymano, reszta {later}",
+        "{file}: the first {kept} tags of a list kept, {more} more left out": "{file}: zachowano pierwsze {kept} tagów z listy, pominięto {more} kolejnych",
         "Already in the folder, tagged: {path}": "Już w folderze, otagowano: {path}",
         "Changed: {path} saved over as its new version ({size})": "Zmieniony: {path} zapisany jako nowa wersja ({size})",
         "_Looking for %n file saved before its tags were kept (nothing is downloaded)_::_Looking for %n files saved before their tags were kept (nothing is downloaded)_": [

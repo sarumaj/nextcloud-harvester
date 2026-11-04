@@ -136,13 +136,27 @@ def group_values(match: re.Match) -> dict:
     }
 
 
+# A list value (a page's tags, gallery-dl's) in a file name or in a template of more than itself:
+# its entries joined so.
+LIST_JOIN = ", "
+
+
+def flat(values: dict) -> dict:
+    """The values with each list as its entries joined (LIST_JOIN), as a template shows them."""
+    return {
+        name: LIST_JOIN.join(str(entry) for entry in value) if isinstance(value, list) else value
+        for name, value in values.items()
+    }
+
+
 def render(template: str, values: dict, giver: str = "the link pattern") -> str:
     """Fills in the template; a value it names that is missing is an error naming it, and what
-    should have given it (giver: the link pattern, the message, this release)."""
+    should have given it (giver: the link pattern, the message, this release). A list's entries
+    are joined (flat)."""
     missing = [name for _, name, _, _ in Formatter().parse(template) if name and name not in values]
     if missing:
         raise KeyError(f"{template} names {', '.join(missing)}, which {giver} does not give")
-    return template.format(**values)
+    return template.format(**flat(values))
 
 
 def render_path(template: str, values: dict, giver: str = "the link pattern") -> str:
@@ -160,13 +174,36 @@ def render_path(template: str, values: dict, giver: str = "the link pattern") ->
 
 # Nextcloud's longest tag name.
 MAX_TAG = 64
+# The tags a list value gives a file at most (a page's tags, gallery-dl's): the rest are left out.
+MAX_LIST_TAGS = 20
+# A tag template that is one value alone ({tags}): a list there gives a tag per entry.
+ONE_VALUE = re.compile(r"\{([A-Za-z_]\w*)\}")
+
+
+def _listed(template: str, values: dict) -> list | None:
+    """The list value a template that is that value alone names ({tags}), else None."""
+    alone = ONE_VALUE.fullmatch(template.strip())
+    value = values.get(alone[1]) if alone else None
+    return value if isinstance(value, list) else None
+
+
+def _list_tags(entries: list) -> list[str]:
+    """A list value's entries as tags: each a line, shortened to what Nextcloud keeps, the empty
+    ones and repeats left out."""
+    tags = [re.sub(r"\s+", " ", str(entry)).strip()[:MAX_TAG].strip() for entry in entries]
+    return list(dict.fromkeys(tag for tag in tags if tag))
 
 
 def render_tags(templates: list[str], values: dict) -> list[str]:
     """The tags from their templates; one naming a value the file lacks is left out, a long one
-    (an email's subject, say) shortened to what Nextcloud keeps."""
+    (an email's subject, say) shortened to what Nextcloud keeps. A template that is a list value
+    alone ({tags}) gives a tag per entry, MAX_LIST_TAGS at most (tags_left_out: how many more)."""
     tags = []
     for template in templates:
+        entries = _listed(template, values)
+        if entries is not None:
+            tags += _list_tags(entries)[:MAX_LIST_TAGS]
+            continue
         try:
             tag = render(template, values).strip()[:MAX_TAG].strip()
         except (KeyError, ValueError):
@@ -174,6 +211,15 @@ def render_tags(templates: list[str], values: dict) -> list[str]:
         if tag:
             tags.append(tag)
     return list(dict.fromkeys(tags))
+
+
+def tags_left_out(templates: list[str], values: dict) -> int:
+    """How many tags of list values render_tags left out (beyond MAX_LIST_TAGS each)."""
+    return sum(
+        max(0, len(_list_tags(entries)) - MAX_LIST_TAGS)
+        for entries in (_listed(template, values) for template in templates)
+        if entries is not None
+    )
 
 
 def _name(values: list[str], previous: str, taken: set[str]) -> str:
