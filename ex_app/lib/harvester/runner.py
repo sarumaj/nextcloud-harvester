@@ -103,7 +103,8 @@ COMMON_OPTIONS = {
 
 class Library(abc.ABC):
     """Where the files go: the user's files in Nextcloud (nextcloud.py), Harvester's private
-    library (library.py), a vault (vaultlib.py); by the job's Save to (places.py)."""
+    library (library.py), a vault (vaultlib.py), an Immich server (immich.py); by the job's Save
+    to (places.py)."""
 
     @abc.abstractmethod
     def find(self, path: str) -> int | None:
@@ -128,6 +129,15 @@ class Library(abc.ABC):
         paths now; NotChecked when that cannot be found out (by default: a library that cannot
         tell)."""
         raise NotChecked(f"{type(self).__name__} cannot look for {len(file_ids)} files by their IDs")
+
+    def item(self, values: dict) -> None:
+        """The values of the item whose files come next (put, tag): a library that files by them
+        keeps them (a photo server: the date, the album); by default none does."""
+
+    def found(self, file_id: int) -> bool:  # pylint: disable=unused-argument
+        """Whether put found the file there already rather than storing it (a server that keeps
+        each content once): the run counts it as already there; by default never."""
+        return False
 
 
 class FileGone(Exception):
@@ -242,7 +252,8 @@ def place(  # pylint: disable=too-many-arguments,too-many-positional-arguments,t
 ) -> str:
     """Puts the item's file into the job's folder (after the pause) and tags it; returns what it
     did (DOWNLOADED, ADOPTED: it was there already, downloaded by hand or by an earlier job, kept,
-    tagged and not downloaded again; DUPLICATE: its content is another of the job's files', with
+    tagged and not downloaded again, or the library found its content there (Library.found);
+    DUPLICATE: its content is another of the job's files', with
     the job's record of contents, source.contents). record keeps which file it is and its tags,
     for a later change of the job's tags; owners are the files the job saved, by ID, with their
     items' keys (free_path). An item whose name comes with its file (pending) is downloaded
@@ -256,6 +267,7 @@ def place(  # pylint: disable=too-many-arguments,too-many-positional-arguments,t
     owners = owners or {}
     if recheck and source.contents is not None:
         return _recheck(job, source, library, item, pause, report, record, owners, fetched)
+    library.item(dict(item.values))
     path, file_id = (
         (posixpath.join(job.target, item.path), None) if item.pending else free_path(job, library, item, owners)
     )
@@ -273,6 +285,7 @@ def place(  # pylint: disable=too-many-arguments,too-many-positional-arguments,t
             fetched()
         if item.pending:
             item = named or item
+            library.item(dict(item.values))
             path, file_id = free_path(job, library, item, owners)
         if file_id is not None:
             report("info", said("Already in the folder, tagged: {path}", path=path))
@@ -286,12 +299,15 @@ def place(  # pylint: disable=too-many-arguments,too-many-positional-arguments,t
             source.contents.keep(item.key, value, twin["path"], check)
             return DUPLICATE
         file_id, path, kept = _put(job, source, library, item, path, content, report, fresh=True)
-        if kept:
+        there = kept and library.found(file_id)
+        if there:
+            report("info", said("Already there, tagged: {path}", path=path))
+        elif kept:
             report("info", said("Saved {path} ({size})", path=path, size=size_text(size)))
         if source.contents is not None:
             source.contents.keep(item.key, value, path, check)
     _tagged(job, library, item, file_id, record)
-    return DOWNLOADED
+    return ADOPTED if there else DOWNLOADED
 
 
 def _recheck(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -313,6 +329,7 @@ def _recheck(  # pylint: disable=too-many-arguments,too-many-positional-argument
     deleted.py; one moved is no new version's place)."""
     contents = source.contents
     known = contents.known(item.key)
+    library.item(dict(item.values))
     pause()
     with tempfile.TemporaryFile() as content:
         check = download.Check(item.url, known["etag"], known["modified"]) if known else download.Check(item.url)

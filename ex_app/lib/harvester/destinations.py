@@ -10,15 +10,20 @@
   person unlocks it there.
 - **A Cryptomator vault** (vault, vaultlib.py): each file encrypted on the server into the vault,
   with its keys kept for the job (never its password).
+- **Immich** (immich, immich.py): the person's Immich account (theirs, not the job's: its server
+  and API key), photos and videos only, into an album the job may name.
 
-Tag as: Nextcloud's tags (global: everyone sees their names), Harvester's labels (in the app's
-database: the job's file list and the library show them) or none. A file in the library, a vault
-or an inbox carries no Nextcloud tag (labels or none).
+Tag as: Nextcloud's tags (global: everyone sees their names), Immich's tags (the person's own, in
+Immich), Harvester's labels (in the app's database: the job's file list and the library show
+them) or none. A file in the library, a vault or an inbox carries no Nextcloud tag (labels or
+none); one in Immich no Nextcloud tag either (Immich's tags, labels or none).
 
 What a destination cannot do is switched off for it (effective), and the form says why (RULES):
 an inbox's files leave it (the vault app moves them), so they are neither looked for again
 (Download deleted files again) nor asked for changes; a vault replaces nothing, so a changed file
-has nowhere to go (Check known files for changes).
+has nowhere to go (Check known files for changes). Immich replaces nothing either, and keeps no
+archives: an unpacked ZIP file's photos and videos go there, the archive itself does not (Keep
+the ZIP files).
 """
 
 import dataclasses
@@ -29,27 +34,33 @@ from .sources.base import Option
 from .store import Job
 
 SAVE_TO, TAG_AS, VAULT, VAULT_TARGET, VERIFY = "save_to", "tag_as", "vault", "vault_target", "vault_verify"
-FILES, LIBRARY, INBOX, DIRECT = "files", "library", "inbox", "vault"
-NEXTCLOUD, LABELS, NONE = "nextcloud", "labels", "none"
+ALBUM = "immich_album"
+FILES, LIBRARY, INBOX, DIRECT, IMMICH = "files", "library", "inbox", "vault", "immich"
+# Tag as: Nextcloud's tags, Immich's (its value the place's name), Harvester's labels or none.
+NEXTCLOUD, IMMICH_TAGS, LABELS, NONE = "nextcloud", "immich", "labels", "none"
+# The tags of a place's own (Tag as NEXTCLOUD or IMMICH_TAGS where they are not: these).
+OWN_TAGS = {FILES: NEXTCLOUD, IMMICH: IMMICH_TAGS}
 # The options of the job's own runs these destinations switch off (the others' names, which
 # runner.COMMON_OPTIONS and sources.base define: no import, they import this module).
-AGAIN, RECHECK = "again_deleted", "recheck"
+AGAIN, RECHECK, UNPACK_KEEP = "again_deleted", "recheck", "unpack_keep"
 
 OPTIONS = {
     SAVE_TO: Option(
         "Save to",
         FILES,
-        "Where the job's files go: your files, Harvester's private library, a Cryptomator vault's inbox, or a "
-        "Cryptomator vault directly. A change applies to the files of the next runs; those saved stay where they are.",
-        choices=(FILES, LIBRARY, INBOX, DIRECT),
+        "Where the job's files go: your files, Harvester's private library, a Cryptomator vault's inbox, a "
+        "Cryptomator vault directly, or your Immich account (photos and videos). A change applies to the files of "
+        "the next runs; those saved stay where they are.",
+        choices=(FILES, LIBRARY, INBOX, DIRECT, IMMICH),
         group="save",
     ),
     TAG_AS: Option(
         "Tag as",
         NEXTCLOUD,
-        "Nextcloud tags (everyone on this Nextcloud sees the tags' names in their lists of tags), Harvester's "
-        "labels (only in Harvester: the job's files and the library) or none.",
-        choices=(NEXTCLOUD, LABELS, NONE),
+        "Nextcloud tags (everyone on this Nextcloud sees the tags' names in their lists of tags), Immich's tags "
+        "(for Immich: yours, in Immich; a/b is the tag b inside a), Harvester's labels (only in Harvester: the "
+        "job's files and the library) or none.",
+        choices=(NEXTCLOUD, IMMICH_TAGS, LABELS, NONE),
         group="save",
     ),
     VAULT: Option(
@@ -66,6 +77,14 @@ OPTIONS = {
         "inbox's marker.",
         group="save",
     ),
+    ALBUM: Option(
+        "Album",
+        "",
+        "For Immich: the album the job's photos and videos go into, made if there is none of its name; the "
+        "file's values may make it, e.g. Magazines {year}. Empty: none.",
+        placeholder="Harvester {year}",
+        group="save",
+    ),
     VERIFY: Option(
         "Read each file back",
         1,
@@ -75,7 +94,7 @@ OPTIONS = {
     ),
 }
 # The options that say where the files go: as the folder, never in a recipe file.
-WHERE = (SAVE_TO, VAULT, VAULT_TARGET, VERIFY)
+WHERE = (SAVE_TO, VAULT, VAULT_TARGET, VERIFY, ALBUM)
 
 # What each destination switches off, and why (the form shows the reason beside the option).
 RULES: dict[str, dict[str, str]] = {
@@ -91,6 +110,12 @@ RULES: dict[str, dict[str, str]] = {
     DIRECT: {
         RECHECK: said("Off for a vault: nothing in it is replaced, so a changed file would have nowhere to go."),
     },
+    IMMICH: {
+        RECHECK: said("Off for Immich: it replaces no photo or video, so a changed file would have nowhere to go."),
+        UNPACK_KEEP: said(
+            "Off for Immich: it keeps photos and videos, not archives. The ZIP file's photos and videos go there."
+        ),
+    },
 }
 
 
@@ -101,13 +126,14 @@ def save_to(options: dict) -> str:
 
 
 def tag_as(options: dict) -> str:
-    """How the job tags its files: as chosen, NEXTCLOUD for a job in the person's files that
-    did not choose; LABELS for one elsewhere (no Nextcloud tags there)."""
+    """How the job tags its files: as chosen; the place's own tags (OWN_TAGS: NEXTCLOUD in the
+    person's files, IMMICH_TAGS in Immich) for a job that did not choose, or chose another
+    place's; LABELS where there are none of its own."""
     value = str(options.get(TAG_AS) or "")
     where = save_to(options)
-    if value not in (NEXTCLOUD, LABELS, NONE):
-        value = NEXTCLOUD if where == FILES else LABELS
-    return LABELS if value == NEXTCLOUD and where != FILES else value
+    if value in (LABELS, NONE):
+        return value
+    return OWN_TAGS.get(where, LABELS)
 
 
 def place_of(options: dict) -> tuple[str, str]:
@@ -143,16 +169,24 @@ def bad_path(path: str) -> bool:
 def problem(options: dict, target: str) -> str:
     """What is wrong with the job's Save to and Tag as ("" if nothing), in words the form shows
     (translated: said()): a vault's folder for an inbox or a vault, an inbox that is not the vault
-    (nor in it, nor holds it), no Nextcloud tags outside the person's files."""
+    (nor in it, nor holds it), no Nextcloud tags outside the person's files, nor Immich's outside
+    Immich."""
     where = save_to(options)
     vault = folder(str(options.get(VAULT) or ""))
     inbox = folder(target)
     vaulted = where in (INBOX, DIRECT)
     checks = [
-        (str(options.get(SAVE_TO) or FILES) not in RULES, said("Save to must be one of files, library, inbox, vault.")),
+        (
+            str(options.get(SAVE_TO) or FILES) not in RULES,
+            said("Save to must be one of files, library, inbox, vault, immich."),
+        ),
         (
             options.get(TAG_AS) == NEXTCLOUD and where != FILES,
             said("Tag as: Nextcloud tags only for files saved in your files (labels or none elsewhere)."),
+        ),
+        (
+            options.get(TAG_AS) == IMMICH_TAGS and where != IMMICH,
+            said("Tag as: Immich's tags only for files saved in Immich."),
         ),
         (bad_path(target), said("Folder: no . or .. as a folder's name, no control characters or backslashes.")),
         (vaulted and vault == "/", said("Vault: choose the vault's folder in your files.")),

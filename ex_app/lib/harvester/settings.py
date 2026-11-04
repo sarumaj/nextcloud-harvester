@@ -2,9 +2,10 @@
 """The admin's settings (Administration settings > Additional settings > Harvester): how many jobs
 run at once, how many browsers may be open, the proxy the jobs may choose, and whether the
 browsers go through their network guard; in a form of its own, the DNS servers the container's
-lookups go to (dns.py) and its status. Their defaults come from the environment
-(HARVESTER_RUNNERS, HARVESTER_BROWSERS, HARVESTER_PROXY, HARVESTER_PROXY_NAME, HARVESTER_GUARD,
-HARVESTER_DNS, HARVESTER_DNS_FALLBACK, which the deployment may set); a value the admin chooses
+lookups go to (dns.py) and its status; the Immich server people save to (immich.py). Their
+defaults come from the environment (HARVESTER_RUNNERS, HARVESTER_BROWSERS, HARVESTER_PROXY,
+HARVESTER_PROXY_NAME, HARVESTER_GUARD, HARVESTER_DNS, HARVESTER_DNS_FALLBACK,
+HARVESTER_IMMICH_URL, HARVESTER_IMMICH_HTTP, which the deployment may set); a value the admin chooses
 wins (an emptied proxy: none), and the executor reads them each minute, so a change needs no
 restart.
 """
@@ -16,7 +17,7 @@ from urllib.parse import urlparse
 
 from nc_py_api.ex_app.ui.settings import SettingsField, SettingsFieldType, SettingsForm
 
-from . import dns
+from . import dns, immich
 
 LOG = logging.getLogger("harvester.settings")
 RUNNERS = "runners"
@@ -28,7 +29,9 @@ DNS = "dns"
 DNS_FALLBACK = "dns_fallback"
 LIBRARY = "library_limit"
 LIBRARY_TOTAL = "library_total"
-KEYS = (RUNNERS, BROWSERS, PROXY, PROXY_NAME, GUARD, DNS, DNS_FALLBACK, LIBRARY, LIBRARY_TOTAL)
+IMMICH_URL = "immich_url"
+IMMICH_HTTP = "immich_http"
+KEYS = (RUNNERS, BROWSERS, PROXY, PROXY_NAME, GUARD, DNS, DNS_FALLBACK, LIBRARY, LIBRARY_TOTAL, IMMICH_URL, IMMICH_HTTP)
 PROXY_SCHEMES = ("http", "https", "socks5", "socks5h")
 _REFUSED: set[str] = set()
 DEFAULT_PROXY = os.environ.get("HARVESTER_PROXY", "").strip()
@@ -145,6 +148,30 @@ def form(  # pylint: disable=too-many-arguments,too-many-positional-arguments
                     "persistent volume). 0: no limit."
                 ),
             ),
+            SettingsField(
+                id=IMMICH_URL,
+                title="Immich server",
+                type=SettingsFieldType.TEXT,
+                default=immich.DEFAULT_URL,
+                placeholder="https://photos.example.org",
+                description=(
+                    "The Immich server people's jobs save to (Save to: Immich), unless one types another: each "
+                    "person enters only their API key. Harvester reaches this one directly, also on a private "
+                    "address; another server a person types only on a public address. Empty: each types "
+                    "their server's address."
+                ),
+            ),
+            SettingsField(
+                id=IMMICH_HTTP,
+                title="Immich over plain http",
+                type=SettingsFieldType.SELECT,
+                default=ON if immich.DEFAULT_HTTP else OFF,
+                options=[OFF, ON],
+                description=(
+                    "Off: only https:// addresses for the servers people type (the API key goes with each "
+                    "request). The server above may be http:// all the same."
+                ),
+            ),
         ],
     )
 
@@ -220,6 +247,11 @@ def library_limits(values: dict, limits: dict) -> None:
     """Puts the admin's limits of the private library (library.LIMITS) into limits, in bytes."""
     limits["person"] = gigabytes(values.get(LIBRARY), DEFAULT_LIBRARY)
     limits["total"] = gigabytes(values.get(LIBRARY_TOTAL), DEFAULT_LIBRARY_TOTAL)
+
+
+def immich_settings(values: dict) -> None:
+    """Gives immich.py the admin's server and whether plain http is allowed."""
+    immich.configure(values.get(IMMICH_URL), switch(values.get(IMMICH_HTTP), immich.DEFAULT_HTTP))
 
 
 def switch(value: str | None, default: bool) -> bool:

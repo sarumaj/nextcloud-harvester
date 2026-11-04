@@ -20,7 +20,7 @@ from nc_py_api import AsyncNextcloudApp
 from nc_py_api.ex_app import AppAPIAuthMiddleware, persistent_storage, run_app, set_handlers
 from pydantic import BaseModel, Field
 
-from harvester import browser, destinations, dns, l10n, places, needs, ondemand, schedule, settings, watch
+from harvester import browser, destinations, dns, immich, l10n, places, needs, ondemand, schedule, settings, watch
 from harvester.rclone_wizard import AUTHORIZE_ORIGIN, Authorization, WizardError
 from harvester.browser.recorder import Recorder
 from harvester.library import Shelf
@@ -39,6 +39,7 @@ from harvester.presets import PRESETS, make_job
 from harvester.recipe import leaked_passwords
 from harvester.runner import COMMON_OPTIONS
 from harvester.librarymove import Moves
+from harvester.routes import immich as immich_routes
 from harvester.routes import library, moves, rclone, recipes, trying, vault
 from harvester.routes.common import NC, STATE, JobIn, checked, own_job, store, switched_on
 from harvester.routes.rclone import WIZARDS
@@ -62,6 +63,7 @@ async def lifespan(app: FastAPI):
     STATE["keyring"] = Keyring(STATE["store"])
     STATE["shelf"] = Shelf(STATE["store"], os.path.join(persistent_storage(), "library"), STATE["keyring"])
     places.SHELF[:] = [STATE["shelf"]]
+    immich.prepare(STATE["store"])
     STATE["executor"] = Executor(STATE["store"])
     STATE["executor"].start()
     STATE["moves"] = Moves(STATE["shelf"], STATE["executor"].connect, STATE["executor"].call)
@@ -72,7 +74,7 @@ async def lifespan(app: FastAPI):
 
 APP = FastAPI(lifespan=lifespan)
 APP.add_middleware(AppAPIAuthMiddleware)
-for _group in (trying, recipes, rclone, library, moves, vault):
+for _group in (trying, recipes, rclone, library, moves, vault, immich_routes):
     APP.include_router(_group.ROUTER)
 
 

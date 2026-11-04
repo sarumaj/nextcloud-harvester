@@ -3,15 +3,17 @@
 (runner.Library: find, put, tag, untag, existing) is made for a job, whether its files may carry
 Nextcloud's tags or it keeps labels itself, and the person's secrets it keeps for a job (deleted
 with the job, or when its place changes). What its runs switch off is destinations.RULES, its
-form's fields destinations.OPTIONS. The runner knows only the Library: a new destination (a
-photo server's, say) is one more Destination here, with its Library, options and rules.
+form's fields destinations.OPTIONS. The runner knows only the Library: a new destination is one
+more Destination here, with its Library, options and rules.
 
 - files: the person's files in Nextcloud (nextcloud.py);
 - library: Harvester's private library (library.py), which keeps the labels itself;
 - inbox: a vault's inbox in the person's files (inbox.py);
-- vault: a Cryptomator vault, written over WebDAV (vaultlib.py), its keys a secret.
+- vault: a Cryptomator vault, written over WebDAV (vaultlib.py), its keys a secret;
+- immich: the person's Immich account (immich.py), with its own tags; the account is the
+  person's (their preferences), no job's secret.
 
-Where the files carry no Nextcloud tags, the tags a run gives are Harvester's labels, which the
+Where the files carry no tags of their place's own, the tags a run gives are Harvester's labels, which the
 job's records keep (store.placed): Labelled."""
 
 import dataclasses
@@ -20,7 +22,7 @@ from typing import Any, BinaryIO
 
 from nc_py_api import AsyncNextcloudApp
 
-from . import destinations, vaultlib
+from . import destinations, immich, vaultlib
 from .inbox import InboxLibrary
 from .library import PrivateLibrary, Shelf
 from .nextcloud import NextcloudLibrary
@@ -55,6 +57,12 @@ class Labelled(Library):
     def existing(self, file_ids: list[int]) -> dict[int, str]:
         return self.inner.existing(file_ids)
 
+    def item(self, values: dict) -> None:
+        self.inner.item(values)
+
+    def found(self, file_id: int) -> bool:
+        return self.inner.found(file_id)
+
 
 def nextcloud_files(_job: Job, nc: AsyncNextcloudApp, call: Call) -> Library:
     """The person's files."""
@@ -76,31 +84,33 @@ def no_secrets(_job: Job) -> list[str]:
 @dataclasses.dataclass(frozen=True)
 class Destination:
     """Where a job's files go: make gives its run's library (nc acting as the person, call
-    running a request to its end); nextcloud_tags, whether its files may carry Nextcloud's tags;
+    running a request to its end); own_tags, whether its files may carry tags of its own
+    (Nextcloud's, Immich's);
     labels, whether its library keeps Harvester's labels itself (its tag and untag); secrets, the
     person's preferences it keeps for a job."""
 
     name: str
     make: Callable[[Job, AsyncNextcloudApp, Call], Library]
-    nextcloud_tags: bool = False
+    own_tags: bool = False
     labels: bool = False
     secrets: Callable[[Job], list[str]] = no_secrets
 
     def library(self, job: Job, nc: AsyncNextcloudApp, call: Call) -> Library:
         """The run's library: its tags Harvester's labels unless it keeps them itself, or may
-        carry Nextcloud's and the job tags so."""
+        carry its own and the job tags so."""
         made = self.make(job, nc, call)
-        tagging = destinations.tag_as(job.options) == destinations.NEXTCLOUD and self.nextcloud_tags
+        tagging = destinations.tag_as(job.options) in destinations.OWN_TAGS.values() and self.own_tags
         return made if tagging or self.labels else Labelled(made)
 
 
 DESTINATIONS = {
-    destinations.FILES: Destination(destinations.FILES, nextcloud_files, nextcloud_tags=True),
+    destinations.FILES: Destination(destinations.FILES, nextcloud_files, own_tags=True),
     destinations.LIBRARY: Destination(destinations.LIBRARY, private_library, labels=True),
     destinations.INBOX: Destination(destinations.INBOX, InboxLibrary.of),
     destinations.DIRECT: Destination(
         destinations.DIRECT, vaultlib.opened, secrets=lambda job: [vaultlib.key_name(job)]
     ),
+    destinations.IMMICH: Destination(destinations.IMMICH, immich.opened, own_tags=True),
 }
 
 

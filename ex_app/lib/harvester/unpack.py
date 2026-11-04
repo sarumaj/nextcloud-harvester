@@ -29,9 +29,9 @@ import zlib
 from collections.abc import Callable
 from typing import BinaryIO
 
-from .l10n import said, said_n
+from .l10n import error_text, said, said_n
 from .patterns import render_tags
-from .sources.base import check_stop
+from .sources.base import Refused, check_stop
 
 # The most files an archive may hold to be unpacked.
 MAX_FILES = 1000
@@ -187,19 +187,28 @@ def unpack(  # pylint: disable=too-many-arguments,too-many-positional-arguments,
     tags: list[str],
     report: Callable[[str, str], None],
 ) -> int:
-    """The archive's files put into its folder (folder_of(path)) and given the tags; how many."""
+    """The archive's files put into its folder (folder_of(path)) and given the tags; how many. A
+    file the library refuses (Refused: Immich's, not a photo or video) is left out, the log
+    saying so."""
     content.seek(0, 2)
     size = content.tell()
     content.seek(0)
     folder = folder_of(path)
+    refused = 0
     try:
         with zipfile.ZipFile(content) as archive:
             chosen = members(archive, most, size)
             with tempfile.TemporaryDirectory(prefix="harvester-unpack-") as scratch:
                 for inner, local in extract(archive, chosen, scratch, most):
                     check_stop()
-                    with open(local, "rb") as file:
-                        file_id = library.put(posixpath.join(folder, inner), file)
+                    try:
+                        with open(local, "rb") as file:
+                            file_id = library.put(posixpath.join(folder, inner), file)
+                    except Refused as error:
+                        # A file the destination keeps none of (Immich: no photo or video).
+                        report("info", said("Left out {path}: {error}", path=inner, error=error_text(error)))
+                        refused += 1
+                        continue
                     if tags:
                         library.tag(file_id, tags)
     except zipfile.BadZipFile as error:
@@ -211,12 +220,12 @@ def unpack(  # pylint: disable=too-many-arguments,too-many-positional-arguments,
         said_n(
             "Unpacked %n file of {path} into {folder}",
             "Unpacked %n files of {path} into {folder}",
-            len(chosen),
+            len(chosen) - refused,
             path=path,
             folder=folder,
         ),
     )
-    return len(chosen)
+    return len(chosen) - refused
 
 
 def saved(  # pylint: disable=too-many-arguments,too-many-positional-arguments

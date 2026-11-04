@@ -334,6 +334,7 @@ class Executor(Tries):
         browser.PROXY, browser.PROXY_NAME = proxy, name
         browser.GUARD = guard
         settings.library_limits(values, LIBRARY_LIMITS)
+        settings.immich_settings(values)
         servers = values.get(settings.DNS)
         fallback = settings.switch(values.get(settings.DNS_FALLBACK), settings.DEFAULT_DNS_FALLBACK)
         before = dns.PROXY.status
