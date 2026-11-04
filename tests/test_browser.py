@@ -350,7 +350,7 @@ def test_challenges_are_recognised():
         '<a href="/a.pdf">A file</a>': None,
     }
     with sync_playwright() as playwright:
-        chromium = playwright.chromium.launch()
+        chromium = playwright.chromium.launch(channel="chromium")
         page = chromium.new_page()
         for html, kind in pages.items():
             page.set_content(html)
