@@ -1,22 +1,36 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""The library a job's run saves into (runner.Library), by its Save to and Tag as
-(destinations.py): the person's files in Nextcloud, or Harvester's private library; with
-Harvester's labels in place of Nextcloud's tags (Labelled), where the files are not in the
-library (which keeps the labels itself)."""
+"""The destinations a job saves into (its Save to), each a Destination: how its run's library
+(runner.Library: find, put, tag, untag, existing) is made for a job, whether its files may carry
+Nextcloud's tags or it keeps labels itself, and the person's secrets it keeps for a job (deleted
+with the job, or when its place changes). What its runs switch off is destinations.RULES, its
+form's fields destinations.OPTIONS. The runner knows only the Library: a new destination (a
+photo server's, say) is one more Destination here, with its Library, options and rules.
 
+- files: the person's files in Nextcloud (nextcloud.py);
+- library: Harvester's private library (library.py), which keeps the labels itself;
+- inbox: a vault's inbox in the person's files (inbox.py);
+- vault: a Cryptomator vault, written over WebDAV (vaultlib.py), its keys a secret.
+
+Where the files carry no Nextcloud tags, the tags a run gives are Harvester's labels, which the
+job's records keep (store.placed): Labelled."""
+
+import dataclasses
 from collections.abc import Awaitable, Callable
 from typing import Any, BinaryIO
 
 from nc_py_api import AsyncNextcloudApp
 
-from . import destinations
+from . import destinations, vaultlib
+from .inbox import InboxLibrary
 from .library import PrivateLibrary, Shelf
 from .nextcloud import NextcloudLibrary
 from .runner import Library
-from .sources import SourceError
+from .sources import SOURCES, SourceError
 from .store import Job
 
 Call = Callable[[Awaitable[Any]], Any]
+# Harvester's private library on the app's storage, set at start (main.lifespan).
+SHELF: list[Shelf] = []
 
 
 class Labelled(Library):
@@ -42,16 +56,74 @@ class Labelled(Library):
         return self.inner.existing(file_ids)
 
 
-# Harvester's private library on the app's storage, set at start (main.lifespan).
-SHELF: list[Shelf] = []
+def nextcloud_files(_job: Job, nc: AsyncNextcloudApp, call: Call) -> Library:
+    """The person's files."""
+    return NextcloudLibrary(nc, call)
+
+
+def private_library(job: Job, _nc: AsyncNextcloudApp, _call: Call) -> Library:
+    """The person's private library."""
+    if not SHELF:
+        raise SourceError("Harvester's private library is not set up on this server")
+    return PrivateLibrary(SHELF[0], job.user, job.id)
+
+
+def no_secrets(_job: Job) -> list[str]:
+    """A destination that keeps no secret of the person's."""
+    return []
+
+
+@dataclasses.dataclass(frozen=True)
+class Destination:
+    """Where a job's files go: make gives its run's library (nc acting as the person, call
+    running a request to its end); nextcloud_tags, whether its files may carry Nextcloud's tags;
+    labels, whether its library keeps Harvester's labels itself (its tag and untag); secrets, the
+    person's preferences it keeps for a job."""
+
+    name: str
+    make: Callable[[Job, AsyncNextcloudApp, Call], Library]
+    nextcloud_tags: bool = False
+    labels: bool = False
+    secrets: Callable[[Job], list[str]] = no_secrets
+
+    def library(self, job: Job, nc: AsyncNextcloudApp, call: Call) -> Library:
+        """The run's library: its tags Harvester's labels unless it keeps them itself, or may
+        carry Nextcloud's and the job tags so."""
+        made = self.make(job, nc, call)
+        tagging = destinations.tag_as(job.options) == destinations.NEXTCLOUD and self.nextcloud_tags
+        return made if tagging or self.labels else Labelled(made)
+
+
+DESTINATIONS = {
+    destinations.FILES: Destination(destinations.FILES, nextcloud_files, nextcloud_tags=True),
+    destinations.LIBRARY: Destination(destinations.LIBRARY, private_library, labels=True),
+    destinations.INBOX: Destination(destinations.INBOX, InboxLibrary.of),
+    destinations.DIRECT: Destination(
+        destinations.DIRECT, vaultlib.opened, secrets=lambda job: [vaultlib.key_name(job)]
+    ),
+}
 
 
 def library_for(job: Job, nc: AsyncNextcloudApp, call: Call) -> Library:
     """The library the job's run saves into."""
-    where = destinations.save_to(job.options)
-    if where == destinations.LIBRARY:
-        if not SHELF:
-            raise SourceError("Harvester's private library is not set up on this server")
-        return PrivateLibrary(SHELF[0], job.user, job.id)
-    library: Library = NextcloudLibrary(nc, call)
-    return Labelled(library) if destinations.tag_as(job.options) == destinations.LABELS else library
+    return DESTINATIONS[destinations.save_to(job.options)].library(job, nc, call)
+
+
+def credential_key(job: Job, name: str) -> str:
+    """The user preference that holds a job's credential (stored by Nextcloud, encrypted)."""
+    return f"credential.job{job.id}.{name}"
+
+
+def preference_keys(job: Job) -> list[str]:
+    """The person's preferences of a job: its account, kept session and its destination's secret
+    (places.DESTINATIONS: a vault's keys)."""
+    return (
+        [credential_key(job, name) for name in SOURCES[job.source].credentials]
+        + [session_key(job)]
+        + [key for destination in DESTINATIONS.values() for key in destination.secrets(job)]
+    )
+
+
+def session_key(job: Job) -> str:
+    """The user preference that holds a job's kept browser session (cookies; encrypted)."""
+    return f"session.job{job.id}"

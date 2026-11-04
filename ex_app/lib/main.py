@@ -30,13 +30,14 @@ from harvester.executor import (
     browsers_in_use,
     credential_key,
     load_session,
+    preference_keys,
     save_session,
     session_key,
 )
 from harvester.presets import PRESETS, make_job
 from harvester.recipe import leaked_passwords
 from harvester.runner import COMMON_OPTIONS
-from harvester.routes import library, rclone, recipes, trying
+from harvester.routes import library, rclone, recipes, trying, vault
 from harvester.routes.common import NC, STATE, JobIn, checked, own_job, store, switched_on
 from harvester.routes.rclone import WIZARDS
 from harvester.sources.download import DOWNLOAD_OPTIONS
@@ -68,7 +69,7 @@ async def lifespan(app: FastAPI):
 
 APP = FastAPI(lifespan=lifespan)
 APP.add_middleware(AppAPIAuthMiddleware)
-for _group in (trying, recipes, rclone, library):
+for _group in (trying, recipes, rclone, library, vault):
     APP.include_router(_group.ROUTER)
 
 
@@ -277,6 +278,12 @@ async def update_job(job_id: int, body: JobIn, nc: NC) -> dict:
     forget_changed(job, saved)
     if sign_in_changed(job, saved):
         await nc.preferences_ex.delete(session_key(saved))
+    # Another place (another vault, say): the secrets kept for the old one go (a vault's keys:
+    # the new one's password is asked for).
+    if destinations.place_of(saved.options) != destinations.place_of(job.options):
+        secrets = places.DESTINATIONS[destinations.save_to(job.options)].secrets(job)
+        if secrets:
+            await nc.preferences_ex.delete(secrets)
     weekly_test_from_now(job, saved)
     # On a schedule now: the addresses sent to it are not fetched (the one running ends as it is).
     if not ondemand.on_demand(saved):
@@ -344,9 +351,7 @@ def weekly_test_from_now(job: Job | None, saved: Job) -> None:
 async def delete_job(job_id: int, nc: NC) -> dict:
     """Deletes a job and its own account; the files it downloaded stay."""
     job = await own_job(job_id, nc)
-    await nc.preferences_ex.delete(
-        [credential_key(job, name) for name in SOURCES[job.source].credentials] + [session_key(job)]
-    )
+    await nc.preferences_ex.delete(preference_keys(job))
     store().delete(job.id or 0)
     # Its run, if one goes on, ends at once: it would only write for a job that is gone.
     STATE["executor"].stop(job.id or 0)

@@ -163,6 +163,18 @@ def disposition(name: str, attached: bool) -> str:
     return f"{'attachment' if attached else 'inline'}; filename=\"{plain}\"; filename*=UTF-8''{quote(name, safe='')}"
 
 
+def on_disk(user: str, file_id: int) -> tuple[dict, str, int]:
+    """One of the person's files: its entry, where it is on the disk and its size; else 404."""
+    entry = shelf().entry(user, file_id)
+    if entry is None or entry["dir"]:
+        raise HTTPException(404, "No such file.")
+    try:
+        path = str(shelf().disk(user, entry["path"]))
+        return entry, path, os.stat(path).st_size
+    except (BadPath, OSError) as error:
+        raise HTTPException(404, "No such file.") from error
+
+
 def served(entry: dict, download: bool) -> tuple[str, dict[str, str]]:
     """The type a file is served as (its own where the browser shows it safely, else a download)
     and the headers that go with it."""
@@ -194,14 +206,7 @@ async def library_file(  # pylint: disable=too-many-arguments
     """One of the person's files: shown (a type the browser shows safely) or downloaded, the
     part a Range asks for (206) if it asks for one."""
     user = await opened(nc, x_harvester_library or unlock)
-    entry = shelf().entry(user, file_id)
-    if entry is None or entry["dir"]:
-        raise HTTPException(404, "No such file.")
-    try:
-        path = str(shelf().disk(user, entry["path"]))
-        size = os.stat(path).st_size
-    except (BadPath, OSError) as error:
-        raise HTTPException(404, "No such file.") from error
+    entry, path, size = on_disk(user, file_id)
     media, headers = served(entry, download)
     try:
         part = byte_range(request.headers.get("range", ""), size)

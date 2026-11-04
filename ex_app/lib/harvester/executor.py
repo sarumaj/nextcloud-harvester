@@ -21,6 +21,7 @@ from croniter import croniter
 from nc_py_api import AsyncNextcloudApp
 
 from . import browser, destinations, dns, needs, ondemand, places, runner, settings, versions
+from .places import credential_key, preference_keys, session_key
 from .library import LIMITS as LIBRARY_LIMITS
 from .deleted import Deleted
 from .l10n import Said, error_text, said, said_n
@@ -124,16 +125,6 @@ def is_due(job: Job, now: float) -> bool:
     # in winter.
     start = datetime.datetime.fromtimestamp(job.last_run or job.created, zone(job.timezone))
     return croniter(job.schedule, start).get_next(float) <= now
-
-
-def credential_key(job: Job, name: str) -> str:
-    """The user preference that holds a job's credential (stored by Nextcloud, encrypted)."""
-    return f"credential.job{job.id}.{name}"
-
-
-def session_key(job: Job) -> str:
-    """The user preference that holds a job's kept browser session (cookies; encrypted)."""
-    return f"session.job{job.id}"
 
 
 async def load_session(nc: AsyncNextcloudApp, job: Job) -> dict | None:
@@ -594,8 +585,8 @@ class Executor(Tries):
                 kept = self.call(load_session(nc, job))
                 if kept:
                     source.restore(kept)
-                library = places.library_for(job, nc, self.call)
                 try:
+                    library = places.library_for(job, nc, self.call)
                     if previous is not None:
                         message = self._retag_turn(job, source, library, control, previous, wanted, nc)
                     if wanted:
@@ -802,11 +793,7 @@ class Executor(Tries):
         session (as Delete on the page does); its files stay. Its log goes with it: the person
         is told what it did in a notification instead."""
         job_id = job.id or 0
-        self.call(
-            nc.preferences_ex.delete(
-                [credential_key(job, name) for name in SOURCES[job.source].credentials] + [session_key(job)]
-            )
-        )
+        self.call(nc.preferences_ex.delete(preference_keys(job)))
         self.store.delete(job_id)
         LOG.info("one-time job %s (%s) deleted after its run", job_id, job.user)
         self.notify(

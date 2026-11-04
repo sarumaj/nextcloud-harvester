@@ -47,6 +47,20 @@ registered by the homelab's `nextcloud` role (`nextcloud_harvester`), as
 `local.homelab/harvester:<version>`. `appinfo/info.xml` describes the app; its routes are also
 in the role's registration.
 
+## Destinations
+
+A job's *Save to* (`destinations.py`: its options, rules and checks) picks a `Destination` of
+`places.DESTINATIONS`: how its run's `runner.Library` is made (`find`, `put`, `tag`, `untag`,
+`existing`, which the runner, `deleted.py` and `unpack.py` use alone), whether its files may
+carry Nextcloud's tags or it keeps Harvester's labels itself, and the person's secrets it keeps
+for a job (deleted with the job or when its place changes). `files` is `nextcloud.py`, `library`
+`library.py` (with its routes, `routes/library.py`), `inbox` `inbox.py`, `vault` `vaultlib.py`
+over `davstorage.py` (vault.py's storage on WebDAV; its keys set by `routes/vault.py`). Another
+destination is one more `Destination` with its `Library`, its form's options in
+`destinations.OPTIONS` (group `save`) and what it switches off in `destinations.RULES`. Its tests
+run against fakes of Nextcloud whose files are a folder (`tests/test_destinations.py`), and the
+vault's files are read by the sister app's code where it is there (`tests/vault_js.mjs`).
+
 ## Trying a job's listing
 
 `POST /api/try` (`tryout.py`, the form's *Try the address*) lists once what a job would fetch,

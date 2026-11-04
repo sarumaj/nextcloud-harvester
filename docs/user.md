@@ -135,13 +135,43 @@ Nextcloud's tags, as it did.
   admin. A forgotten password cannot be reset on the page: the admin can remove it
   ([administrator's guide](admin.md#backup)).
 
+- **A Cryptomator vault's inbox** (`inbox`, `inbox.py`): the folder (in your files) becomes an
+  inbox of a vault (**Vault**: the vault's folder, the one holding `vault.cryptomator`; **Folder
+  in the vault**, `/` by default), as the app *Vaults for Cryptomator* defines inboxes: when you
+  unlock that vault in the browser, it moves the inbox's files into the vault, encrypted in your
+  browser, and deletes the plain copies. Harvester writes the inbox's marker
+  (`.cryptomator-inbox.json`: the vault, the folder in it, *from* `Harvester job "<name>"`, the
+  job's ID) before its first file, only into a folder of your own (not one shared with you), and
+  never over a marker that is there: one of the same vault is left as it is, one of another vault
+  stops the run with why. Nothing else goes there but the job's files, each whole (one PUT, or a
+  chunked upload that appears only at its end). The folder must not be the vault's folder, in it
+  or above it. Until they are moved, the files are plain files on the server. A file moved into
+  the vault counts as fetched: *Download deleted files again* and *Check known files for
+  changes* are off for an inbox (the form says why), and its files carry no Nextcloud tag.
+- **A Cryptomator vault** (`vault`, `vaultlib.py`): the server encrypts each file into the vault
+  as it reads it (vault format 8, both cipher combinations; not a vault of Cryptomator Hub), over
+  WebDAV, as Cryptomator writes them. **Vault** is the vault's folder, the job's folder a folder
+  inside the vault (`/Magazines`). Type the vault's password once in the form (*Unlock the
+  vault*): the server unlocks the vault with it and keeps only the vault's two keys, as a
+  sensitive setting of yours in Nextcloud (encrypted, as a job's account), never the password;
+  deleting the job, or choosing another vault, forgets them. **The server then holds the
+  vault's keys: whoever takes over the server can read the whole vault.** Use a vault of the
+  job's own (or of jobs alike), not one with your other secrets. *Read each file back* (on by
+  default) reads each file from the vault and compares it before it counts as saved. Nothing in
+  a vault is replaced: a name taken there gives the file a numbered name (`Report (2).pdf`), and
+  *Check known files for changes* is off. A file deleted in the vault (in Cryptomator, or in
+  *Vaults for Cryptomator*) is fetched again with *Download deleted files again*, one moved or
+  renamed in the vault is not (its encrypted file keeps its Nextcloud ID). A vault whose keys are
+  not kept, or no longer open it (another vault in its place), stops the run as a refused
+  account does (*Sign-in refused*): enter the password again. Its files carry no Nextcloud tag.
+
 **Tag as** (`tag_as`): **Nextcloud tags** (the default in your files; Nextcloud's tags are
 global: everyone on the server sees the tags' names in their lists of tags, not your files),
 **Harvester's labels** (kept in Harvester's database with each file, never Nextcloud's tags:
 the job's **Files** and the library show them and filter by them) or **None**. A file in the
-library carries no Nextcloud tag: labels or none there. A job's tags (and their templates,
-`{year}`) are the labels' names as they are the tags'. Changing *Tag as* leaves the tags and
-labels its files have; a job's new tags reach its files as before.
+library, a vault or an inbox carries no Nextcloud tag: labels or none there. A job's tags (and
+their templates, `{year}`) are the labels' names as they are the tags'. Changing *Tag as* leaves
+the tags and labels its files have; a job's new tags reach its files as before.
 
 A job's **Files** (beside it in the list, `GET /api/jobs/<id>/files`) lists the newest 1000
 files it saved, with their tags or labels, and filters them by one. Another *Save to* applies

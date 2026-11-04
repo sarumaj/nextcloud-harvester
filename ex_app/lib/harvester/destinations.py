@@ -41,7 +41,7 @@ OPTIONS = {
         FILES,
         "Where the job's files go: your files, Harvester's private library, a Cryptomator vault's inbox, or a "
         "Cryptomator vault directly. A change applies to the files of the next runs; those saved stay where they are.",
-        choices=(FILES, LIBRARY),
+        choices=(FILES, LIBRARY, INBOX, DIRECT),
         group="save",
     ),
     TAG_AS: Option(

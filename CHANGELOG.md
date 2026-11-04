@@ -11,6 +11,12 @@
   (scrypt) with the library locked again after the person's minutes without use, and the
   admin's limits per person (10 GB by default) and in all. A file deleted in the library is
   fetched again as one deleted in Files (*Download deleted files again*).
+- **Save to** a Cryptomator vault: **its inbox** (the folder gets the marker of the app *Vaults
+  for Cryptomator*, which moves the files into the vault when the person unlocks it; files moved
+  out are never fetched again) or **the vault directly** (each file encrypted on the server and
+  written over WebDAV, `harvester/vault.py`; the password typed once, only the vault's keys kept,
+  as a sensitive preference; a prominent warning that the server then holds the vault's keys).
+  `PUT /api/jobs/<id>/vault` (the password), `GET` (whether the keys are kept), `DELETE`.
 - **Tag as** in a job's form: Nextcloud's tags (as before), **Harvester's labels** (in the app's
   database, shown and filtered in the job's **Files** and the library, never a Nextcloud tag)
   or none. `GET /api/jobs/<id>/files`: the files a job saved, with their tags or labels.
