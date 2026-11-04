@@ -158,6 +158,10 @@
   the recorder's test (its start and outcome), whose result was a new live region each time.
   Errors are alerts, and a refused Save marks the field it names invalid, described by the
   error, its group opened and the keyboard in it.
+- The page was blank until the app gave its sources and templates: it says *Loading…*. Save says
+  *Saving…* while the app answers, and a mail job's *Pages to the on-demand job* says when your
+  jobs could not be read (an empty list before). A required field's name (a job's Name and
+  Folder) is marked, and a field's help is no longer part of its label but its description.
 
 ## 0.13.1 - 2026-11-03
 

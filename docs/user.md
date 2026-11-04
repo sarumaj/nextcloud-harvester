@@ -23,7 +23,9 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   groups: **Browser and connection**, **Files and sizes**, **Repeated runs** and a mail job's
   **Linked files**. A group opens by itself when one of its options differs from its default,
   and says how many do (*(2 changed)*); an option's group is its `group` in `GET /api/sources`
-  (empty: an essential). Save and the form's other buttons stay at the window's foot. Below
+  (empty: an essential). Save and the form's other buttons stay at the window's foot; Save says
+  *Saving…* until the app answers. A required field's name has a red `*`, and a field's help is
+  its description for screen readers. The page says *Loading…* until the app answered. Below
   the jobs, a **progress log** of what the runs do (searching, each file downloaded, saved or
   found already there, errors, the outcome), live while one runs, of all jobs or of one; a new
   run clears its job's last message. The list comes without the jobs' options

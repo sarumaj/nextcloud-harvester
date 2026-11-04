@@ -84,7 +84,7 @@ def test_live_regions_and_errors_are_announced_once(page):
     error.wait_for()
     assert error.get_attribute("role") == "alert"
     field = page.locator('[aria-invalid="true"]')
-    assert field.count() == 1 and field.get_attribute("aria-describedby") == "harvester-form-error"
+    assert field.count() == 1 and field.get_attribute("aria-describedby").startswith("harvester-form-error ")
     assert field.evaluate("node => node === document.activeElement")
     assert field.evaluate("node => node.closest('label').textContent.startsWith('Files per run')")
 
@@ -122,3 +122,20 @@ def test_the_recorders_clear_picks_has_undo_and_cancel_asks_once_the_recipe_chan
     cancel.click()
     page.locator("dialog").get_by_role("button", name="Leave").click()
     page.locator("#harvester-job-form").wait_for()
+
+
+@needs_chromium
+def test_a_fields_help_describes_it_and_a_required_one_is_marked_and_save_says_saving(page):
+    page.get_by_role("button", name="Edit").click()
+    folder = page.get_by_label("Folder", exact=True)
+    help_ = page.locator(f"#{folder.get_attribute('aria-describedby')}")
+    assert help_.inner_text() == "In your files, e.g. /Magazines/iX."
+    assert help_.evaluate("node => !node.closest('label')"), "not part of the field's name"
+    marker = "node => getComputedStyle(node.closest('label').querySelector('span'), '::after').content"
+    assert "*" in folder.evaluate(marker)
+    assert "*" not in page.get_by_label("Tags", exact=True).evaluate(marker)
+    # Save says so while the server answers (here it never does).
+    page.route("**/api/jobs/1", lambda route: None if route.request.method == "PUT" else route.fallback())
+    save = page.get_by_role("button", name="Save", exact=True)
+    save.click()
+    page.get_by_role("button", name="Saving…").wait_for()

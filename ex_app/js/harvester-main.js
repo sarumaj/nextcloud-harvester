@@ -173,9 +173,16 @@
 	// A sign beside a text (✓ passed): shown, not read out, and no part of the translated text.
 	const glyph = (sign) => (sign ? el('span', { class: 'harvester-glyph', 'aria-hidden': 'true', text: `${sign} ` }) : '')
 
+	// A field with its name; its help below it, outside the label (which would make it part of
+	// the field's name) and its description. A required field's name is marked (CSS).
+	let fieldHelps = 0
 	function field(label, input, help) {
-		return el('label', { class: 'harvester-field' }, el('span', { text: label }), input,
-			help ? el('small', { text: help }) : '')
+		const box = el('label', { class: 'harvester-field' }, el('span', { text: label }), input)
+		if (!help) return box
+		fieldHelps += 1
+		const note = el('small', { class: 'harvester-field-help', id: `harvester-help-${fieldHelps}`, text: help })
+		input.setAttribute('aria-describedby', note.id)
+		return el('div', { class: 'harvester-field-box' }, box, note)
 	}
 
 	// A size given in a unit (bytes, KB, MB, GB) in the largest unit it fills: 1500000 bytes is
@@ -2781,10 +2788,14 @@
 						select.value = String(current || 0)
 						if (!select.value) select.value = '0'
 						listed = true
-					}).catch(() => {})
+					}).catch((e) => {
+						// The job keeps what it had; the list says why it has no other jobs.
+						unread.textContent = t('Your jobs could not be read: {error}', { error: e.message })
+					})
+					const unread = el('small', { class: 'harvester-error', role: 'alert' })
 					optionInputs[key] = { get value() { return Number(listed ? select.value : current) || 0 } }
 					optionFields[key] = select
-					into.append(field(optionTitle(key, option), select, said(option.description)))
+					into.append(field(optionTitle(key, option), select, said(option.description)), unread)
 					continue
 				}
 				if (option.choices && option.choices.length) {
@@ -2847,7 +2858,8 @@
 			if (!named) return
 			const node = fields[named]
 			node.setAttribute('aria-invalid', 'true')
-			node.setAttribute('aria-describedby', error.id)
+			node.dataset.describedby = node.getAttribute('aria-describedby') || ''
+			node.setAttribute('aria-describedby', `${error.id} ${node.dataset.describedby}`.trim())
 			const group = node.closest('details')
 			if (group) group.open = true
 			node.focus()
@@ -2861,10 +2873,12 @@
 				if (save.disabled) return
 				const body = formBody()
 				save.disabled = true
+				save.textContent = t('Saving…')
 				error.textContent = ''
 				for (const node of form.querySelectorAll('[aria-invalid]')) {
 					node.removeAttribute('aria-invalid')
-					node.removeAttribute('aria-describedby')
+					if (node.dataset.describedby) node.setAttribute('aria-describedby', node.dataset.describedby)
+					else node.removeAttribute('aria-describedby')
 				}
 				try {
 					current = await api(current ? 'PUT' : 'POST', current ? `/jobs/${current.id}` : '/jobs', body)
@@ -2872,6 +2886,7 @@
 				} catch (e) {
 					error.textContent = e.message
 					save.disabled = false
+					save.textContent = t('Save')
 					invalid(e)
 					return
 				}
@@ -2882,6 +2897,7 @@
 				} catch (e) {
 					error.textContent = t('The job is saved, its account is not: {error}', { error: e.message })
 					save.disabled = false
+					save.textContent = t('Save')
 					return
 				}
 				// Made from an address sent to Harvester: it fetches that address now.
@@ -3027,6 +3043,8 @@
 		#harvester .harvester-network.harvester-proxied { color: var(--color-success-text, var(--color-success)); }
 		#harvester .harvester-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
 		#harvester .harvester-header p { margin: 0; }
+		#harvester .harvester-loading { display: flex; align-items: center; gap: 8px; color: var(--color-text-maxcontrast); }
+		#harvester .harvester-loading .icon-loading-small { position: relative; display: inline-block; width: 16px; height: 16px; }
 		#harvester .harvester-empty { padding: 48px 0; text-align: center; }
 		#harvester table { width: 100%; border-collapse: collapse; }
 		#harvester th { text-align: start; font-weight: normal; color: var(--color-text-maxcontrast); padding: 8px; border-bottom: 1px solid var(--color-border); }
@@ -3065,7 +3083,11 @@
 		#harvester .harvester-field { display: flex; flex-direction: column; gap: 2px; margin: 12px 0; max-width: 700px; }
 		#harvester .harvester-field > span { font-weight: bold; }
 		#harvester .harvester-check { display: flex; align-items: center; gap: 8px; margin: 12px 0; }
-		#harvester .harvester-field small { color: var(--color-text-maxcontrast); }
+		#harvester .harvester-field small, #harvester .harvester-field-help { color: var(--color-text-maxcontrast); }
+		#harvester .harvester-field-box { margin: 12px 0; max-width: 700px; }
+		#harvester .harvester-field-box > .harvester-field { margin: 0; }
+		#harvester .harvester-field-help { display: block; margin-top: 2px; }
+		#harvester .harvester-field:has(> [required]) > span::after { content: " *" / ""; color: var(--color-error-text, var(--color-error)); }
 		#harvester .harvester-size { font-variant-numeric: tabular-nums; }
 		#harvester .harvester-with-icon { display: flex; align-items: center; gap: 8px; }
 		#harvester .harvester-icon { flex: none; color: var(--color-primary-element); }
@@ -3211,6 +3233,7 @@
 		const placeholder = document.querySelector('#content #content')
 		if (placeholder) placeholder.replaceWith(root)
 		else (document.querySelector('#content') || document.body).append(root)
+		root.replaceChildren(el('p', { class: 'harvester-loading', role: 'status' }, el('span', { class: 'icon-loading-small', 'aria-hidden': 'true' }), t('Loading…')))
 		try {
 			;[sources, presets] = await Promise.all([api('GET', '/sources'), api('GET', '/presets')])
 		} catch (e) {
