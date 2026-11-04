@@ -18,7 +18,8 @@ from urllib.parse import quote, urlparse
 import httpx
 
 from .. import patterns
-from ..browser import allowed_url
+from ..browser import allowed_url, unresolved
+from ..l10n import said_n
 from . import download
 from .base import AuthError, IMPERSONATE, Item, Option, Source, SourceError, pattern_search
 from .download import Response
@@ -178,31 +179,43 @@ class Releases(Source):
             return None
         assert self.client is not None
         self.forge = "forgejo"
-        answer = self.client.get(self.api(1), headers=self.headers())
+        answer = self.get(self.api(1))
         if answer.status_code != 404:
             return answer
         self.forge = "gitlab"
-        answer = self.client.get(self.api(1), headers=self.headers())
+        answer = self.get(self.api(1))
         if answer.status_code == 404:
             raise SourceError(f"neither a Forgejo, Gitea nor GitLab repository at {self.host}/{self.project}")
         return answer
+
+    def get(self, url: str) -> httpx.Response:
+        """The API's answer at url; SourceError naming the address when it cannot be reached."""
+        assert self.client is not None
+        try:
+            return self.client.get(url, headers=self.headers())
+        except httpx.TimeoutException as error:
+            raise SourceError(f"{url} did not answer in time") from error
+        except httpx.TransportError as error:
+            raise SourceError(f"{url} could not be reached{unresolved(url, error)}") from error
 
     def releases(self) -> Iterator[dict]:
         """The repository's releases, newest first, page after page."""
         assert self.client is not None
         first = self.resolve()
         for page in range(1, int(self.settings["max_pages"]) + 1):
-            response = (
-                first if page == 1 and first is not None else self.client.get(self.api(page), headers=self.headers())
-            )
+            response = first if page == 1 and first is not None else self.get(self.api(page))
             if response.status_code == 403 and response.headers.get("x-ratelimit-remaining") == "0":
                 raise SourceError("GitHub's limit for requests is reached: try later, or set a token")
             if response.status_code in (401, 403):
                 raise AuthError(f"{self.host} refused the token ({response.status_code})")
             if response.status_code == 404:
                 raise SourceError(f"no repository {self.project} on {self.host} (a private one needs a token)")
-            response.raise_for_status()
-            found = response.json()
+            if response.status_code >= 400:
+                raise SourceError(f"{self.host} answered {response.status_code} for the releases of {self.project}")
+            try:
+                found = response.json()
+            except ValueError:
+                found = None
             if not isinstance(found, list):
                 raise SourceError(f"{self.host} answered no list of releases")
             yield from found
@@ -211,13 +224,17 @@ class Releases(Source):
 
     def items(self, seen: Callable[[str], bool]) -> Iterator[Item]:
         newest = int(self.settings["max_releases"] or 0)
-        taken = 0
+        taken = skipped = 0
+        made: list[Item] = []
+        # The whole listing first (its pages are the API's, a few), so that the log says what it
+        # found before the files come.
         for release in self.releases():
             if release.get("draft") or (release.get("prerelease") and not int(self.settings["prereleases"])):
+                skipped += 1
                 continue
             # The newest releases only: no more pages are asked for once they are in.
             if newest and taken >= newest:
-                return
+                break
             taken += 1
             tag = str(release.get("tag_name") or "")
             values: dict = {
@@ -232,11 +249,21 @@ class Releases(Source):
             date = re.match(r"(\d{4})-(\d{2})-(\d{2})", published)
             if date:
                 values |= {"year": int(date[1]), "month": int(date[2]), "day": int(date[3])}
-            made = [item for item in (self.asset(asset, values) for asset in self.assets(release)) if item]
-            self.ahead([item.key for item in made])
-            for item in made:
-                if not seen(item.key):
-                    yield item
+            made += [item for item in (self.asset(asset, values) for asset in self.assets(release)) if item]
+        self.report(
+            "info",
+            said_n(
+                "%n release looked at ({skipped} drafts or prereleases left out), {files} files match",
+                "%n releases looked at ({skipped} drafts or prereleases left out), {files} files match",
+                taken,
+                skipped=skipped,
+                files=len(made),
+            ),
+        )
+        self.ahead([item.key for item in made])
+        for item in made:
+            if not seen(item.key):
+                yield item
 
     def assets(self, release: dict) -> list[dict]:
         """A release's files: GitHub's and Forgejo's assets, GitLab's asset links (the archives of

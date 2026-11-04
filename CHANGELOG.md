@@ -45,6 +45,10 @@
 
 ### Fixed
 
+- A release job whose forge answers with an error or cannot be reached fails with its host,
+  answer and what was asked (*github.com answered 502 for the releases of o/r*), or the address
+  it could not reach, not with httpx's text; the log says how many releases were looked at and
+  how many files match.
 - A gallery job whose gallery-dl lists part of the gallery and then fails (a page of many) says
   so in a warning with gallery-dl's error, and the run no longer counts as a complete pass; the
   log says how many files gallery-dl listed.

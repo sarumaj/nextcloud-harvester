@@ -1109,6 +1109,10 @@
             "%n weitere Nachrichten vom gewünschten Absender und mit dem gewünschten Betreff, nicht einzeln aufgeführt"
         ],
         "larger than the largest file, not read": "größer als die größte Datei, nicht gelesen",
+        "_%n release looked at ({skipped} drafts or prereleases left out), {files} files match_::_%n releases looked at ({skipped} drafts or prereleases left out), {files} files match_": [
+            "%n Release angesehen ({skipped} Entwürfe oder Vorabversionen ausgelassen), {files} Dateien passen",
+            "%n Releases angesehen ({skipped} Entwürfe oder Vorabversionen ausgelassen), {files} Dateien passen"
+        ],
         "step {number} ({label}, optional) skipped: {why}": "Schritt {number} ({label}, optional) übersprungen: {why}",
         "The kept session no longer reaches the listing: signing in anew": "Die gespeicherte Sitzung erreicht die Übersicht nicht mehr: neue Anmeldung",
         "step {number}": "Schritt {number}",

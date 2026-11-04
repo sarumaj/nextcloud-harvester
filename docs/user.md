@@ -198,7 +198,10 @@ recorder that makes them, and what a run does. Installing and the admin's settin
     file's name; values `tag`, `version`, `name`, `repo`, `year`. A token (the job's account)
     for private repositories and GitHub's request limit. **Newest releases** takes the files of
     that many releases only (`0`, the default: every release on the pages read, as before; the
-    `app-releases` template: 1), so a new job does not fetch a whole release history.
+    `app-releases` template: 1), so a new job does not fetch a whole release history. The log
+    says how many releases were looked at, drafts and prereleases left out and files matching; a
+    forge that fails names its host and answer (*github.com answered 502 for the releases of
+    o/r*), or the address it could not reach.
 
 ## Templates
 

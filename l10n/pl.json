@@ -1209,6 +1209,12 @@
             "%n kolejnej wiadomości od żądanego nadawcy i z żądanym tematem, niewymienionej osobno"
         ],
         "larger than the largest file, not read": "większa niż największy plik, nieprzeczytana",
+        "_%n release looked at ({skipped} drafts or prereleases left out), {files} files match_::_%n releases looked at ({skipped} drafts or prereleases left out), {files} files match_": [
+            "Przejrzano %n wydanie (pominięto szkice lub wydania przedpremierowe: {skipped}), pasujące pliki: {files}",
+            "Przejrzano %n wydania (pominięto szkice lub wydania przedpremierowe: {skipped}), pasujące pliki: {files}",
+            "Przejrzano %n wydań (pominięto szkice lub wydania przedpremierowe: {skipped}), pasujące pliki: {files}",
+            "Przejrzano %n wydania (pominięto szkice lub wydania przedpremierowe: {skipped}), pasujące pliki: {files}"
+        ],
         "step {number} ({label}, optional) skipped: {why}": "krok {number} ({label}, opcjonalny) pominięty: {why}",
         "The kept session no longer reaches the listing: signing in anew": "Zachowana sesja nie dociera już do listy: ponowne logowanie",
         "step {number}": "krok {number}",

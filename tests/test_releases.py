@@ -63,7 +63,10 @@ def test_github_releases_newest_first_without_prereleases_and_drafts():
         )
 
     made = source(handler, asset_pattern=r"\.AppImage$", path="{year}/{version}/{filename}")
+    log: list[str] = []
+    made.report = lambda level, text: log.append(text)
     items = list(made.items(lambda key: key.endswith("1.9.0.AppImage")))
+    assert log == ["2 releases looked at (2 drafts or prereleases left out), 2 files match"]
     assert [item.path for item in items] == ["2026/2.0.0/app-2.0.0.AppImage"]
     assert items[0].url == "https://github.com/o/r/releases/download/v2.0.0/app-2.0.0.AppImage"
     assert items[0].values["tag"] == "v2.0.0" and items[0].values["month"] == 10
@@ -156,6 +159,26 @@ def test_refusals():
 
     with pytest.raises(SourceError, match="limit"):
         list(source(limited).items(lambda key: False))
+
+    def broken(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(502, text="<html>Bad Gateway</html>")
+
+    with pytest.raises(SourceError) as failed:
+        list(source(broken).items(lambda key: False))
+    assert str(failed.value) == "github.com answered 502 for the releases of o/r"
+
+    def unreachable(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("[Errno 111] Connection refused", request=request)
+
+    with pytest.raises(SourceError) as failed:
+        list(source(unreachable).items(lambda key: False))
+    assert str(failed.value) == "https://api.github.com/repos/o/r/releases?per_page=30&page=1 could not be reached"
+
+    def slow(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("timed out", request=request)
+
+    with pytest.raises(SourceError, match="did not answer in time"):
+        list(source(slow, forge="forgejo", repository="https://git.example/o/r").items(lambda key: False))
 
 
 @pytest.mark.parametrize(
