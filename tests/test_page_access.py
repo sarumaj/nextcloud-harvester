@@ -10,7 +10,7 @@ import json
 
 import main
 from test_browser import needs_chromium
-from test_page import fixture_page, sent  # pylint: disable=unused-import
+from test_page import CALLS, RECIPE, fixture_page, receive, sent  # pylint: disable=unused-import
 
 
 @needs_chromium
@@ -87,3 +87,38 @@ def test_live_regions_and_errors_are_announced_once(page):
     assert field.count() == 1 and field.get_attribute("aria-describedby") == "harvester-form-error"
     assert field.evaluate("node => node === document.activeElement")
     assert field.evaluate("node => node.closest('label').textContent.startsWith('Files per run')")
+
+
+@needs_chromium
+def test_a_jobs_delete_asks_in_the_page_and_escape_says_no(page):
+    page.get_by_role("button", name="Delete").click()
+    dialog = page.locator("dialog.harvester-dialog")
+    assert dialog.get_attribute("aria-labelledby") and "Delete Mag?" in dialog.inner_text()
+    assert dialog.get_by_role("button", name="Cancel").evaluate("node => node === document.activeElement")
+    page.keyboard.press("Escape")
+    assert dialog.count() == 0 and not [call for call in CALLS if call[0] == "DELETE"]
+    page.get_by_role("button", name="Delete").click()
+    dialog.get_by_role("button", name="Delete").click()
+    page.wait_for_function("document.querySelectorAll('dialog').length === 0")
+    page.wait_for_timeout(100)
+    assert ("DELETE", "/jobs/1", None) in CALLS
+
+
+@needs_chromium
+def test_the_recorders_clear_picks_has_undo_and_cancel_asks_once_the_recipe_changed(page):
+    page.get_by_role("button", name="Edit").click()
+    page.get_by_role("button", name="Record in the browser").click()
+    page.wait_for_function("window.__sockets.length && window.__sockets[0].sent.length")
+    page.get_by_role("button", name="Clear picks").click()
+    assert sent(page)[-1] == {"type": "clear"}
+    page.get_by_role("button", name="Undo", exact=True).click()
+    assert sent(page)[-1] == {"type": "undo-pick"}
+    # The recipe as it came: Cancel leaves at once; changed, it asks first.
+    receive(page, {"type": "recipe", "recipe": {**RECIPE, "next": None}, "proposals": {}})
+    cancel = page.locator(".harvester-toolbar-end").get_by_role("button", name="Cancel")
+    cancel.click()
+    page.locator("dialog").get_by_role("button", name="Cancel").click()
+    assert page.locator(".harvester-recorder").count() == 1, "stays"
+    cancel.click()
+    page.locator("dialog").get_by_role("button", name="Leave").click()
+    page.locator("#harvester-job-form").wait_for()

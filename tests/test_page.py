@@ -773,11 +773,11 @@ def test_the_job_browsers_cookies_panel_keeps_the_session_and_fills_the_account(
 
     panel.get_by_role("button", name="Into the account").click()
     text = "# Netscape HTTP Cookie File\nsite.example\tFALSE\t/\tTRUE\t0\tsid\tsecret-1\n"
-    page.once("dialog", lambda dialog: dialog.dismiss())
     receive(page, {"type": "cookies-export", "text": text, "count": 1})
+    page.locator("dialog").get_by_role("button", name="Cancel").click()
     page.wait_for_function("document.querySelector('.harvester-cookies-panel').innerText.includes('Not stored.')")
-    page.once("dialog", lambda dialog: dialog.accept())
     receive(page, {"type": "cookies-export", "text": text, "count": 1})
+    page.locator("dialog").get_by_role("button", name="Store").click()
     page.wait_for_function("document.querySelector('.harvester-cookies-panel').innerText.includes('stored in the job')")
     assert ("PUT", "/jobs/1/credentials", {"cookies": text}) in CALLS, "stored once the person confirmed"
 

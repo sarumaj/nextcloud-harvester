@@ -66,6 +66,9 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   source with an address, its form filled with the page as the job's address, *On demand* on;
   saved, it fetches the page at once. The page takes `fetch` out of its own address, so a reload
   shows the jobs.
+- **Questions:** Delete, a template's Remove, Back to the jobs with an account typed and the
+  job's browser's *Into the account* ask in the page (a dialog that keeps the keyboard; Escape is
+  No), not in the browser's own box.
 - **Notifications:** a job that needs a person, fails, or finds its site changed notifies its
   user; the same failure (or change) again on the next runs does not. A one-time job tells what
   it did as it is deleted.
@@ -578,10 +581,11 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   page) has the same controls: its element (a selector, its alternatives listed) and pattern to
   edit (a selector edited drops its alternatives), **Pick again**
   and **Remove** (a removed level's later levels move up); **Undo pick** takes back the last
-  change of the picks. The recorder starts with the form's recipe, so its picks can be changed
-  there. Elements without an address (a button, a link to `javascript:` or `#`, a row or card a
-  script opens: the outermost element under the hand cursor) picked as file links or as links to
-  follow make a pick that is clicked (`"click": true`): its pattern is proposed on their texts,
+  change of the picks; **Clear picks** offers **Undo** for a while. **Cancel** asks before it
+  drops changes to the recipe. The recorder starts with the form's recipe, so its picks can be
+  changed there. Elements without an address (a button, a link to `javascript:` or `#`, a row or
+  card a script opens: the outermost element under the hand cursor) picked as file links or as links
+  to follow make a pick that is clicked (`"click": true`): its pattern is proposed on their texts,
   their common words around a value `label` (`^Invoice\ (?P<label>.+)`, else `.`, any text), its
   examples are their texts, the file links' name is `{disposition}`, and the panel says that the
   job clicks them in the browser; **Click in the browser** switches a pick between the two (its

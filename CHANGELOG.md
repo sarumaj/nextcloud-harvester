@@ -127,6 +127,11 @@
 - The signs of the recorder's step marks (▶, ⏸, ↻, ✓, –, ✗, ↷, ■), of a pattern's or an
   address's check (✓, ✗) and of *✔ will be used* are no part of their translated texts: shown
   beside them, not read out by screen readers.
+- Delete, a template's Remove, Back to the jobs with an account typed and the job's browser's
+  *Into the account* ask in the page, in a dialog of Nextcloud's look (the browser's own
+  `confirm()` before); Escape is No, and a deletion's dialog has the focus on Cancel. The
+  recorder's **Clear picks** offers **Undo** for 15 seconds, and its **Cancel** asks before it
+  drops changes to the recipe.
 
 ### Fixed
 

@@ -144,6 +144,32 @@
 		return node
 	}
 
+	// A question before an action (Delete, Leave), in the page as Nextcloud's dialogs look: a
+	// modal <dialog> (the keyboard stays in it, Escape is No), its question its name. Resolves
+	// whether the person chose yes (label: the action; destructive: red, and No has the focus).
+	function ask(question, label, destructive = false) {
+		return new Promise((resolve) => {
+			const text = el('p', { id: 'harvester-ask-text', text: question })
+			const yes = el('button', { type: 'button', class: destructive ? 'error' : 'primary', text: label })
+			const no = el('button', { type: 'button', text: t('Cancel') })
+			const dialog = el('dialog', { class: 'harvester-dialog', 'aria-labelledby': text.id }, text, el('div', { class: 'harvester-dialog-buttons' }, no, yes))
+			const opener = document.activeElement
+			const end = (answer) => {
+				dialog.close()
+				dialog.remove()
+				if (opener && opener.isConnected) opener.focus()
+				resolve(answer)
+			}
+			yes.addEventListener('click', () => end(true))
+			no.addEventListener('click', () => end(false))
+			dialog.addEventListener('cancel', (event) => { event.preventDefault(); end(false) })
+			;(document.getElementById('harvester') || document.body).append(dialog)
+			dialog.showModal()
+			;(destructive ? no : yes).focus()
+		})
+	}
+	window.__harvesterAsk = ask
+
 	// A sign beside a text (✓ passed): shown, not read out, and no part of the translated text.
 	const glyph = (sign) => (sign ? el('span', { class: 'harvester-glyph', 'aria-hidden': 'true', text: `${sign} ` }) : '')
 
@@ -362,8 +388,9 @@
 					el('button', {
 						class: 'error',
 						text: t('Delete'),
-						onclick: (event) => {
-							if (confirm(t('Delete {name}? The files it downloaded stay.', { name: job.name }))) act(job, '', 'DELETE')(event)
+						onclick: async (event) => {
+							const button = event.currentTarget
+							if (await ask(t('Delete {name}? The files it downloaded stay.', { name: job.name }), t('Delete'), true)) act(job, '', 'DELETE')({ currentTarget: button })
 						},
 					}))))
 		}
@@ -770,7 +797,7 @@
 				text: t('Remove'),
 				'aria-label': t('Remove the template {name}', { name: template.name }),
 				onclick: async () => {
-					if (!confirm(t('Remove the template {name}?', { name: template.name }))) return
+					if (!await ask(t('Remove the template {name}?', { name: template.name }), t('Remove'), true)) return
 					try {
 						await api('DELETE', `/templates/${template.id}`)
 					} catch (e) {
@@ -1808,7 +1835,7 @@
 		const source = sources.find((s) => s.name === job.source)
 		const intoAccount = source && source.credentials.includes('cookies')
 			? async (text, count) => {
-				if (!confirm(n('Store this cookie as the account’s Cookies of “{name}”? It replaces the ones stored, and the job’s kept session is forgotten.', 'Store these %n cookies as the account’s Cookies of “{name}”? They replace the ones stored, and the job’s kept session is forgotten.', count, { name: job.name }))) return t('Not stored.')
+				if (!await ask(n('Store this cookie as the account’s Cookies of “{name}”? It replaces the ones stored, and the job’s kept session is forgotten.', 'Store these %n cookies as the account’s Cookies of “{name}”? They replace the ones stored, and the job’s kept session is forgotten.', count, { name: job.name }), t('Store'))) return t('Not stored.')
 				await api('PUT', `/jobs/${job.id}/credentials`, { cookies: text })
 				return n('%n cookie stored in the job’s account.', '%n cookies stored in the job’s account.', count)
 			}
@@ -1865,6 +1892,12 @@
 		try {
 			recipe = JSON.parse(textarea.value || '{}')
 		} catch (e) {}
+		// The recipe as it came, to ask before Cancel drops changes (keys in order: the recorder's
+		// copy may list them otherwise).
+		const canonical = (value) => JSON.stringify(value, (key, part) => (part && typeof part === 'object' && !Array.isArray(part)
+			? Object.fromEntries(Object.entries(part).filter(([, v]) => !(v === undefined || v === null || v === '' || (typeof v === 'object' && !Object.keys(v).length))).sort(([a], [b]) => (a < b ? -1 : 1)))
+			: part))
+		const opened = canonical(recipe)
 		let proposals = {}
 		// The recorder's warnings of addresses with a token of this visit (spent when the job runs).
 		let warnings = []
@@ -2393,6 +2426,18 @@
 				tested && !testing ? renderTest(tested) : '')
 		}
 
+		// Clear picks takes them all at once: Undo (the recorder's undo of a pick) brings them back.
+		const cleared = el('div', { class: 'harvester-cleared', role: 'status' })
+		let clearedTimer = null
+		function clearPicks() {
+			recipe = { steps: recipe.steps }
+			send({ type: 'clear' })
+			clearTimeout(clearedTimer)
+			cleared.replaceChildren(el('span', { text: t('Picks cleared.') }),
+				el('button', { type: 'button', class: 'harvester-tertiary', text: t('Undo'), onclick: () => { send({ type: 'undo-pick' }); cleared.replaceChildren() } }))
+			clearedTimer = setTimeout(() => cleared.replaceChildren(), 15000)
+		}
+
 		function close(keep) {
 			socket.close()
 			if (keep) {
@@ -2472,7 +2517,7 @@
 					url,
 					el('button', { type: 'button', text: t('Go'), onclick: () => send({ type: 'goto', url: url.value }) }),
 					el('button', { type: 'button', text: t('Undo step'), onclick: () => send({ type: 'undo' }) }),
-					el('button', { type: 'button', text: t('Clear picks'), onclick: () => { recipe = { steps: recipe.steps }; send({ type: 'clear' }) } }),
+					el('button', { type: 'button', text: t('Clear picks'), onclick: clearPicks }),
 					fullWindow(container, box, send),
 					cookies.button,
 					networkButton,
@@ -2482,8 +2527,13 @@
 					// Done and Cancel together at the end, never one of them alone on a line.
 					el('span', { class: 'harvester-toolbar-end' },
 						el('button', { class: 'primary', text: t('Done'), onclick: () => close(true) }),
-						el('button', { text: t('Cancel'), onclick: () => close(false) }))),
-				modes, placing, modeHelp, el('div', { class: 'harvester-toolbar harvester-add-steps' }, scroll, approve, handover, addHint), where, network, message, cookies.box, networkBox),
+						el('button', {
+							text: t('Cancel'),
+							onclick: async () => {
+								if (canonical(recipe) === opened || await ask(t('Leave the recorder without the changes to the recipe?'), t('Leave'), true)) close(false)
+							},
+						}))),
+				modes, placing, cleared, modeHelp, el('div', { class: 'harvester-toolbar harvester-add-steps' }, scroll, approve, handover, addHint), where, network, message, cookies.box, networkBox),
 			el('div', { class: 'harvester-stage' }, box, panel))
 		root.replaceChildren(container)
 		renderPanel()
@@ -2881,8 +2931,8 @@
 		const back = el('button', {
 			type: 'button',
 			text: t('Back to the jobs'),
-			onclick: () => {
-				if (!credentials.typed() || confirm(t('Leave without saving the account you typed?'))) show(root)
+			onclick: async () => {
+				if (!credentials.typed() || await ask(t('Leave without saving the account you typed?'), t('Leave'))) show(root)
 			},
 		})
 		// The recipe as a file to keep or share, or as a template of the person's own: the server
@@ -2964,7 +3014,7 @@
 		#harvester .harvester-steps .harvester-step-passed .harvester-step-mark { color: var(--color-success-text, var(--color-success)); }
 		#harvester .harvester-steps .harvester-step-failed .harvester-step-mark { color: var(--color-error-text, var(--color-error)); }
 		#harvester .harvester-steps .harvester-step-skipped .harvester-step-mark, #harvester .harvester-steps .harvester-step-session .harvester-step-mark { color: var(--color-text-maxcontrast); }
-		#harvester .harvester-placing:not(:empty) { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 4px 0; }
+		#harvester .harvester-placing:not(:empty), #harvester .harvester-cleared:not(:empty) { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 4px 0; }
 		#harvester .harvester-warning p { margin: 4px 0; padding: 4px 8px; border-inline-start: 3px solid var(--color-warning); color: var(--color-warning-text, var(--color-main-text)); }
 		#harvester .harvester-where { display: block; color: var(--color-text-maxcontrast); }
 		#harvester .harvester-cookies-panel { max-height: 50vh; overflow: auto; padding: 8px; border: 1px solid var(--color-border); border-radius: var(--border-radius); background: var(--color-main-background); }
@@ -3052,6 +3102,11 @@
 		#harvester .harvester-sent { overflow-wrap: anywhere; }
 		#harvester .harvester-send-kinds { display: flex; flex-wrap: wrap; gap: 8px; }
 		#harvester [hidden] { display: none !important; }
+		#harvester .harvester-dialog { max-width: min(480px, calc(100vw - 32px)); padding: 20px 24px 16px; border: none; border-radius: var(--border-radius-large); background: var(--color-main-background); color: var(--color-main-text); box-shadow: 0 0 40px var(--color-box-shadow); }
+		#harvester .harvester-dialog::backdrop { background: rgba(0, 0, 0, 0.5); }
+		#harvester .harvester-dialog p { margin: 0 0 16px; }
+		#harvester .harvester-dialog-buttons { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+		#harvester .harvester-dialog-buttons button { margin: 0; }
 		/* Read by screen readers, not shown. */
 		#harvester .harvester-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 		#harvester .harvester-wizard h3 { margin-top: 0; }
@@ -3114,6 +3169,10 @@
 		#harvester .harvester-click { display: block; margin: 4px 0; }
 		#harvester .harvester-test-pages { padding-inline-start: 20px; }
 		#harvester .harvester-shot-image { display: block; max-width: 100%; height: auto; border: 1px solid var(--color-border); border-radius: var(--border-radius); }
+		/* An action in a row (Cancel a fetch, Undo, Show): a button without its background until
+		   the pointer is on it, as Nextcloud's tertiary buttons. */
+		#harvester .harvester-tertiary { min-height: 0; margin: 0 0 0 4px; padding: 2px 8px; border: none; border-radius: var(--border-radius); background: none; color: var(--color-primary-element); font-weight: bold; cursor: pointer; }
+		#harvester .harvester-tertiary:hover:not(:disabled) { background: var(--color-background-hover); }
 		#harvester .harvester-link { border: none; background: none; min-height: 0; padding: 0 0 0 8px; color: var(--color-primary-element); text-decoration: underline; cursor: pointer; }
 		/* A narrow window: the recorder's screen above its steps, at the full width. */
 		@media (max-width: 800px) {
