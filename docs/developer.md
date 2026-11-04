@@ -51,15 +51,23 @@ in the role's registration.
 
 A job's *Save to* (`destinations.py`: its options, rules and checks) picks a `Destination` of
 `places.DESTINATIONS`: how its run's `runner.Library` is made (`find`, `put`, `tag`, `untag`,
-`existing`, which the runner, `deleted.py` and `unpack.py` use alone), whether its files may
-carry Nextcloud's tags or it keeps Harvester's labels itself, and the person's secrets it keeps
-for a job (deleted with the job or when its place changes). `files` is `nextcloud.py`, `library`
-`library.py` (with its routes, `routes/library.py`), `inbox` `inbox.py`, `vault` `vaultlib.py`
-over `davstorage.py` (vault.py's storage on WebDAV; its keys set by `routes/vault.py`). Another
-destination is one more `Destination` with its `Library`, its form's options in
-`destinations.OPTIONS` (group `save`) and what it switches off in `destinations.RULES`. Its tests
-run against fakes of Nextcloud whose files are a folder (`tests/test_destinations.py`), and the
-vault's files are read by the sister app's code where it is there (`tests/vault_js.mjs`).
+`existing`, which the runner, `deleted.py` and `unpack.py` use alone), whether its files may carry
+Nextcloud's tags or it keeps Harvester's labels itself, and the person's secrets it keeps for a job
+(deleted with the job or when its place changes). `files` is `nextcloud.py`, `library` `library.py`
+(with its routes, `routes/library.py`), `inbox` `inbox.py`, `vault` `vaultlib.py` over
+`davstorage.py` (vault.py's storage on WebDAV; its keys set by `routes/vault.py`). The library's
+routes: `GET /api/library/state` (whether it has a password and is open to this browser, its
+minutes, usage and limit), `POST /api/library/unlock` (`{password}`: a token, sent back as the
+header `X-Harvester-Library`, or `?unlock=` in a file's address for `<img>` and `<video>`), `POST
+/api/library/lock`, `PUT /api/library/password` (`{current, password, minutes}`), `GET
+/api/library?folder=&label=`, `GET /api/library/files/<id>` (`Range`; `?download=1`) and `DELETE
+/api/library/files/<id>`; locked, they answer 403. A job's `options` carry its place (`save_to`,
+`vault`, `vault_target`, `vault_verify`) and `tag_as`; a job without them saves into the person's
+files with Nextcloud's tags, so API clients that send a job's options back as they got them (Talk
+AI) keep its place. Another destination is one more `Destination` with its `Library`, its form's
+options in `destinations.OPTIONS` (group `save`) and what it switches off in `destinations.RULES`.
+Its tests run against fakes of Nextcloud whose files are a folder (`tests/test_destinations.py`),
+and the vault's files are read by the sister app's code where it is there (`tests/vault_js.mjs`).
 
 ## Trying a job's listing
 

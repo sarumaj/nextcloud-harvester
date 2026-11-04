@@ -111,9 +111,11 @@ recorder that makes them, and what a run does. Installing and the admin's settin
 
 ## Where the files go
 
-A job's form has **Save to** beside its folder (`save_to`, an option of every job;
-`destinations.py`), and **Tag as**. A job saved before keeps saving into your files with
-Nextcloud's tags, as it did.
+A job's form has a **Save to** section below its folder (`save_to`, an option of every job;
+`destinations.py`) with **Tag as**: the folder's help says what the folder is for the place
+chosen, the place's own fields show (the vault, the folder in it, its password), and the
+options a place cannot use are switched off with why. A job saved before keeps saving into your
+files with Nextcloud's tags, as it did.
 
 - **Your files** (`files`, the default): the folder is one of your files, as before.
 - **Harvester's private library** (`library`, `library.py`): the files stay in Harvester's own
