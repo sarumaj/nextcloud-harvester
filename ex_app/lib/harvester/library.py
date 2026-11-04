@@ -46,7 +46,7 @@ from urllib.parse import quote
 
 from . import librarycrypt as crypt
 from . import thumbnails
-from .l10n import said
+from .l10n import Said, said
 from .librarykeys import Keyring, Locked, NotSetUp, Session
 from .runner import FileGone, Library, size_text
 from .sources import SourceError
@@ -714,3 +714,12 @@ class PrivateLibrary(Library):
 
     def existing(self, file_ids: list[int]) -> dict[int, str]:
         return self.shelf.existing(self.user, file_ids)
+
+    def saved(self, path: str, size: str) -> Said:
+        return said("Saved in your library: {path} ({size})", path=path, size=size)
+
+    def there(self, path: str) -> Said:
+        return said("Already in your library: {path}", path=path)
+
+    def known(self, path: str) -> Said:
+        return said("Already in your library: {path}", path=path)

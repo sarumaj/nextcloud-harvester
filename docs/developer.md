@@ -78,7 +78,9 @@ and what it switches off in `destinations.RULES`. Two calls of the runner serve 
 files by more than a path: `Library.item(values)` gives the values of the item whose files come
 next (Immich's date and album), and `Library.found(file_id)` says that `put` found the content
 there already (counted as already there); `put` may raise `Refused` for a file the place keeps
-none of (skipped for good; an unpacked ZIP's member left out).
+none of (skipped for good; an unpacked ZIP's member left out). The progress log's lines of a
+file name where it went: `Library.saved`, `there`, `known` and `tagged` give them (*Uploaded to
+Immich: a.jpg (2.1 MB), album “Trip”*, *Saved in your library: …*), the person's files' by default.
 Its tests run against fakes of Nextcloud whose files are a folder (`tests/test_destinations.py`),
 the vault's files are read by the sister app's code where it is there (`tests/vault_js.mjs`), and
 Immich's are against a fake of its API on httpx's `MockTransport` (`tests/test_immich.py`).

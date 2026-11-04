@@ -183,6 +183,8 @@ def test_an_inbox_gets_the_contracts_marker_and_the_files_whole(app):
     }
     assert sorted(path.name for path in (app.root / "Mag inbox").iterdir()) == [MARKER, "a.txt", "b.txt", "c.txt"]
     assert "chunked" not in app.files.requests, "small files in one PUT each"
+    lines = json.dumps(app.store.log_lines("anna", job.id))
+    assert "Saved in the inbox of the vault /Vaults/V: /Mag inbox/a.txt (1 B)" in lines
 
 
 def test_files_the_vault_app_moved_out_are_never_fetched_again(app):
@@ -251,6 +253,7 @@ def test_a_vault_job_keeps_the_keys_never_the_password_and_writes_what_cryptomat
     assert [node.name for node in vault.listdir("Mag")] == ["a.txt", "b.txt", "c.txt"]
     assert vault.read_bytes("Mag/b.txt") == b"b"
     lines = json.dumps(app.store.log_lines("anna", job.id))
+    assert "Saved in the vault /Vaults/V: /Mag/b.txt (1 B)" in lines, "the log names the vault"
     assert password("vault-gcm") not in lines and kept not in lines
     if NODE and (SISTER / "app" / "cryptomator_vaults" / "js" / "vault.js").is_file():
         dumped = run_js("dump", str(app.root / "Vaults" / "V"), password("vault-gcm"))

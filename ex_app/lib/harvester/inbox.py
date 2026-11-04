@@ -23,7 +23,7 @@ import posixpath
 from nc_py_api import NextcloudException
 
 from . import destinations
-from .l10n import said
+from .l10n import Said, said
 from .nextcloud import Call, NextcloudLibrary
 from .sources import SourceError
 from .store import Job
@@ -64,6 +64,10 @@ class InboxLibrary(NextcloudLibrary):
         if not self._marked:
             self.mark()
         return super().put(path, content)
+
+    def saved(self, path: str, size: str) -> Said:
+        vault = destinations.folder(str(self.job.options.get(destinations.VAULT) or ""))
+        return said("Saved in the inbox of the vault {vault}: {path} ({size})", vault=vault, path=path, size=size)
 
     def mark(self) -> None:
         """Writes the inbox's marker unless there is one of the same vault (SourceError for one

@@ -182,6 +182,9 @@ def test_a_run_saves_into_the_library_with_labels_never_into_nextcloud(app):
     assert shelf.listing(opened, "/", "b")[0]["path"] == "/Mag/b.txt", "a label's files, below the folder"
     assert shelf.labels(opened) == ["a", "b", "c"]
     assert shelf.usage("ben") == 0 and shelf.find("ben", "/Mag") is None, "nothing of anna's is ben's"
+    lines = [row["message"] for row in app["store"].rows("SELECT message FROM log WHERE job = ?", (job.id,))]
+    assert "Saved in your library: /Mag/a.txt (1 B)" in lines, "the log names the library"
+    assert not [line for line in lines if line.startswith("Saved /")]
 
 
 def test_a_job_writes_while_the_library_is_locked_and_fails_before_the_setup(app):

@@ -39,7 +39,8 @@ from urllib.parse import urlparse
 import httpx
 
 from . import destinations
-from .l10n import said
+from .l10n import Said, said
+from .l10n import listed as listed_words
 from .patterns import render
 from .runner import FileGone, Library, NotChecked
 from .sources import AuthError, Refused, SourceError
@@ -231,6 +232,8 @@ class ImmichLibrary(Library):  # pylint: disable=too-many-instance-attributes
         self._albums: dict[str, str] = {}
         self._tags: dict[str, str] = {}
         self._found: set[int] = set()
+        # The album the last file was put into ("": none), which the progress log names.
+        self.filed = ""
 
     def item(self, values: dict) -> None:
         self.values = values
@@ -287,6 +290,24 @@ class ImmichLibrary(Library):  # pylint: disable=too-many-instance-attributes
             self._found.add(file_id)
         return file_id
 
+    def saved(self, path: str, size: str) -> Said:
+        name = posixpath.basename(path)
+        if self.filed:
+            return said("Uploaded to Immich: {file} ({size}), album “{album}”", file=name, size=size, album=self.filed)
+        return said("Uploaded to Immich: {file} ({size})", file=name, size=size)
+
+    def there(self, path: str) -> Said:
+        name = posixpath.basename(path)
+        if self.filed:
+            return said("Already in Immich: {file}, album “{album}”", file=name, album=self.filed)
+        return said("Already in Immich: {file}", file=name)
+
+    def known(self, path: str) -> Said:
+        return said("Already in Immich: {file}", file=posixpath.basename(path))
+
+    def tagged(self, tags: list[str]) -> Said | None:
+        return said("Tagged in Immich: {tags}", tags=listed_words(tags))
+
     def _restore(self, asset: str) -> None:
         """A content in Immich's trash taken out of it (an upload would not: Immich answers it as a
         duplicate, in the trash still); a key without asset.delete cannot, and the file is skipped
@@ -331,6 +352,7 @@ class ImmichLibrary(Library):  # pylint: disable=too-many-instance-attributes
             name = render(self.album, self.values).strip()[:200] if self.album else ""
         except (KeyError, ValueError, IndexError):
             name = ""
+        self.filed = name
         if not name:
             return
         album = self._albums.get(name)

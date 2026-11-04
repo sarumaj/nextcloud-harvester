@@ -139,6 +139,25 @@ class Library(abc.ABC):
         each content once): the run counts it as already there; by default never."""
         return False
 
+    # The progress log's lines of a file each name where it went: by default the person's files.
+
+    def saved(self, path: str, size: str) -> Said:
+        """The line for a file put at path (size: its size for people)."""
+        return said("Saved {path} ({size})", path=path, size=size)
+
+    def there(self, path: str) -> Said:
+        """The line for a file put that was there already (found)."""
+        return said("Already there, tagged: {path}", path=path)
+
+    def known(self, path: str) -> Said:
+        """The line for a file the job finds at its path (find), not downloaded again."""
+        return said("Already in the folder, tagged: {path}", path=path)
+
+    def tagged(self, tags: list[str]) -> Said | None:  # pylint: disable=unused-argument
+        """The line for the tags given to a file, where its place says it (a photo server's own
+        tags); by default none."""
+        return None
+
 
 class FileGone(Exception):
     """The file a job saved is not there any more (deleted or moved away by its user)."""
@@ -229,6 +248,9 @@ def _tagged(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         )
     if tags:
         library.tag(file_id, tags)
+        line = library.tagged(tags)
+        if line:
+            report("info", line)
     record(Placed(item.key, file_id, dict(item.values), tags))
 
 
@@ -285,7 +307,7 @@ def place(  # pylint: disable=too-many-arguments,too-many-positional-arguments,t
         (posixpath.join(job.target, item.path), None) if item.pending else free_path(job, library, item, owners)
     )
     if file_id is not None:
-        report("info", said("Already in the folder, tagged: {path}", path=path))
+        report("info", library.known(path))
         _tagged(job, library, item, file_id, record, report)
         return ADOPTED
     pause()
@@ -301,7 +323,7 @@ def place(  # pylint: disable=too-many-arguments,too-many-positional-arguments,t
             library.item(dict(item.values))
             path, file_id = free_path(job, library, item, owners)
         if file_id is not None:
-            report("info", said("Already in the folder, tagged: {path}", path=path))
+            report("info", library.known(path))
             _tagged(job, library, item, file_id, record, report)
             return ADOPTED
         size = content.tell()
@@ -314,9 +336,9 @@ def place(  # pylint: disable=too-many-arguments,too-many-positional-arguments,t
         file_id, path, kept = _put(job, source, library, item, path, content, report, fresh=True)
         there = kept and library.found(file_id)
         if there:
-            report("info", said("Already there, tagged: {path}", path=path))
+            report("info", library.there(path))
         elif kept:
-            report("info", said("Saved {path} ({size})", path=path, size=size_text(size)))
+            report("info", library.saved(path, size_text(size)))
         if source.contents is not None:
             source.contents.keep(item.key, value, path, check)
     _tagged(job, library, item, file_id, record, report)

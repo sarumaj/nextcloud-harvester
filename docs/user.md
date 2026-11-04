@@ -27,7 +27,8 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   *Saving…* until the app answers. A required field's name has a red `*`, and a field's help is
   its description for screen readers. The page says *Loading…* until the app answered. Below
   the jobs, a **progress log** of what the runs do (searching where, each file downloaded, saved
-  or found already there, how many listed files are known already, errors, the outcome, which
+  or found already there, naming where: the files, the library, a vault or Immich with its album
+  and tags; how many listed files are known already, errors, the outcome, which
   counts the known files too: *0 downloaded, 37 known*), live while one runs, of all jobs or of
   one; a new run clears its job's last message. A job's last 500 lines are kept, and the first 30
   of the run in progress too: a long first run keeps where it looked and what it found. The

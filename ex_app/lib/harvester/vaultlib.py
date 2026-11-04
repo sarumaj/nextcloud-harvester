@@ -22,7 +22,7 @@ from typing import BinaryIO
 
 from . import destinations
 from .davstorage import WebDavStorage
-from .l10n import said
+from .l10n import Said, said
 from .nextcloud import Call
 from .runner import Library
 from .sources import AuthError, SourceError
@@ -55,12 +55,14 @@ def decoded(text: str | None) -> bytes | None:
 
 class VaultLibrary(Library):
     """A job's files in a vault: storage is the vault's folder (WebDavStorage, or a test's with
-    file_id and existing), verify reads each file back."""
+    file_id and existing), verify reads each file back; name, the vault's folder the progress log
+    names."""
 
-    def __init__(self, vault: Vault, storage, verify: bool = True):
+    def __init__(self, vault: Vault, storage, verify: bool = True, name: str = ""):
         self.vault = vault
         self.storage = storage
         self.verify = verify
+        self.name = name
 
     def find(self, path: str) -> int | None:
         try:
@@ -98,6 +100,12 @@ class VaultLibrary(Library):
     def existing(self, file_ids: list[int]) -> dict[int, str]:
         return self.storage.existing(file_ids)
 
+    def saved(self, path: str, size: str) -> Said:
+        return said("Saved in the vault {vault}: {path} ({size})", vault=self.name, path=path, size=size)
+
+    def known(self, path: str) -> Said:
+        return said("Already in the vault {vault}: {path}", vault=self.name, path=path)
+
 
 def opened(job: Job, nc, call: Call) -> VaultLibrary:
     """The job's vault, opened with the keys kept for it (VaultLocked without them, or when they
@@ -120,4 +128,4 @@ def opened(job: Job, nc, call: Call) -> VaultLibrary:
         raise SourceError(
             said("No vault Harvester can write to at {vault}: {error}", vault=folder, error=str(error))
         ) from error
-    return VaultLibrary(vault, storage, verify=bool(int(job.options.get(destinations.VERIFY, 1) or 0)))
+    return VaultLibrary(vault, storage, verify=bool(int(job.options.get(destinations.VERIFY, 1) or 0)), name=folder)

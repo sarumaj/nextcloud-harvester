@@ -1068,7 +1068,12 @@ OC.L10N.register(
         "The Immich server's address: https:// and its host, e.g. https://photos.example.org.": "Die Adresse des Immich-Servers: https:// und sein Host, z. B. https://photos.example.org.",
         "The Immich server's address: no name, password, ? or # in it.": "Die Adresse des Immich-Servers: kein Name, kein Passwort, kein ? oder # darin.",
         "The Immich server's address: https:// only (the admin allows no plain http).": "Die Adresse des Immich-Servers: nur https:// (die Administration erlaubt kein unverschlüsseltes http).",
+        "Uploaded to Immich: {file} ({size})": "Zu Immich hochgeladen: {file} ({size})",
+        "Already in Immich: {file}": "Schon in Immich: {file}",
+        "Tagged in Immich: {tags}": "In Immich mit Tags versehen: {tags}",
         "Immich answered {status}: {message}": "Immich antwortete {status}: {message}",
+        "Uploaded to Immich: {file} ({size}), album “{album}”": "Zu Immich hochgeladen: {file} ({size}), Album „{album}“",
+        "Already in Immich: {file}, album “{album}”": "Schon in Immich: {file}, Album „{album}“",
         "Your Immich account is needed: set its address and API key under Your Immich account": "Ihr Immich-Konto wird gebraucht: Geben Sie seine Adresse und seinen API-Schlüssel unter Ihr Immich-Konto ein",
         "Immich refused your API key: set it again under Your Immich account": "Immich hat Ihren API-Schlüssel abgelehnt: Geben Sie ihn unter Ihr Immich-Konto neu ein",
         "The file is too large for the Immich server (413)": "Die Datei ist zu groß für den Immich-Server (413)",
@@ -1079,10 +1084,13 @@ OC.L10N.register(
         "Immich could not be reached: {error}": "Immich war nicht erreichbar: {error}",
         "It is in Immich's trash: restore it there (or give the API key asset.delete to let Harvester)": "Es liegt im Papierkorb von Immich: Stellen Sie es dort wieder her (oder geben Sie dem API-Schlüssel asset.delete, damit Harvester es tut)",
         "Immich refused: {error}": "Immich hat abgelehnt: {error}",
+        "Saved in the inbox of the vault {vault}: {path} ({size})": "Im Eingang des Tresors {vault} gespeichert: {path} ({size})",
         "{path} is the inbox's marker: a file of that name is not saved": "{path} ist die Markierungsdatei des Eingangs: eine Datei dieses Namens wird nicht gespeichert",
         "{folder} is shared with you: an inbox is a folder of your own": "{folder} ist mit Ihnen geteilt: ein Eingang ist ein eigener Ordner",
         "{folder} is the inbox of another vault ({vault}): choose another folder": "{folder} ist der Eingang eines anderen Tresors ({vault}): Wählen Sie einen anderen Ordner",
         "{folder} has an inbox marker Harvester cannot read: choose another folder": "{folder} hat eine Eingangs-Markierung, die Harvester nicht lesen kann: Wählen Sie einen anderen Ordner",
+        "Saved in your library: {path} ({size})": "In Ihrer Bibliothek gespeichert: {path} ({size})",
+        "Already in your library: {path}": "Schon in Ihrer Bibliothek: {path}",
         "The library is full: {path} ({size}) would pass your limit of {limit}": "Die Bibliothek ist voll: {path} ({size}) würde Ihre Grenze von {limit} überschreiten",
         "The library is full: {path} ({size}) would pass the server's limit of {limit} for everyone": "Die Bibliothek ist voll: {path} ({size}) würde die Grenze des Servers von {limit} für alle überschreiten",
         "Set up your library on Harvester's page (Library) first: its files are encrypted with your key.": "Richten Sie zuerst Ihre Bibliothek auf der Seite von Harvester ein (Bibliothek): ihre Dateien werden mit Ihrem Schlüssel verschlüsselt.",
@@ -1145,11 +1153,13 @@ OC.L10N.register(
             "Tags von %n Datei aktualisiert; gestoppt, die anderen bekommen sie beim nächsten Durchgang des Jobs",
             "Tags von %n Dateien aktualisiert; gestoppt, die anderen bekommen sie beim nächsten Durchgang des Jobs"
         ],
+        "Saved {path} ({size})": "{path} gespeichert ({size})",
+        "Already there, tagged: {path}": "Schon da, mit Tags versehen: {path}",
+        "Already in the folder, tagged: {path}": "Schon im Ordner, mit Tags versehen: {path}",
         "Downloading {file}": "Lade {file} herunter",
         "A web page came instead of a file ({error}): signed in anew": "Statt einer Datei kam eine Webseite ({error}): neu angemeldet",
         "{outcome}; stopped, the rest comes {later}": "{outcome}; gestoppt, der Rest kommt {later}",
         "{file}: the first {kept} tags of a list kept, {more} more left out": "{file}: die ersten {kept} Tags einer Liste behalten, {more} weitere weggelassen",
-        "Already in the folder, tagged: {path}": "Schon im Ordner, mit Tags versehen: {path}",
         "Changed: {path} saved over as its new version ({size})": "Geändert: {path} als neue Version darüber gespeichert ({size})",
         "_Looking for %n file saved before its tags were kept (nothing is downloaded)_::_Looking for %n files saved before their tags were kept (nothing is downloaded)_": [
             "Suche nach %n Datei, die gespeichert wurde, bevor ihre Tags festgehalten wurden (nichts wird heruntergeladen)",
@@ -1175,7 +1185,6 @@ OC.L10N.register(
             "%n Übersichtsseiten lieferten nichts: Der Durchlauf zählt nicht als vollständig"
         ],
         "A duplicate of {path}, not saved again: {file}": "Ein Duplikat von {path}, nicht noch einmal gespeichert: {file}",
-        "Already there, tagged: {path}": "Schon da, mit Tags versehen: {path}",
         "Tagged: {path}": "Mit Tags versehen: {path}",
         "Signing in anew failed: {error}": "Die erneute Anmeldung ist fehlgeschlagen: {error}",
         "_%n known_::_%n known_": [
@@ -1212,7 +1221,6 @@ OC.L10N.register(
         ],
         "Stopped: the rest comes {later}": "Gestoppt: Der Rest kommt {later}",
         "{path} is not unpacked: {error}": "{path} wird nicht entpackt: {error}",
-        "Saved {path} ({size})": "{path} gespeichert ({size})",
         "_%n file this run (Files per run): the rest comes {later}_::_%n files this run (Files per run): the rest comes {later}_": [
             "%n Datei in diesem Durchlauf (Dateien pro Durchlauf): Der Rest kommt {later}",
             "%n Dateien in diesem Durchlauf (Dateien pro Durchlauf): Der Rest kommt {later}"
@@ -1474,6 +1482,8 @@ OC.L10N.register(
             "%n Dateien von {path} nach {folder} entpackt"
         ],
         "Left out {path}: {error}": "Ausgelassen: {path}: {error}",
+        "Saved in the vault {vault}: {path} ({size})": "Im Tresor {vault} gespeichert: {path} ({size})",
+        "Already in the vault {vault}: {path}": "Schon im Tresor {vault}: {path}",
         "The vault's password is needed: enter it in the job's form": "Das Passwort des Tresors wird gebraucht: Geben Sie es im Formular des Auftrags ein",
         "{path} is not in the vault after its upload": "{path} ist nach dem Hochladen nicht im Tresor",
         "The vault's kept keys do not open {vault} (another vault there?): enter its password in the form": "Die gespeicherten Schlüssel öffnen {vault} nicht (ein anderer Tresor dort?): Geben Sie sein Passwort im Formular ein",

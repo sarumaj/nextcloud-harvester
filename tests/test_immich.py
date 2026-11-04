@@ -228,6 +228,23 @@ def test_a_content_immich_has_is_adopted_and_still_filed_and_tagged(app):
     assert seeded in album["assets"] and app.immich.tags_of(seeded) == {"a", "Photos/2024"}
 
 
+def logged(app, job: Job) -> list[str]:
+    return [row["message"] for row in app.store.rows("SELECT message FROM log WHERE job = ? ORDER BY id", (job.id,))]
+
+
+def test_the_log_says_what_went_to_immich_its_album_its_tags_and_the_files_size(app):
+    seeded = app.immich.seed(b"a")
+    job = run(app, saved(app))
+    lines = logged(app, job)
+    assert "Already in Immich: a.jpg, album “Harvest 2024”" in lines
+    assert "Uploaded to Immich: b.jpg (1 B), album “Harvest 2024”" in lines, "the file's size, not the upload's"
+    assert len(app.immich.assets[by_name(app)["b.jpg"]]["body"]) > 100, "the multipart body is larger"
+    assert lines.count("Tagged in Immich: a and Photos/2024") == 1 and seeded
+    assert not [line for line in lines if line.startswith("Saved ")], "nothing said to be in the files"
+    job = run(app, saved(app, immich_album="", tags=[]))
+    assert "Already in Immich: b.jpg" in logged(app, job), "another job's, without an album"
+
+
 def test_an_existing_album_is_reused_and_labels_give_no_immich_tag(app):
     app.immich.albums["0" * 8 + "-0000-4000-8000-" + "0" * 12] = {"name": "Harvest 2024", "assets": []}
     job = run(app, saved(app, tag_as="labels"))

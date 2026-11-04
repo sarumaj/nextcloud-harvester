@@ -23,6 +23,7 @@ from typing import Any, BinaryIO
 from nc_py_api import AsyncNextcloudApp
 
 from . import destinations, immich, vaultlib
+from .l10n import Said
 from .inbox import InboxLibrary
 from .library import PrivateLibrary, Shelf
 from .nextcloud import NextcloudLibrary
@@ -62,6 +63,15 @@ class Labelled(Library):
 
     def found(self, file_id: int) -> bool:
         return self.inner.found(file_id)
+
+    def saved(self, path: str, size: str) -> Said:
+        return self.inner.saved(path, size)
+
+    def there(self, path: str) -> Said:
+        return self.inner.there(path)
+
+    def known(self, path: str) -> Said:
+        return self.inner.known(path)
 
 
 def nextcloud_files(_job: Job, nc: AsyncNextcloudApp, call: Call) -> Library:
