@@ -2843,138 +2843,357 @@
 		back.focus()
 	}
 
-	// Harvester's private library: the token that opens it to this browser (sessionStorage: the
-	// tab's session), sent with its requests and in its files' addresses.
-	const LIBRARY_TOKEN = 'harvester-library'
-	function libraryToken(value) {
-		try {
-			if (value !== undefined) sessionStorage.setItem(LIBRARY_TOKEN, value)
-			return sessionStorage.getItem(LIBRARY_TOKEN) || ''
-		} catch (e) {
-			return ''
-		}
-	}
-	const libraryApi = (method, path, body) => api(method, path, body, { 'X-Harvester-Library': libraryToken() })
-	const libraryFile = (entry, download) => `${API}/library/files/${entry.id}?unlock=${encodeURIComponent(libraryToken())}${download ? '&download=1' : ''}`
-	// Pictures up to this size are their own thumbnails in the grid; larger ones, and other files, an icon.
-	const THUMBNAIL_MOST = 3000000
+	// Harvester's private library: encrypted on the server, opened to this browser by a session.
+	// Its token is kept here, in memory only (sent as X-Harvester-Library), and where AppAPI's
+	// proxy passes cookies (state.cookie) in an HttpOnly cookie too: the files' own addresses then
+	// work in an <img> or <video>. Without the cookie, pictures are fetched with the token into
+	// blob: addresses, and a video, a sound or a PDF gets a ticket that opens that one file.
+	const PROXY_BASE = API.replace(/\/api$/, '')
+	const library = { token: '', cookie: false, blobs: [] }
+	const libraryApi = (method, path, body) => api(method, path, body, { 'X-Harvester-Library': library.token, 'X-Harvester-Base': PROXY_BASE })
 	const isPicture = (entry) => /^image\/(png|jpeg|gif|webp|avif|bmp)$/.test(entry.type)
 	const kindIcon = (entry) => entry.dir ? '📁' : isPicture(entry) ? '🖼' : entry.type.startsWith('video/') ? '🎞' : entry.type.startsWith('audio/') ? '🎵' : entry.type === 'application/pdf' ? '📄' : '📎'
+	// An upload's pieces (each a PUT through AppAPI's proxy).
+	const UPLOAD_PIECE = 8 * 1024 * 1024
 
-	// The library: by folder (or a label's files), pictures as a grid and other files as a list,
-	// a viewer, downloads and Delete; locked until unlocked when it has a password.
-	async function renderLibrary(root, folder = '/', label = '') {
+	// A file's address for an <img>, <video>, <audio>, <iframe> or a download (see above).
+	async function libraryAddress(entry, { thumbnail = false, download = false } = {}) {
+		const path = `/library/files/${entry.id}${thumbnail ? '/thumbnail' : ''}`
+		const query = download ? 'download=1' : ''
+		if (library.cookie) return `${API}${path}${query ? `?${query}` : ''}`
+		if (!download && (thumbnail || isPicture(entry))) {
+			const answer = await fetch(API + path, { headers: { requesttoken: OC.requestToken, 'X-Harvester-Library': library.token } })
+			if (!answer.ok) throw new Error(answer.statusText)
+			const address = URL.createObjectURL(await answer.blob())
+			library.blobs.push(address)
+			return address
+		}
+		const { ticket } = await libraryApi('POST', `/library/files/${entry.id}/ticket`)
+		return `${API}${path}?ticket=${encodeURIComponent(ticket)}${query ? `&${query}` : ''}`
+	}
+
+	async function libraryDownload(entry) {
+		const link = el('a', { href: await libraryAddress(entry, { download: true }), download: entry.name })
+		document.body.append(link)
+		link.click()
+		link.remove()
+	}
+
+	// A text asked for in a dialog (a name, a folder), as ask() asks a question; resolves the text,
+	// or null for Cancel.
+	function askText(question, value, label) {
+		return new Promise((resolve) => {
+			const input = el('input', { type: 'text', value })
+			const yes = el('button', { type: 'submit', class: 'primary', text: label })
+			const no = el('button', { type: 'button', text: t('Cancel') })
+			const form = el('form', { method: 'dialog' }, field(question, input), el('div', { class: 'harvester-dialog-buttons' }, no, yes))
+			const dialog = el('dialog', { class: 'harvester-dialog', 'aria-label': question }, form)
+			const opener = document.activeElement
+			const end = (answer) => {
+				dialog.close()
+				dialog.remove()
+				if (opener && opener.isConnected) opener.focus()
+				resolve(answer)
+			}
+			form.addEventListener('submit', (event) => { event.preventDefault(); end(input.value.trim() || null) })
+			no.addEventListener('click', () => end(null))
+			dialog.addEventListener('cancel', (event) => { event.preventDefault(); end(null) })
+			;(document.getElementById('harvester') || document.body).append(dialog)
+			dialog.showModal()
+			input.select()
+		})
+	}
+
+	// The library's heading, with Back and (unlocked) Lock now.
+	function libraryHeading(root, unlocked) {
 		const back = el('button', { type: 'button', text: t('Back to the jobs'), onclick: () => show(root) })
-		const error = el('p', { class: 'harvester-error', role: 'alert' })
-		const heading = el('div', { class: 'harvester-header' },
+		const lock = el('button', {
+			type: 'button',
+			text: t('Lock now'),
+			onclick: async () => {
+				await libraryApi('POST', '/library/lock').catch(() => null)
+				library.token = ''
+				library.cookie = false
+				await renderLibrary(root)
+			},
+		})
+		return el('div', { class: 'harvester-header' },
 			el('div', {}, el('h2', { text: t('Library') }),
-				el('p', { class: 'harvester-muted', text: t('The files of your jobs that save into Harvester’s private library: only you see them here, not in Files, Photos or the search.') })),
-			back)
+				el('p', { class: 'harvester-muted', text: t('Your hidden, encrypted space: only you see it, here, not in Files, Photos or the search. Jobs save into it, and you upload or move files into it.') })),
+			el('div', { class: 'harvester-header-buttons' }, unlocked ? lock : '', back))
+	}
+
+	// The library: set up (the first time), unlocked (the password, or the recovery key), then by
+	// folder (or a label's files, or what a search finds): pictures as a grid of thumbnails, other
+	// files as a list, a viewer, downloads, uploads, new folders, Rename, Move and Delete.
+	async function renderLibrary(root, folder = '/', label = '', query = '') {
+		for (const address of library.blobs.splice(0)) URL.revokeObjectURL(address)
+		const error = el('p', { class: 'harvester-error', role: 'alert' })
 		let state
+		let moves = []
 		try {
-			state = await libraryApi('GET', '/library/state')
+			;[state, moves] = await Promise.all([libraryApi('GET', '/library/state'), api('GET', '/library/moves')])
 		} catch (e) {
-			root.replaceChildren(heading, el('p', { class: 'harvester-error', role: 'alert', text: e.message }))
+			root.replaceChildren(libraryHeading(root, false), el('p', { class: 'harvester-error', role: 'alert', text: e.message }))
 			return
 		}
-		if (state.password && !state.unlocked) {
-			libraryToken('')
-			const password = el('input', { type: 'password', autocomplete: 'current-password', required: '' })
-			const unlock = el('form', {
-				class: 'harvester-form harvester-unlock',
-				onsubmit: async (event) => {
-					event.preventDefault()
-					error.textContent = ''
-					try {
-						libraryToken((await api('POST', '/library/unlock', { password: password.value })).token)
-						await renderLibrary(root, folder, label)
-					} catch (e) {
-						error.textContent = e.message
-						password.select()
-					}
-				},
-			}, field(t('Library password'), password, t('The library locks again after {minutes} minutes without use.', { minutes: state.minutes })),
-			error, el('button', { class: 'primary', type: 'submit', text: t('Unlock') }))
-			root.replaceChildren(heading, unlock)
-			password.focus()
-			return
-		}
+		library.cookie = state.cookie
+		if (!state.setup) return renderLibrarySetup(root, state, moves)
+		if (!state.unlocked) return renderLibraryUnlock(root, state, () => renderLibrary(root, folder, label, query))
 		let listed = { entries: [], labels: [] }
 		try {
-			listed = await libraryApi('GET', `/library?folder=${encodeURIComponent(folder)}&label=${encodeURIComponent(label)}`)
+			listed = await libraryApi('GET', `/library?folder=${encodeURIComponent(folder)}&label=${encodeURIComponent(label)}&q=${encodeURIComponent(query)}`)
 		} catch (e) {
 			error.textContent = e.message
 		}
-		const again = () => renderLibrary(root, folder, label)
+		const again = () => renderLibrary(root, folder, label, query)
 		const parts = folder.split('/').filter(Boolean)
 		const crumbs = el('nav', { class: 'harvester-crumbs', 'aria-label': t('Folder') },
-			el('button', { type: 'button', class: 'tertiary', text: t('Library'), onclick: () => renderLibrary(root, '/', label) }),
-			...parts.map((part, index) => el('button', { type: 'button', class: 'tertiary', text: `/ ${part}`, onclick: () => renderLibrary(root, `/${parts.slice(0, index + 1).join('/')}`, label) })))
-		const filter = el('select', { onchange: () => renderLibrary(root, folder, filter.value) },
+			el('button', { type: 'button', class: 'tertiary', text: t('Library'), onclick: () => renderLibrary(root, '/') }),
+			...parts.map((part, index) => el('button', { type: 'button', class: 'tertiary', text: `/ ${part}`, onclick: () => renderLibrary(root, `/${parts.slice(0, index + 1).join('/')}`) })))
+		const filter = el('select', { onchange: () => renderLibrary(root, folder, filter.value, query) },
 			el('option', { value: '', text: t('All files') }),
 			...listed.labels.map((name) => el('option', { value: name, text: name })))
 		filter.value = label
-		const remove = async (entry) => {
-			const question = entry.dir ? t('Delete the folder {name} with everything in it?', { name: entry.name }) : t('Delete {name}?', { name: entry.name })
-			if (!await ask(question, t('Delete'), true)) return
+		const search = el('input', { type: 'search', value: query, placeholder: t('Names and labels') })
+		const searchForm = el('form', { class: 'harvester-library-search', role: 'search', onsubmit: (event) => { event.preventDefault(); renderLibrary(root, folder, label, search.value.trim()) } },
+			field(t('Search in this folder'), search))
+		const acting = async (work) => {
+			error.textContent = ''
 			try {
-				await libraryApi('DELETE', `/library/files/${entry.id}`)
+				await work()
 				await again()
 			} catch (e) {
 				error.textContent = e.message
 			}
 		}
-		const open = (entry) => (entry.dir ? renderLibrary(root, entry.path, '') : libraryViewer(entry, remove))
+		const remove = async (entry) => {
+			const question = entry.dir ? t('Delete the folder {name} with everything in it?', { name: entry.name }) : t('Delete {name}?', { name: entry.name })
+			if (await ask(question, t('Delete'), true)) await acting(() => libraryApi('DELETE', `/library/files/${entry.id}`))
+		}
+		const rename = async (entry) => {
+			const name = await askText(t('New name'), entry.name, t('Rename'))
+			if (name && name !== entry.name) await acting(() => libraryApi('PUT', `/library/files/${entry.id}`, { name }))
+		}
+		const relocate = async (entry) => {
+			const target = await askText(t('Move to the folder (/ is the library’s top)'), folder, t('Move'))
+			if (target) await acting(() => libraryApi('PUT', `/library/files/${entry.id}`, { folder: target }))
+		}
+		const newFolder = async () => {
+			const name = await askText(t('New folder'), '', t('Make'))
+			if (name) await acting(() => libraryApi('POST', '/library/folders', { path: `${folder.replace(/\/$/, '')}/${name}` }))
+		}
+		const status = el('p', { class: 'harvester-muted', role: 'status' })
+		const upload = async (files) => {
+			error.textContent = ''
+			for (const [index, file] of [...files].entries()) {
+				try {
+					await libraryUpload(file, folder, (sent) => {
+						status.textContent = t('Uploading {name} ({done} of {count}): {percent} %', { name: file.name, done: index + 1, count: files.length, percent: Math.floor(100 * sent / (file.size || 1)) })
+					})
+				} catch (e) {
+					error.textContent = t('{name} was not uploaded: {error}', { name: file.name, error: e.message })
+					break
+				}
+			}
+			status.textContent = ''
+			await again()
+		}
+		const picker = el('input', { type: 'file', multiple: '', hidden: '', onchange: () => upload(picker.files) })
+		const open = (entry) => (entry.dir ? renderLibrary(root, entry.path) : libraryViewer(entry, remove))
 		const pictures = listed.entries.filter((entry) => !entry.dir && isPicture(entry))
 		const others = listed.entries.filter((entry) => entry.dir || !isPicture(entry))
+		const found = Boolean(label || query)
 		const usage = state.limit
 			? t('{used} of {limit} used', { used: sizeText(state.usage), limit: sizeText(state.limit) })
 			: t('{used} used', { used: sizeText(state.usage) })
-		root.replaceChildren(el('div', { class: 'harvester-library' },
-			heading,
+		const thumbnail = (entry) => {
+			const icon = el('span', { class: 'harvester-thumb-icon', 'aria-hidden': 'true', text: kindIcon(entry) })
+			if (!entry.thumb) return icon
+			const image = el('img', { alt: '', loading: 'lazy' })
+			libraryAddress(entry, { thumbnail: true }).then((address) => { image.src = address }).catch(() => image.replaceWith(icon))
+			return image
+		}
+		const view = el('div', { class: 'harvester-library' },
+			libraryHeading(root, true),
 			el('p', { class: 'harvester-muted', text: usage }),
+			await libraryMoves(root, moves, again),
+			el('div', { class: 'harvester-library-tools' },
+				searchForm,
+				listed.labels.length ? field(t('Label'), filter) : '',
+				el('button', { type: 'button', text: t('New folder'), onclick: newFolder }),
+				el('button', { type: 'button', class: 'primary', text: t('Upload'), onclick: () => picker.click() }),
+				picker),
 			crumbs,
-			listed.labels.length ? field(t('Label'), filter) : '',
-			error,
+			error, status,
 			pictures.length ? el('ul', { class: 'harvester-gallery' }, ...pictures.map((entry) => el('li', {},
-				el('button', { type: 'button', class: 'harvester-thumb', title: entry.name, onclick: () => open(entry) },
-					entry.size <= THUMBNAIL_MOST
-						? el('img', { src: libraryFile(entry), alt: entry.name, loading: 'lazy' })
-						: el('span', { class: 'harvester-thumb-icon', 'aria-hidden': 'true', text: kindIcon(entry) }),
+				el('button', { type: 'button', class: 'harvester-thumb', title: entry.path, onclick: () => open(entry) },
+					thumbnail(entry),
 					el('span', { class: 'harvester-thumb-name', text: entry.name }))))) : '',
 			others.length ? el('ul', { class: 'harvester-file-list' }, ...others.map((entry) => el('li', {},
 				el('span', { 'aria-hidden': 'true', text: kindIcon(entry) }),
-				el('button', { type: 'button', class: 'tertiary', text: entry.dir ? `${entry.name}/` : entry.name, onclick: () => open(entry) }),
+				el('button', { type: 'button', class: 'tertiary', text: found ? entry.path : entry.dir ? `${entry.name}/` : entry.name, onclick: () => open(entry) }),
 				entry.dir ? '' : el('small', { class: 'harvester-muted', text: sizeText(entry.size) }),
 				...entry.labels.map((name) => el('span', { class: 'harvester-chip', text: name })),
-				entry.dir ? '' : el('a', { class: 'button tertiary', href: libraryFile(entry, true), download: entry.name, text: t('Download') }),
+				entry.dir ? '' : el('button', { type: 'button', class: 'tertiary', text: t('Download'), onclick: () => libraryDownload(entry).catch((e) => { error.textContent = e.message }) }),
+				el('button', { type: 'button', class: 'tertiary', text: t('Rename'), onclick: () => rename(entry) }),
+				el('button', { type: 'button', class: 'tertiary', text: t('Move'), onclick: () => relocate(entry) }),
 				el('button', { type: 'button', class: 'tertiary', text: t('Delete'), onclick: () => remove(entry) })))) : '',
-			listed.entries.length ? '' : el('p', { class: 'harvester-muted', text: label ? t('No files with this label here.') : t('Nothing here yet: a job that saves into the library fills it.') }),
-			libraryLock(root, state, again)))
-		back.focus()
+			listed.entries.length ? '' : el('p', { class: 'harvester-muted', text: found ? t('Nothing found here.') : t('Nothing here yet: upload files, drop them here, move them here from Files, or let a job save here.') }),
+			libraryLock(root, state))
+		// Files dropped anywhere on the library go into the folder shown.
+		view.addEventListener('dragover', (event) => { event.preventDefault(); view.classList.add('harvester-dropping') })
+		view.addEventListener('dragleave', () => view.classList.remove('harvester-dropping'))
+		view.addEventListener('drop', (event) => {
+			event.preventDefault()
+			view.classList.remove('harvester-dropping')
+			if (event.dataTransfer && event.dataTransfer.files.length) upload(event.dataTransfer.files)
+		})
+		root.replaceChildren(view)
+	}
+
+	// A file from the computer into the library: announced, then sent in pieces, each encrypted
+	// on the server as it comes (the library may be locked: writing needs no password).
+	async function libraryUpload(file, folder, progress) {
+		const { upload } = await api('POST', '/library/uploads', { folder, name: file.name, size: file.size })
+		for (let offset = 0; offset < file.size; offset += UPLOAD_PIECE) {
+			const answer = await fetch(`${API}/library/uploads/${encodeURIComponent(upload)}?offset=${offset}`, {
+				method: 'PUT',
+				headers: { requesttoken: OC.requestToken, 'Content-Type': 'application/octet-stream' },
+				body: file.slice(offset, offset + UPLOAD_PIECE),
+			})
+			if (!answer.ok) {
+				const data = await answer.json().catch(() => ({}))
+				throw new Error(said(data.detail) || answer.statusText)
+			}
+			progress(Math.min(file.size, offset + UPLOAD_PIECE))
+		}
+		return api('POST', `/library/uploads/${encodeURIComponent(upload)}/done`)
+	}
+
+	// The first time: what the library is, a password (twice), then the recovery key shown once,
+	// which the person types back before the library is made.
+	function renderLibrarySetup(root, state, moves) {
+		const error = el('p', { class: 'harvester-error', role: 'alert' })
+		const password = el('input', { type: 'password', autocomplete: 'new-password', minlength: '8', required: '' })
+		const repeat = el('input', { type: 'password', autocomplete: 'new-password', required: '' })
+		const minutes = el('input', { type: 'number', min: '1', max: '1440', value: String(state.minutes) })
+		const waiting = moves.some((move) => !move.started)
+		const first = el('form', {
+			class: 'harvester-form harvester-library-setup',
+			onsubmit: async (event) => {
+				event.preventDefault()
+				error.textContent = ''
+				if (password.value !== repeat.value) {
+					error.textContent = t('The passwords differ.')
+					return
+				}
+				try {
+					const { recovery } = await api('POST', '/library/setup/start')
+					root.replaceChildren(libraryHeading(root, false), recoveryStep(recovery))
+				} catch (e) {
+					error.textContent = e.message
+				}
+			},
+		},
+		el('p', { text: t('Set up your library: everything in it is encrypted on the server (contents, names, folders, labels, thumbnails) with a key that only your password opens. Files are written into it while it is locked; to see them, you unlock it.') }),
+		waiting ? el('p', { class: 'harvester-notice', text: t('The files you chose in Files wait for your library: set it up, then move them.') }) : '',
+		field(t('Library password'), password, t('8 characters at least. Not your Nextcloud password: the server’s admin cannot reset it.')),
+		field(t('The password again'), repeat),
+		field(t('Minutes unlocked without use'), minutes),
+		error,
+		el('button', { class: 'primary', type: 'submit', text: t('Next: your recovery key') }))
+		const recoveryStep = (recovery) => {
+			const typed = el('input', { type: 'text', autocomplete: 'off', spellcheck: 'false', required: '' })
+			const saved = el('input', { type: 'checkbox', required: '' })
+			const stepError = el('p', { class: 'harvester-error', role: 'alert' })
+			const keyFile = URL.createObjectURL(new Blob([`${t('Harvester library recovery key')}\n${recovery}\n`], { type: 'text/plain' }))
+			return el('form', {
+				class: 'harvester-form harvester-library-setup',
+				onsubmit: async (event) => {
+					event.preventDefault()
+					stepError.textContent = ''
+					try {
+						const answer = await libraryApi('POST', '/library/setup', { password: password.value, recovery: typed.value, minutes: Number(minutes.value) })
+						library.token = answer.token
+						URL.revokeObjectURL(keyFile)
+						await renderLibrary(root)
+					} catch (e) {
+						stepError.textContent = e.message
+					}
+				},
+			},
+			el('p', { text: t('Your recovery key opens the library when you forget the password. It is shown only now: write it down or save it somewhere safe, outside this Nextcloud. Without the password and the recovery key, nobody can open your files, the admin neither.') }),
+			el('p', {}, el('code', { class: 'harvester-recovery-key', text: recovery })),
+			el('p', { class: 'harvester-header-buttons' },
+				el('button', { type: 'button', text: t('Copy'), onclick: () => navigator.clipboard && navigator.clipboard.writeText(recovery) }),
+				el('a', { class: 'button', href: keyFile, download: 'harvester-recovery-key.txt', text: t('Save as a file') })),
+			el('label', { class: 'harvester-check' }, saved, t('I saved my recovery key.')),
+			field(t('Type the recovery key again'), typed),
+			stepError,
+			el('button', { class: 'primary', type: 'submit', text: t('Set up the library') }))
+		}
+		root.replaceChildren(libraryHeading(root, false), first)
+		password.focus()
+	}
+
+	// Locked: the password, or (forgotten) the recovery key and a new password.
+	function renderLibraryUnlock(root, state, then) {
+		const error = el('p', { class: 'harvester-error', role: 'alert' })
+		const password = el('input', { type: 'password', autocomplete: 'current-password', required: '' })
+		const unlock = el('form', {
+			class: 'harvester-form harvester-unlock',
+			onsubmit: async (event) => {
+				event.preventDefault()
+				error.textContent = ''
+				try {
+					library.token = (await libraryApi('POST', '/library/unlock', { password: password.value })).token
+					await then()
+				} catch (e) {
+					error.textContent = e.message
+					password.select()
+				}
+			},
+		}, field(t('Library password'), password, t('The library locks again after {minutes} minutes without use.', { minutes: state.minutes })),
+		error, el('button', { class: 'primary', type: 'submit', text: t('Unlock') }))
+		const recovery = el('input', { type: 'text', autocomplete: 'off', spellcheck: 'false', required: '' })
+		const fresh = el('input', { type: 'password', autocomplete: 'new-password', minlength: '8', required: '' })
+		const recoverError = el('p', { class: 'harvester-error', role: 'alert' })
+		const recover = el('details', { class: 'harvester-group' },
+			el('summary', {}, el('span', { text: t('Forgot the password?') })),
+			el('form', {
+				class: 'harvester-form',
+				onsubmit: async (event) => {
+					event.preventDefault()
+					recoverError.textContent = ''
+					try {
+						library.token = (await libraryApi('POST', '/library/recover', { recovery: recovery.value, password: fresh.value })).token
+						await then()
+					} catch (e) {
+						recoverError.textContent = e.message
+					}
+				},
+			},
+			field(t('Recovery key'), recovery, t('The key shown when you set the library up.')),
+			field(t('New password'), fresh, t('8 characters at least.')),
+			recoverError,
+			el('button', { class: 'primary', type: 'submit', text: t('Unlock and set the password') })))
+		root.replaceChildren(libraryHeading(root, false), unlock, recover)
+		password.focus()
 	}
 
 	// A file of the library in a dialog: a picture, a video or sound (streamed, with seeking), a
 	// PDF or plain text; anything else downloaded.
-	function libraryViewer(entry, remove) {
-		const address = libraryFile(entry)
-		let content
-		if (isPicture(entry)) content = el('img', { src: address, alt: entry.name })
-		else if (entry.type.startsWith('video/')) content = el('video', { src: address, controls: '', preload: 'metadata' })
-		else if (entry.type.startsWith('audio/')) content = el('audio', { src: address, controls: '', preload: 'metadata' })
-		else if (entry.type === 'application/pdf') content = el('iframe', { src: address, title: entry.name })
-		else if (entry.type === 'text/plain') {
-			content = el('pre', { class: 'harvester-text-file', text: t('Loading…') })
-			fetch(address).then((answer) => answer.text()).then((text) => { content.textContent = text }).catch((e) => { content.textContent = e.message })
-		} else content = el('p', { class: 'harvester-muted', text: t('No preview of this kind of file: download it.') })
+	async function libraryViewer(entry, remove) {
 		const title = el('h3', { id: 'harvester-viewer-title', text: entry.name })
 		const close = el('button', { type: 'button', text: t('Close') })
+		const content = el('div', { class: 'harvester-viewer-content' }, el('p', { class: 'harvester-muted', text: t('Loading…') }))
 		const dialog = el('dialog', { class: 'harvester-dialog harvester-viewer', 'aria-labelledby': title.id },
 			title,
 			el('p', { class: 'harvester-muted' }, sizeText(entry.size), ...entry.labels.map((name) => el('span', { class: 'harvester-chip', text: name }))),
 			content,
 			el('div', { class: 'harvester-dialog-buttons' },
-				el('a', { class: 'button', href: libraryFile(entry, true), download: entry.name, text: t('Download') }),
+				el('button', { type: 'button', text: t('Download'), onclick: () => libraryDownload(entry) }),
 				el('button', { type: 'button', class: 'error', text: t('Delete'), onclick: () => { end(); remove(entry) } }),
 				close))
 		const opener = document.activeElement
@@ -2988,46 +3207,101 @@
 		;(document.getElementById('harvester') || document.body).append(dialog)
 		dialog.showModal()
 		close.focus()
+		const shown = isPicture(entry) || /^(video|audio)\//.test(entry.type) || ['application/pdf', 'text/plain'].includes(entry.type)
+		if (!shown) {
+			content.replaceChildren(el('p', { class: 'harvester-muted', text: t('No preview of this kind of file: download it.') }))
+			return
+		}
+		try {
+			const address = await libraryAddress(entry)
+			if (isPicture(entry)) content.replaceChildren(el('img', { src: address, alt: entry.name }))
+			else if (entry.type.startsWith('video/')) content.replaceChildren(el('video', { src: address, controls: '', preload: 'metadata' }))
+			else if (entry.type.startsWith('audio/')) content.replaceChildren(el('audio', { src: address, controls: '', preload: 'metadata' }))
+			else if (entry.type === 'application/pdf') content.replaceChildren(el('iframe', { src: address, title: entry.name }))
+			else {
+				const text = await (await fetch(address, { headers: { requesttoken: OC.requestToken, 'X-Harvester-Library': library.token } })).text()
+				content.replaceChildren(el('pre', { class: 'harvester-text-file', text }))
+			}
+		} catch (e) {
+			content.replaceChildren(el('p', { class: 'harvester-error', role: 'alert', text: e.message }))
+		}
 	}
 
-	// The library's password (folded): set, change or remove it, the minutes it stays unlocked
-	// without use, and Lock now.
-	function libraryLock(root, state, again) {
-		const current = el('input', { type: 'password', autocomplete: 'current-password' })
+	// Moves from Files (the Files action Move to the private library): a proposed one, with the
+	// library folder it goes into and Move; one under way with each file's state (asked again
+	// every 2 seconds while the library is shown); an ended one with how it went.
+	async function libraryMoves(root, moves, again) {
+		if (!moves.length) return ''
+		const box = el('section', { class: 'harvester-group harvester-moves', 'aria-label': t('From Files') })
+		const states = { waiting: t('waiting'), moving: t('moving'), moved: t('moved'), failed: t('failed') }
+		for (const move of moves.slice(0, 3)) {
+			if (!move.started) {
+				const folderInput = el('input', { type: 'text', value: move.folder })
+				const error = el('p', { class: 'harvester-error', role: 'alert' })
+				box.append(el('form', {
+					class: 'harvester-form',
+					onsubmit: async (event) => {
+						event.preventDefault()
+						try {
+							await api('POST', `/library/moves/${encodeURIComponent(move.id)}/start`, { folder: folderInput.value })
+							await again()
+						} catch (e) {
+							error.textContent = e.message
+						}
+					},
+				},
+				el('h3', { text: n('Move %n item from Files', 'Move %n items from Files', move.selected.length) }),
+				el('ul', {}, ...move.selected.slice(0, 20).map((item) => el('li', { text: `${item.directory ? `${item.directory.replace(/\/$/, '')}/` : ''}${item.name}${item.dir ? '/' : ''}` }))),
+				el('p', { class: 'harvester-muted', text: t('Each file is encrypted into your library and checked; then it is deleted from Files, with its versions, and from the trash bin. A file that fails stays where it was.') }),
+				field(t('Into the library folder'), folderInput),
+				error,
+				el('button', { class: 'primary', type: 'submit', text: t('Move') })))
+				continue
+			}
+			const counts = { moved: 0, failed: 0 }
+			for (const item of move.items) if (item.state in counts) counts[item.state] += 1
+			box.append(el('div', {},
+				el('h3', { text: move.ended ? t('Moved from Files: {moved} moved, {failed} failed', counts) : t('Moving from Files…') }),
+				move.problem ? el('p', { class: 'harvester-error', role: 'alert', text: said(move.problem) }) : '',
+				move.trash ? el('p', { class: 'harvester-error', text: said(move.trash) }) : '',
+				el('ul', { class: 'harvester-file-list' }, ...move.items.map((item) => el('li', {},
+					el('code', { text: item.path }),
+					el('span', { class: `harvester-chip harvester-move-${item.state}`, text: states[item.state] || item.state }),
+					item.state === 'moved' ? el('small', { class: 'harvester-muted', text: `→ ${item.target}` }) : '',
+					item.message ? el('small', { class: 'harvester-error', text: said(item.message) }) : '')))))
+		}
+		if (moves.some((move) => move.started && !move.ended)) {
+			setTimeout(() => { if (box.isConnected) again() }, 2000)
+		}
+		return box
+	}
+
+	// The library's password (folded): change it (the current one given) and the minutes it stays
+	// unlocked without use.
+	function libraryLock(root, state) {
+		const current = el('input', { type: 'password', autocomplete: 'current-password', required: '' })
 		const password = el('input', { type: 'password', autocomplete: 'new-password', minlength: '8' })
 		const minutes = el('input', { type: 'number', min: '1', max: '1440', value: String(state.minutes) })
 		const error = el('p', { class: 'harvester-error', role: 'alert' })
-		const status = el('p', { class: 'harvester-muted', role: 'status' })
 		const save = async (event) => {
 			event.preventDefault()
 			error.textContent = ''
 			try {
-				await api('PUT', '/library/password', { current: current.value, password: password.value, minutes: Number(minutes.value) })
-				libraryToken('')
-				if (password.value) libraryToken((await api('POST', '/library/unlock', { password: password.value })).token)
-				await again()
+				library.token = (await libraryApi('PUT', '/library/password', { current: current.value, password: password.value, minutes: Number(minutes.value) })).token
+				await renderLibrary(root)
 			} catch (e) {
 				error.textContent = e.message
 			}
 		}
 		return el('details', { class: 'harvester-group harvester-library-lock' },
-			el('summary', {}, el('span', { text: state.password ? t('Library password: set') : t('Lock with a password') })),
+			el('summary', {}, el('span', { text: t('Library password') })),
 			el('form', { class: 'harvester-form', onsubmit: save },
-				el('p', { class: 'harvester-muted', text: t('Asked for in each browser, and again after the minutes below without use. The files are not encrypted on the server: the password keeps out whoever uses your open Nextcloud, not the server’s admin. A forgotten password only the admin can remove.') }),
-				state.password ? field(t('Current password'), current) : '',
-				field(state.password ? t('New password (empty: no password)') : t('Password'), password, t('8 characters at least.')),
+				el('p', { class: 'harvester-muted', text: t('Asked for in each browser, and again after the minutes below without use. Changing it signs out your other browsers. Your recovery key stays the same.') }),
+				field(t('Current password'), current),
+				field(t('New password (empty: the same)'), password, t('8 characters at least.')),
 				field(t('Minutes unlocked without use'), minutes),
-				error, status,
-				el('button', { class: 'primary', type: 'submit', text: t('Save password') }),
-				state.password ? el('button', {
-					type: 'button',
-					text: t('Lock now'),
-					onclick: async () => {
-						await libraryApi('POST', '/library/lock').catch(() => null)
-						libraryToken('')
-						await renderLibrary(root)
-					},
-				}) : ''))
+				error,
+				el('button', { class: 'primary', type: 'submit', text: t('Save') })))
 	}
 
 	// Save to and Tag as (destinations.py): where the job's files go, the fields each place needs
@@ -3790,6 +4064,13 @@
 		#harvester .harvester-file-list { list-style: none; padding: 0; margin: 12px 0; }
 		#harvester .harvester-file-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 4px 0; border-bottom: 1px solid var(--color-border); }
 		#harvester .harvester-file-list code { overflow-wrap: anywhere; }
+		#harvester .harvester-library-tools { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; margin: 8px 0; }
+		#harvester .harvester-library-tools .harvester-field { margin: 0; }
+		#harvester .harvester-library.harvester-dropping { outline: 2px dashed var(--color-primary-element); outline-offset: 4px; }
+		#harvester .harvester-recovery-key { display: inline-block; padding: 8px 12px; font-size: 1.2em; letter-spacing: 0.05em; user-select: all; background: var(--color-background-dark); border-radius: var(--border-radius); }
+		#harvester .harvester-moves { margin: 12px 0; }
+		#harvester .harvester-move-moved { background: var(--color-success); color: var(--color-primary-element-text, #fff); }
+		#harvester .harvester-move-failed { background: var(--color-error); color: var(--color-primary-element-text, #fff); }
 		.harvester-viewer { max-width: min(96vw, 1100px); width: 96vw; }
 		.harvester-viewer img, .harvester-viewer video { max-width: 100%; max-height: 70vh; display: block; margin: 0 auto; }
 		.harvester-viewer audio { width: 100%; }
@@ -3812,6 +4093,15 @@
 		} catch (e) {
 			// Without the sources no form can be drawn: say why instead of an empty page.
 			root.replaceChildren(el('p', { class: 'harvester-error', role: 'alert', text: `Harvester: ${e.message}` }))
+			return
+		}
+		// Opened by Files' action Move to the private library (?fileIds=): the library, with the
+		// move it proposed; the page's own address loses it.
+		if (new URLSearchParams(location.search).has('fileIds')) {
+			const rest = new URLSearchParams(location.search)
+			rest.delete('fileIds')
+			history.replaceState(history.state, '', `${location.pathname}${rest.toString() ? `?${rest}` : ''}${location.hash}`)
+			renderLibrary(root)
 			return
 		}
 		// Opened by the bookmarklet: the address is asked about once, and the page's own address
