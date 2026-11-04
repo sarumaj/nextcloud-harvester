@@ -98,6 +98,14 @@ def test_yt_dlps_tags_and_categories_are_lists_for_tags():
     assert "tags" not in media({}).item("Example:v6", video(6, tags=None)).values
 
 
+def test_a_title_ending_in_a_dot_gives_one_dot_before_the_extension():
+    item = media({}, path="{title}.{ext}").item("Example:v7", video(7, title="We tried.", ext="mp3"))
+    assert item.path == "We tried.mp3" and item.values["filename"] == "We tried.mp3"
+    assert (
+        media({}, path="{filename}").item("Example:v7", video(7, title="We tried.", ext="mp3")).path == "We tried.mp3"
+    )
+
+
 def test_a_single_video_and_its_download():
     page = video(4)["webpage_url"]
     source = media({page: video(4)}, url=page)

@@ -41,6 +41,19 @@ def test_values_and_templates():
     assert render_tags(["iX", "{year}", "{missing}", ""], values) == ["iX", "2025"]
 
 
+def test_a_values_last_dot_never_doubles_the_extensions():
+    assert render_path("{title}.{ext}", {"title": "We tried.", "ext": "mp3"}) == "We tried.mp3"
+    assert render_path("{title}.{ext}", {"title": "Wait...", "ext": "mp3"}) == "Wait.mp3"
+    assert render_path("{a}/{title}.mp3", {"a": "Vol. 2.", "title": "x."}) == "Vol. 2/x.mp3", "a folder's too"
+    # Dots elsewhere stay: inside a value, before no dot, and the template's own.
+    assert render_path("{title}.{ext}", {"title": "a..b", "ext": "pdf"}) == "a..b.pdf"
+    assert render_path("{title} - {n}.pdf", {"title": "Mr.", "n": 1}) == "Mr. - 1.pdf"
+    assert render_path("{n:02d}..{ext}", {"n": 3, "ext": "pdf"}) == "03..pdf"
+    assert render_path("{title}.tar.gz", {"title": "v1."}) == "v1.tar.gz"
+    assert render_path("{stem}{ext}", {"stem": "Done.", "ext": ".jpg"}) == "Done.jpg", "a value's dot too"
+    assert render_path("{stem}{ext}", {"stem": "Done.", "ext": ""}) == "Done", "a part's last dot as before"
+
+
 def test_a_list_value_alone_is_a_tag_per_entry_and_joined_elsewhere():
     values = {"tags": ["sky", " blue  sky ", "", "sky", "x" * 80], "year": 2026}
     assert render_tags(["{tags}", " {year} "], values) == ["sky", "blue sky", "x" * 64, "2026"]

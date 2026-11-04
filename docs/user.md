@@ -565,7 +565,8 @@ is a job like any other; what you upload or move there leaves no name in plain.
   (`Content-Disposition`, `filename*` before `filename`; else the last part of the address it
   came from), without folders, control characters or leading dots, 200 characters at most. Such a
   file is downloaded first and then put where its name says; what tells it apart from the next
-  run's files is still its link.
+  run's files is still its link. A value's last dots before a dot are dropped: a title
+  `We tried.` in `{title}.{ext}` gives `We tried.mp3`, in every source's *File name*.
 - **More of a recipe:** a fill step's value may hold dates, filled in at each run in the job's
   time zone: `{today}` (`2026-11-02`), `{today-30d:%d.%m.%Y}`, `{today+1w}`, `{today-1m}`,
   `{year}`, `{year-1}`, `{month:02d}`, `{day}`; other braces are typed as they are. The file

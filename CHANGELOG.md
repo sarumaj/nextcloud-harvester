@@ -7,6 +7,8 @@
 - The progress log names where a file went: *Uploaded to Immich: a.jpg (2.1 MB), album “Trip”*,
   *Already in Immich*, *Tagged in Immich*, *Saved in your library*, *Saved in the vault …*,
   rather than *Saved /folder/a.jpg* as if it were in Files. The size is the file's.
+- A file name from a value ending in a dot before the extension's (a title "We tried." in
+  `{title}.{ext}`, yt-dlp's `{filename}`) has one dot, not `We tried..mp3`.
 
 ## 0.14.0 - 2026-11-04
 

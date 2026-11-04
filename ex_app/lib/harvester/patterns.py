@@ -159,11 +159,30 @@ def render(template: str, values: dict, giver: str = "the link pattern") -> str:
     return template.format(**flat(values))
 
 
+def _named(template: str, values: dict) -> str:
+    """The template filled in as a file's name: a value ending in dots right before a dot (the
+    template's own in "{title}.{ext}", or a value's: "{stem}{ext}" with ext ".mp3") without them,
+    so that a title "Tried." gives no ".." before the extension; dots elsewhere stay."""
+    shown = flat(values)
+    pieces: list[tuple[str, bool]] = []
+    for text, name, spec, conversion in Formatter().parse(template):
+        pieces.append((text, False))
+        if name is not None:
+            field = "{" + name + (f"!{conversion}" if conversion else "") + (f":{spec}" if spec else "") + "}"
+            pieces.append((field.format(**shown), True))
+    made = []
+    for number, (text, value) in enumerate(pieces):
+        following = next((after for after, _ in pieces[number + 1 :] if after), "")
+        made.append(text.rstrip(".") if value and following.startswith(".") else text)
+    return "".join(made)
+
+
 def render_path(template: str, values: dict, giver: str = "the link pattern") -> str:
     """The file's path from the template, without leaving the job's folder; each part without
     what Nextcloud refuses in a name (control characters, backslashes, leading or trailing
-    spaces and trailing dots)."""
-    path = posixpath.normpath("/" + render(template, values, giver)).lstrip("/")
+    spaces and trailing dots), and no value's own last dot doubling the extension's (_named)."""
+    render(template, values, giver)
+    path = posixpath.normpath("/" + _named(template, values)).lstrip("/")
     parts = []
     for part in path.split("/"):
         part = re.sub(r"[\x00-\x1f\x7f\\]+", " ", part).strip().rstrip(".").strip()

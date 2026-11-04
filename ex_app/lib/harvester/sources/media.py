@@ -324,7 +324,7 @@ class Media(Source):
             "ext": ext,
             "url": info.get("webpage_url") or "",
         } | dated(info.get("upload_date"))
-        values |= {"filename": f"{values['title']}.{ext}", "stem": values["title"]}
+        values |= {"filename": f"{values['title'].rstrip('.')}.{ext}", "stem": values["title"]}
         # yt-dlp's tags and categories: lists, a tag per entry in a job's Tags ({tags}).
         values |= {
             name: [str(entry) for entry in info[name]]
