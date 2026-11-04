@@ -3304,8 +3304,81 @@
 				el('button', { class: 'primary', type: 'submit', text: t('Save') })))
 	}
 
+	// The person's Immich account (routes/immich.py): its server (the admin's unless they type
+	// another) and their API key, tested as it is saved (its email shown); the key is never sent
+	// back, the page learns only whether one is kept. Each job saving to Immich uses it.
+	function immichAccount() {
+		const url = el('input', { type: 'url', 'data-field': 'immich-url', placeholder: 'https://photos.example.org' })
+		const key = el('input', { type: 'password', autocomplete: 'off', 'data-field': 'immich-key' })
+		const state = el('p', { class: 'harvester-muted', role: 'status' })
+		const error = el('p', { class: 'harvester-error', role: 'alert' })
+		const forget = el('button', { type: 'button', text: t('Forget') })
+		const test = el('button', { type: 'button', text: t('Test') })
+		const signedIn = (me) => {
+			state.textContent = t('Connected to Immich as {email}.', { email: me.email || me.name })
+			error.textContent = ''
+		}
+		const failed = (e) => {
+			error.textContent = e.message
+		}
+		const load = async () => {
+			try {
+				const account = await api('GET', '/immich')
+				url.value = account.url
+				if (account.preset) url.placeholder = account.preset
+				state.textContent = account.key ? t('An API key is kept.') : t('No API key yet: jobs cannot save to Immich.')
+				test.hidden = forget.hidden = !account.key
+			} catch (e) {
+				failed(e)
+			}
+		}
+		const save = async (event) => {
+			event.preventDefault()
+			try {
+				signedIn(await api('PUT', '/immich', { url: url.value.trim(), key: key.value }))
+				key.value = ''
+				test.hidden = forget.hidden = false
+			} catch (e) {
+				failed(e)
+			}
+		}
+		test.addEventListener('click', async () => {
+			try {
+				signedIn(await api('POST', '/immich/test'))
+			} catch (e) {
+				failed(e)
+			}
+		})
+		forget.addEventListener('click', async () => {
+			try {
+				await api('DELETE', '/immich')
+				await load()
+			} catch (e) {
+				failed(e)
+			}
+		})
+		const box = el('details', { class: 'harvester-group harvester-immich-account' },
+			el('summary', {}, el('span', { text: t('Your Immich account') })),
+			el('div', { class: 'harvester-form' },
+				el('p', { class: 'harvester-muted', text: t('Yours, for every job that saves to Immich. Make an API key in Immich (Account settings, API keys) with the permissions user.read, asset.upload, asset.read, album.read, album.create, albumAsset.create, tag.read, tag.create and tag.asset.') }),
+				field(t('Server'), url, t('Empty: the server your admin set, if any.')),
+				field(t('API key'), key, t('Kept encrypted in Nextcloud, never shown again. Empty: the one kept.')),
+				state,
+				error,
+				el('div', { class: 'harvester-immich-buttons' },
+					el('button', { type: 'button', class: 'primary', text: t('Save and test'), onclick: save }), test, forget)))
+		// Asked for once, when Immich is chosen.
+		let loaded = false
+		box.load = () => {
+			if (!loaded) load()
+			loaded = true
+		}
+		return box
+	}
+
 	// Save to and Tag as (destinations.py): where the job's files go, the fields each place needs
-	// (the vault's folder, the folder inside it, its password once), and what it switches off of
+	// (the vault's folder, the folder inside it, its password once; Immich's album and the
+	// person's account), and what it switches off of
 	// the other options, with why (the source's save_rules). Fills inputs and fields (the form's
 	// optionInputs and optionFields) with its options; folderHelp is the Folder field's help.
 	function saveSection(value, chosen, inputs, fields, folderHelp, job) {
@@ -3315,13 +3388,18 @@
 			el('option', { value: 'files', text: t('Your files') }),
 			el('option', { value: 'library', text: t('Harvester’s private library') }),
 			el('option', { value: 'inbox', text: t('A Cryptomator vault’s inbox') }),
-			el('option', { value: 'vault', text: t('A Cryptomator vault (encrypted on the server)') }))
+			el('option', { value: 'vault', text: t('A Cryptomator vault (encrypted on the server)') }),
+			el('option', { value: 'immich', text: t('Immich (photos and videos)') }))
 		place.value = current('save_to') || 'files'
 		const tagAs = el('select', { 'data-option': 'tag_as' },
 			el('option', { value: 'nextcloud', text: t('Nextcloud tags') }),
+			el('option', { value: 'immich', text: t('Immich’s tags') }),
 			el('option', { value: 'labels', text: t('Harvester’s labels') }),
 			el('option', { value: 'none', text: t('None') }))
-		tagAs.value = 'tag_as' in value.options ? value.options.tag_as : (place.value === 'files' ? 'nextcloud' : 'labels')
+		// The tags of a place's own: Nextcloud's in the files, Immich's in Immich.
+		const ownTags = { files: 'nextcloud', immich: 'immich' }
+		tagAs.value = 'tag_as' in value.options ? value.options.tag_as : (ownTags[place.value] || 'labels')
+		const album = el('input', { value: current('immich_album'), placeholder: 'Harvester {year}', 'data-option': 'immich_album' })
 		const vault = el('input', { value: current('vault'), placeholder: '/Vaults/Papers', 'data-option': 'vault' })
 		const inside = el('input', { value: current('vault_target'), 'data-option': 'vault_target' })
 		const verify = el('input', { type: 'checkbox', 'data-option': 'vault_verify' })
@@ -3332,8 +3410,9 @@
 		inputs.tag_as = tagAs
 		inputs.vault = vault
 		inputs.vault_target = inside
+		inputs.immich_album = album
 		inputs.vault_verify = { get value() { return verify.checked ? 1 : 0 } }
-		Object.assign(fields, { save_to: place, tag_as: tagAs, vault, vault_target: inside, vault_verify: verify })
+		Object.assign(fields, { save_to: place, tag_as: tagAs, vault, vault_target: inside, vault_verify: verify, immich_album: album })
 		const tagHelp = el('small', { class: 'harvester-field-help' })
 		const vaultBox = field(t('Vault'), vault, t('The vault’s folder in your files: the folder holding vault.cryptomator.'))
 		const insideBox = field(t('Folder in the vault'), inside, t('Where the vault app puts the inbox’s files (/ is the vault’s top). Its name is stored unencrypted in the inbox’s marker.'))
@@ -3345,6 +3424,9 @@
 		const passwordBox = el('div', {},
 			field(t('Vault password'), password, t('Typed once: the server unlocks the vault with it and keeps only the vault’s keys (encrypted in Nextcloud), never the password.')),
 			keyState)
+		const albumBox = field(t('Album'), album, t('The album the photos and videos go into, made if there is none of its name; the file’s values may make it, e.g. Magazines {year}. Empty: none.'))
+		const account = immichAccount()
+		const immichNote = el('p', { class: 'harvester-muted', text: t('Only photos and videos go to Immich; the job skips other files for good.') })
 		const inboxNote = el('p', { class: 'harvester-muted', text: t('When you unlock the vault in Vaults for Cryptomator, it moves the inbox’s files into the vault and deletes the plain copies. Until then they are plain files on the server.') })
 		const reasons = {}
 		const update = () => {
@@ -3356,24 +3438,32 @@
 			verifyBox.hidden = where !== 'vault'
 			warning.hidden = where !== 'vault'
 			passwordBox.hidden = where !== 'vault'
+			albumBox.hidden = account.hidden = immichNote.hidden = where !== 'immich'
+			if (where === 'immich') account.load()
 			folderHelp.textContent = {
 				files: t('In your files, e.g. /Magazines/iX.'),
 				library: t('A folder of your library, e.g. /Magazines.'),
 				inbox: t('The inbox: a folder of its own in your files, beside the vault, e.g. /Vaults/Papers inbox.'),
 				vault: t('A folder inside the vault, e.g. /Magazines (/ is its top).'),
+				immich: t('Immich has no folders: the folder only tells the job’s files apart, e.g. /Photos.'),
 			}[where]
-			const nextcloud = tagAs.querySelector('option[value="nextcloud"]')
-			nextcloud.disabled = where !== 'files'
-			if (nextcloud.disabled && tagAs.value === 'nextcloud') tagAs.value = 'labels'
-			tagHelp.textContent = where !== 'files'
-				? t('No Nextcloud tags outside your files: labels (only in Harvester) or none.')
-				: tagAs.value === 'nextcloud'
-					? t('Nextcloud’s tags are everyone’s: other people see the tags’ names in their lists of tags (not your files).')
-					: t('Labels are Harvester’s own: the job’s Files and the library show them; no other app sees them.')
+			for (const [owner, tags] of Object.entries(ownTags)) {
+				const option = tagAs.querySelector(`option[value="${tags}"]`)
+				option.disabled = where !== owner
+				option.hidden = where !== owner
+			}
+			if (tagAs.selectedOptions[0] && tagAs.selectedOptions[0].disabled) tagAs.value = ownTags[where] || 'labels'
+			tagHelp.textContent = tagAs.value === 'immich'
+				? t('Immich’s tags are yours, in Immich; a/b is the tag b inside a.')
+				: !ownTags[where]
+					? t('No Nextcloud tags outside your files: labels (only in Harvester) or none.')
+					: tagAs.value === 'nextcloud'
+						? t('Nextcloud’s tags are everyone’s: other people see the tags’ names in their lists of tags (not your files).')
+						: t('Labels are Harvester’s own: the job’s Files and the library show them; no other app sees them.')
 			// What this place switches off, with why; the others as they were.
 			const rules = (chosen.save_rules || {})[where] || {}
 			for (const [key, node] of Object.entries(fields)) {
-				if (['save_to', 'tag_as', 'vault', 'vault_target', 'vault_verify'].includes(key) || !node || node.disabled === undefined) continue
+				if (['save_to', 'tag_as', 'vault', 'vault_target', 'vault_verify', 'immich_album'].includes(key) || !node || node.disabled === undefined) continue
 				const off = key in rules
 				node.disabled = off
 				if (off && !reasons[key]) {
@@ -3395,7 +3485,7 @@
 		const section = el('fieldset', { class: 'harvester-save' },
 			el('legend', { text: t('Save to') }),
 			field(t('Save to'), place),
-			vaultBox, insideBox, inboxNote, verifyBox, warning, passwordBox,
+			vaultBox, insideBox, inboxNote, verifyBox, warning, passwordBox, immichNote, albumBox, account,
 			el('div', { class: 'harvester-field-box' }, field(t('Tag as'), tagAs), tagHelp))
 		return {
 			section,
@@ -4054,6 +4144,7 @@
 		#harvester .harvester-vault-warning p { margin: 4px 0; padding: 4px 8px; border-inline-start: 3px solid var(--color-error); font-weight: bold; }
 		#harvester .harvester-header-buttons { display: flex; flex-wrap: wrap; gap: 4px; }
 		#harvester .harvester-save { border: 1px solid var(--color-border); border-radius: var(--border-radius-large); padding: 8px 12px; margin: 8px 0; max-width: 760px; }
+		#harvester .harvester-immich-buttons { display: flex; flex-wrap: wrap; gap: 4px; }
 		#harvester .harvester-off-reason { display: block; margin: 0 0 8px 28px; color: var(--color-text-maxcontrast); }
 		#harvester .harvester-crumbs { display: flex; flex-wrap: wrap; gap: 2px; margin: 8px 0; }
 		#harvester .harvester-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; list-style: none; padding: 0; margin: 12px 0; }

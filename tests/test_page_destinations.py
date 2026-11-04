@@ -106,6 +106,40 @@ def test_save_to_shows_each_places_fields_and_switches_off_what_it_cannot_do(pag
 
 
 @needs_chromium
+def test_save_to_immich_shows_the_album_and_the_persons_account(page):
+    answering(
+        page,
+        {
+            "PUT /jobs/1": {"id": 1, "name": "Mag"},
+            "GET /immich": {"url": "", "preset": "https://photos.example.org", "key": False, "http": False},
+            "PUT /immich": {"email": "anna@example.org", "name": "Anna Example"},
+        },
+    )
+    page.get_by_role("button", name="Edit").click()
+    page.locator("select[data-option=save_to]").select_option("immich")
+    tag_as = page.locator("select[data-option=tag_as]")
+    assert tag_as.input_value() == "immich", "Immich's own tags, as Nextcloud's in the files"
+    assert page.locator("select[data-option=tag_as] option[value=nextcloud]").evaluate("o => o.disabled")
+    assert page.locator("input[data-option=recheck]").is_disabled()
+    account = page.locator(".harvester-immich-account")
+    account.locator("summary").click()
+    page.wait_for_function("() => document.querySelector('[data-field=immich-url]').placeholder.includes('photos')")
+    assert "No API key yet" in account.inner_text()
+    page.locator("input[data-field=immich-key]").fill("immich secret")
+    account.get_by_role("button", name="Save and test").click()
+    page.wait_for_function("() => document.querySelector('.harvester-immich-account').innerText.includes('anna@')")
+    assert page.locator("input[data-field=immich-key]").input_value() == ""
+    assert ("PUT", "/immich", {"url": "", "key": "immich secret"}) in CALLS
+    page.locator("input[data-option=immich_album]").fill("Magazines {year}")
+    page.get_by_role("button", name="Save", exact=True).click()
+    page.wait_for_function("() => !document.querySelector('#harvester-job-form')")
+    saved = next(body for method, path, body in CALLS if (method, path) == ("PUT", "/jobs/1"))
+    assert saved["options"]["save_to"] == "immich" and saved["options"]["immich_album"] == "Magazines {year}"
+    assert saved["options"]["tag_as"] == "immich"
+    assert all("immich secret" not in json.dumps(body) for method, path, body in CALLS if path != "/immich")
+
+
+@needs_chromium
 def test_a_jobs_files_with_their_labels(page):
     answering(
         page,
