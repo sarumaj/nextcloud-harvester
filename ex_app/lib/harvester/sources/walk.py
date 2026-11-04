@@ -31,7 +31,7 @@ from playwright.sync_api import Error as PlaywrightError
 
 from .. import choices, jsonlist, pagewatch, patterns, selectors
 from .. import recipe as recipes
-from ..l10n import said
+from ..l10n import said, said_n
 from . import keep, near
 from .base import ChallengeError, Item, SourceError, pattern_search
 from .clicks import Target
@@ -39,6 +39,9 @@ from .clicks import Target
 # The seen key a run records once it has gone through the whole site (not stopped by
 # max_items): from then on, a listing of known files ends the run (stop_at_seen).
 FULL_PASS = "harvester:full-pass"
+# The pages of file links a run names in the log one by one (what they matched); the rest are
+# counted together.
+PAGES_TOLD = 20
 
 
 class StartEmpty(SourceError):
@@ -67,6 +70,8 @@ class Walk:  # pylint: disable=too-many-instance-attributes,too-many-public-meth
         self.visited: set[str] = set()
         self.listed: dict[int, set] = {}
         self.opened = 0
+        # What the level's links on the page read last were: found, and matching (matching()).
+        self.counted = (0, 0)
 
     def items(self) -> Iterator[Item]:
         """The walk from the recipe's start (None: the page its steps ended on); a recipe that
@@ -152,6 +157,7 @@ class Walk:  # pylint: disable=too-many-instance-attributes,too-many-public-meth
         found = [entry for index, link in enumerate(links) if (entry := self.take(spec, link, values, clicked, index))]
         kind = "follow" if spec is not self.recipe["links"] else "links"
         event |= {"level": where[0], "page": where[1], "kind": kind} | ({"choice": self.choice} if self.choice else {})
+        self.counted = (len(links), len(found))
         what = self.site.observe(event | {"found": len(links), "matching": len(found)})
         # A JSON listing has no page to picture.
         if what and not isinstance(page, jsonlist.JsonPage):
@@ -245,16 +251,40 @@ class Walk:  # pylint: disable=too-many-instance-attributes,too-many-public-meth
         """The file links of a listing's page; True when the listing ends there (no file links,
         or only known ones while known files end the run)."""
         found = self.matching(page, self.recipe["links"], (level, number), values)
-        if not found:
-            self.blocked(page, level, number)
         made = [self.item_of(link, text, number, values | groups, page) for link, text, groups in found]
         self.site.ahead([entry.key for entry in made])
         new = [entry for entry in made if not self.known(entry)]
+        self.page_line(page, number, len(new))
+        if not found:
+            self.blocked(page, level, number)
         outcome["found"] |= bool(found)
         outcome["new"] |= bool(new)
         for entry in new:
             yield from self.captured(entry) if self.capture else (entry,)
-        return not found or bool(self.stop_at_seen and not new)
+        if found and self.stop_at_seen and not new:
+            self.site.report(
+                "info",
+                said("page {number}: only known files: the listing ends here (Stop at known files)", number=number),
+            )
+            return True
+        return not found
+
+    def page_line(self, page: Any, number: int, new: int) -> None:
+        """The log's line of a page of file links: how many of its links match and how many of
+        those are new; PAGES_TOLD a run, then one line that the rest are not named."""
+        told = self.site.told.get("pages", 0)
+        self.site.told["pages"] = told + 1
+        if told > PAGES_TOLD:
+            return
+        if told == PAGES_TOLD:
+            self.site.report("info", said("Further listing pages are not named one by one"))
+            return
+        found, matching = self.counted
+        address = page.url if isinstance(page, jsonlist.JsonPage) else self.driver.address(page)
+        values = {"number": number, "address": address, "matching": matching, "found": found, "new": new}
+        self.site.report(
+            "info", said("page {number} ({address}): {matching} of {found} links match, {new} new", **values)
+        )
 
     def known_listing(self, link: str, level: int, values: dict, outcome: dict) -> Generator[Item, None, bool]:
         """A followed link's listing; True when it holds files, all known."""
@@ -331,6 +361,27 @@ class Walk:  # pylint: disable=too-many-instance-attributes,too-many-public-meth
         after = self.follow[level + 1] if level + 1 < len(self.follow) else self.recipe["links"]
         return Target(page, spec["selector"], index, text, url, spec, str(after.get("selector") or "")), text, groups
 
+    def once(self, what: str) -> bool:
+        """Whether a line of the walk (what: its kind and level) is said for the first time in
+        this run (a level's wait, its Pages limit): its listings after the first say it no more."""
+        told = what not in self.site.told
+        self.site.told[what] = 1
+        return told
+
+    def limited(self, level: int) -> None:
+        """The Pages limit ended a listing of the level with a next page still there: said once a
+        run."""
+        if self.once(f"pages {level}"):
+            pages = int(self.site.settings["max_pages"])
+            self.site.report(
+                "info",
+                said_n(
+                    "Read %n page (Pages): older pages are not read this run",
+                    "Read %n pages (Pages): older pages are not read this run",
+                    pages,
+                ),
+            )
+
     def open_listing(self, url: Any, level: int) -> Any:
         """The listing's page: its address opened, or what an element clicked shows (a Target);
         None when that click failed (a gap of the pass, said in the log)."""
@@ -358,7 +409,7 @@ class Walk:  # pylint: disable=too-many-instance-attributes,too-many-public-meth
             return
         try:
             for number in range(1, int(self.site.settings["max_pages"]) + 1):
-                if spec.get("wait_for") and number == 1:
+                if spec.get("wait_for") and number == 1 and self.once(f"wait {level}"):
                     wait = spec["wait_for"]
                     seconds = wait.get("timeout") or recipes.WAIT_FOR_TIMEOUT
                     self.site.report(
@@ -386,6 +437,7 @@ class Walk:  # pylint: disable=too-many-instance-attributes,too-many-public-meth
                 if later is None:
                     return
                 page = later
+            self.limited(level)
         finally:
             if page is not None:
                 self.driver.done(page)

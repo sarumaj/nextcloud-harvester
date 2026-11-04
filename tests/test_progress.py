@@ -4,10 +4,11 @@
 # pylint: disable=missing-function-docstring
 
 from test_runner import FakeLibrary, FakeNextcloud, FakeSource
+from test_selectors import SITE, http_source
 
 from harvester import executor as executor_module
 from harvester import runner, store as store_module
-from harvester.sources import FULL_PASS, Item, SourceError
+from harvester.sources import FULL_PASS, Item, SourceError, walk
 from harvester.store import Job, Store
 
 
@@ -151,3 +152,49 @@ def test_the_runs_upload_in_chunks_nextcloud_takes_on_s3(monkeypatch):
         monkeypatch.setenv(name, value)
     app = executor_module.connect_nextcloud()
     assert app._session.cfg.options.upload_chunk_v2 is False  # pylint: disable=protected-access
+
+
+LISTED = {
+    "start": f"{SITE}/list?p=1",
+    "links": {"selector": "li.item a", "pattern": r"\.pdf$"},
+    "next": {"selector": 'internal:role=link[name="Next"s]', "level": 0},
+}
+
+
+def test_a_website_names_its_pages_and_why_its_listing_ends():
+    made, log = http_source(LISTED)
+    made.settings["max_pages"] = 2
+    assert [item.path for item in made.items(lambda key: key.endswith(("2-1.pdf", "2-2.pdf")))] == [
+        "1-1.pdf",
+        "1-2.pdf",
+    ]
+    assert log == [
+        f"page 1 ({SITE}/list?p=1): 2 of 2 links match, 2 new",
+        f"page 2 ({SITE}/list?p=2): 2 of 2 links match, 0 new",
+        "Read 2 pages (Pages): older pages are not read this run",
+    ], "a next page still there"
+    assert log[-1].template["count"] == 2
+
+    made, log = http_source(LISTED)
+    made.settings["stop_at_seen"] = 1
+    known = (FULL_PASS, f"{SITE}/files/2-1.pdf", f"{SITE}/files/2-2.pdf")
+    assert [item.path for item in made.items(lambda key: key.endswith(known))] == ["1-1.pdf", "1-2.pdf"]
+    assert log[-1] == "page 2: only known files: the listing ends here (Stop at known files)"
+
+
+def test_the_pages_named_are_capped(monkeypatch):
+    monkeypatch.setattr(walk, "PAGES_TOLD", 1)
+    made, log = http_source(LISTED)
+    assert len(list(made.items(lambda key: False))) == 6
+    assert log == [
+        f"page 1 ({SITE}/list?p=1): 2 of 2 links match, 2 new",
+        "Further listing pages are not named one by one",
+    ]
+
+
+def test_a_levels_wait_and_pages_limit_are_said_once_a_run():
+    made, _ = http_source(LISTED)
+    first, then = walk.Walk(made, None, lambda key: False), walk.Walk(made, None, lambda key: False)
+    assert first.once("wait 1") and not first.once("wait 1")
+    assert not then.once("wait 1"), "a choice's walk after the first, in the same run"
+    assert then.once("wait 2"), "another level"

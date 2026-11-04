@@ -32,6 +32,11 @@
 - The progress log names the address a run looks at (*Looking for new files at https://…*) and
   says how many of the listed files the job has already (*37 listed files are known already: not
   downloaded again*), and the run's outcome counts them (*0 downloaded, 37 known*).
+- A website job's progress log names each page of file links with what it matched (*page 2
+  (https://…): 12 of 40 links match, 3 new*, 20 pages a run) and says why a listing ended: a page
+  of known files only (*Stop at known files*), or the *Pages* limit with a next page still there
+  (*Read 10 pages (Pages): older pages are not read this run*). A level's *waiting for … to show*
+  is said once a run, not for each of its listings.
 - A mail job's progress log says what the mailbox search found (*Folder INBOX: 12 new messages,
   3 from the sender and with the subject asked for*, or no new messages and how many were done
   with before) and names each message of the sender and subject, with what the job takes from it

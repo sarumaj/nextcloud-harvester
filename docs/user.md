@@ -835,7 +835,11 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   known one. A listing over several pages is taken to start with its newest page: for one whose
   first page is its oldest, turn the option off. Only a change of what is listed (the source, a
   recipe, an address, a folder, patterns, the pages or entries read) starts over with a complete
-  pass; files per run, file names, tags or the schedule do not.
+  pass; files per run, file names, tags or the schedule do not. The progress log names each page
+  of file links with what it matched (*page 2 (…): 12 of 40 links match, 3 new*; 20 a run, the
+  rest not named) and why a listing ended: only known files (*Stop at known files*), or *Pages*
+  with a next page still there (*Read 10 pages (Pages): older pages are not read this run*). A
+  level's wait for its links (*waiting for … to show*) is said once a run.
 - **Duplicates:** a job keeps the SHA-256 of each file it saves (`versions.py`, in its
   database), from this version on. A file whose content is that of a file the job saved from
   another address (the same PDF behind two links, a placeholder image) is not saved again: the log

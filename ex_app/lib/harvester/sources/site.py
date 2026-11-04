@@ -718,6 +718,8 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
         self._shot: dict | None = None
         # The picks whose links an alternative selector found in this run (each said once).
         self.repairs: list[str] = []
+        # The walk's lines said once a run, or up to a number (walk.Walk.once, page_line).
+        self.told: dict[str, int] = {}
         # The pause before each listing page after the first (the recipe's test has none).
         self.page_pause = PAGE_PAUSE
         # The walk lists the pages to capture files of without opening them (the recipe's test).

@@ -162,17 +162,18 @@ def test_levels_and_the_next_page_are_repaired_over_http():
     }
     made, log = http_source(recipe)
     assert [item.path for item in made.items(lambda key: False)] == [f"{p}-{n}.pdf" for p in (1, 2, 3) for n in (1, 2)]
-    assert log == [
+    assert [line for line in log if "selector repaired" in line] == [
         "file links: selector repaired (a.gone → li.item a)",
         'next page: selector repaired (a.gone → internal:role=link[name="Next"s])',
     ], "each repair said once, the recipe unchanged"
-    assert log[0].template["params"]["what"] == {"text": "file links"}, "translated, what was repaired too"
+    repaired = next(line for line in log if "selector repaired" in line)
+    assert repaired.template["params"]["what"] == {"text": "file links"}, "translated, what was repaired too"
     assert recipe["links"]["selector"] == "a.gone"
     # A recipe without alternatives finds what its selector finds, as always.
     plain, log = http_source({"start": f"{SITE}/list?p=1", "links": {"selector": "a.gone", "pattern": ""}})
     with pytest.raises(site_module.SourceError, match="the start page has none"):
         list(plain.items(lambda key: False))
-    assert not log
+    assert not [line for line in log if "selector repaired" in line], "nothing repaired"
 
 
 # In the browser.
@@ -272,7 +273,7 @@ def test_steps_and_levels_are_repaired_in_the_browser(monkeypatch):
         assert len(list(source.items(lambda key: False))) == 8
     finally:
         source.close()
-    assert log == [
+    assert [line for line in log if "selector repaired" in line] == [
         'step 2: selector repaired (#user-old → input[name="user"])',
         'step 4: selector repaired (#gone → internal:role=button[name="Sign in"s])',
         "level 1: selector repaired (a.gone → ul a)",
