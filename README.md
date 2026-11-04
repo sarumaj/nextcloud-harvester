@@ -6,7 +6,9 @@ drives, and release pages. It is generic: a website is described by a **recipe**
 the app's browser or taken from a template, not by code.
 
 - **Jobs:** a source, a folder, a schedule in your time zone (or *On demand*: it fetches the
-  addresses you send it), tags and an account; a progress log of what the runs do.
+  addresses you send it), tags and an account; a progress log of what the runs do (where they
+  look, what each listing found, the files known already, waits and retries, why a listing
+  ended), and a run's outcome counting the known files too (*0 downloaded, 37 known*).
 - **Sources:** websites by a recipe, mailbox attachments (IMAP) and the files a message links
   to (the log names each message of the job and what it takes from it), feeds and podcasts,
   videos and audio (yt-dlp), galleries (gallery-dl), file stores and cloud drives (rclone),
