@@ -360,6 +360,9 @@ class Source(abc.ABC):
     # feed); "" when the source has none a browser's page could send (a mailbox, a remote's
     # folder, a repository's releases): it offers no on-demand jobs.
     address_option: ClassVar[str] = ""
+    # Options the source had, which others replaced (upgraded() reads them into those): a job
+    # keeps them, a recipe file of before is taken without them.
+    retired: ClassVar[tuple[str, ...]] = ()
 
     def __init__(self, options: dict, credentials: dict[str, str], client: httpx.Client | None):
         options = self.upgraded(options)

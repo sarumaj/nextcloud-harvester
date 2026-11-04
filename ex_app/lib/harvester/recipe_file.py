@@ -143,13 +143,14 @@ def parse(text: str) -> dict:
         file = RecipeFile.model_validate(data)
     except ValidationError as error:
         raise ValueError(f"The recipe file is refused: {problems(error)}") from error
-    unknown = sorted(set(file.options) - known_options(file.source))
+    # A file of before an option came: its value from those it replaced, which are then dropped.
+    source = SOURCES[file.source]
+    given = {key: value for key, value in source.upgraded(dict(file.options)).items() if key not in source.retired}
+    unknown = sorted(set(given) - known_options(file.source))
     if unknown:
-        raise ValueError(
-            f"The recipe file is refused: options {SOURCES[file.source].title} has not: {', '.join(unknown)}"
-        )
+        raise ValueError(f"The recipe file is refused: options {source.title} has not: {', '.join(unknown)}")
     options: dict[str, str | int] = {}
-    for key, value in file.options.items():
+    for key, value in given.items():
         if isinstance(value, dict):
             if key != "recipe":
                 raise ValueError(f"The recipe file is refused: options.{key} must be text or a number")

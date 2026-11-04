@@ -287,6 +287,8 @@ class Mail(Source):  # pylint: disable=too-many-public-methods
         "min_size",
         "max_size",
     )
+    # The flag "links" (Also the files linked in the message): Fetch's forerunner (upgraded).
+    retired = ("links",)
     # Opens the connection (host, port); a test replaces it with a fake server.
     connect: ClassVar[Callable[[str, int], Any]] = staticmethod(connect_tls)
 

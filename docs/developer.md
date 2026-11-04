@@ -51,8 +51,9 @@ A source's options (`sources/base.py`, `Option`) are its form: an option of a `g
 away, one with `shown_when` (another option's key, then its values) is shown only while that
 option has one of them, a `choices` option lists its `labels`. An option that replaces older ones
 gets its value from them in the source's `upgraded()` (a mail job's `fetch` from its flag
-`links`): the jobs are read so, by the runs and by `GET /api/jobs/<id>` for the form, never
-rewritten in the database.
+`links`, listed in `retired`): the jobs are read so, by the runs, by `GET /api/jobs/<id>` for
+the form and by a recipe file's import (without the retired ones), never rewritten in the
+database.
 
 ## Destinations
 

@@ -47,8 +47,8 @@
   goes with them) and keeps the others' values; a *Linked files* job asks for a link address or
   link text and nothing of attachment names. A job saved before keeps what it fetched (its
   attachments, and its linked files when *Also the files linked in the message* was on), read so
-  (`Source.upgraded`, also for `GET /api/jobs/<id>`), not rewritten. A choice's words in the
-  form (an option's `labels`).
+  (`Source.upgraded`, also for `GET /api/jobs/<id>` and a recipe file of before), not
+  rewritten. A choice's words in the form (an option's `labels`).
 - A mail job's folder the mailbox does not have: the run's error names the folders it has, the
   closest first, ten of them (*The mailbox has no folder “Rechnungen”. It has:
   INBOX/Rechnungen, Archive, INBOX*); **Try the mailbox** checks the folder first and offers the

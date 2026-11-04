@@ -116,6 +116,16 @@ def test_an_imported_recipe_fills_the_form_without_a_folder():
     assert imported(exported() | {"options": {"recipe": json.dumps(RECIPE)}})["options"]["recipe"] == json.dumps(RECIPE)
 
 
+def test_a_mail_recipe_of_before_fetch_is_imported_as_it_fetched():
+    old = exported() | {
+        "source": "mail",
+        "options": {"host": "imap.example.org", "links": 1, "link_text_pattern": "Download"},
+    }
+    assert imported(old)["options"] == {"host": "imap.example.org", "link_text_pattern": "Download", "fetch": "both"}
+    old["options"] = {"host": "imap.example.org"}
+    assert imported(old)["options"]["fetch"] == "attachments"
+
+
 @pytest.mark.parametrize(
     ("change", "message"),
     [
