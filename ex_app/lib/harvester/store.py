@@ -124,6 +124,9 @@ CREATE TABLE IF NOT EXISTS templates (
 """
 # The lines of the progress log kept per job (its last runs).
 LOG_KEPT = 500
+# The first lines of a job's current run that stay beyond LOG_KEPT (where it looked, what it
+# found): a long run pushes its own middle out of the log, not its start.
+RUN_HEAD = 30
 # The lines one request of the log returns at most.
 LOG_PAGE = 300
 # The summaries of runs kept per job, of good runs and of the others each.
@@ -192,6 +195,8 @@ class Store:  # pylint: disable=too-many-public-methods
         # After the columns: the table made anew keeps them.
         self._never_reuse_ids()
         self._lock = threading.Lock()
+        # The last line before each job's current run (begin): its run's lines come after it.
+        self._run_after: dict[int, int] = {}
 
     def _never_reuse_ids(self) -> None:
         """Makes a database of an earlier version keep its jobs' ids for good (AUTOINCREMENT):
@@ -321,11 +326,13 @@ class Store:  # pylint: disable=too-many-public-methods
         """A run starts: the last run's message goes, the page shows the run's progress instead."""
         with self._lock, self._db:
             self._db.execute("UPDATE jobs SET last_message = NULL, last_message_l10n = NULL WHERE id = ?", (job_id,))
+            self._run_after[job_id] = self._db.execute("SELECT COALESCE(MAX(id), 0) FROM log").fetchone()[0]
 
     def log(self, job_id: int, level: str, message: str) -> int | None:
         """A line of the job's progress log (info, error, done), and its id; the oldest beyond
-        LOG_KEPT go. Nothing for a job deleted meanwhile (its run goes on to its end). A said()
-        message keeps its template too (the page translates it)."""
+        LOG_KEPT go, but for the first RUN_HEAD of the job's current run. Nothing for a job deleted
+        meanwhile (its run goes on to its end). A said() message keeps its template too (the page
+        translates it)."""
         try:
             with self._lock, self._db:
                 line = self._db.execute(
@@ -334,8 +341,9 @@ class Store:  # pylint: disable=too-many-public-methods
                 ).lastrowid
                 self._db.execute(
                     "DELETE FROM log WHERE job = ? AND id <= (SELECT id FROM log WHERE job = ? ORDER BY id DESC"
-                    " LIMIT 1 OFFSET ?)",
-                    (job_id, job_id, LOG_KEPT),
+                    " LIMIT 1 OFFSET ?) AND id NOT IN (SELECT id FROM log WHERE job = ? AND id > ? ORDER BY id"
+                    " LIMIT ?)",
+                    (job_id, job_id, LOG_KEPT, job_id, self._run_after.get(job_id, line), RUN_HEAD),
                 )
             return line
         except sqlite3.IntegrityError:

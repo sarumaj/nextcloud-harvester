@@ -105,6 +105,23 @@ def test_the_log_is_kept_per_user_and_job_and_capped(tmp_path, monkeypatch):
     assert store.log_lines("u") == []
 
 
+def test_a_long_run_keeps_its_start_in_the_log(tmp_path, monkeypatch):
+    monkeypatch.setattr(store_module, "LOG_KEPT", 4)
+    monkeypatch.setattr(store_module, "RUN_HEAD", 2)
+    store = Store(str(tmp_path / "db"))
+    mine = store.save(job())
+    store.log(mine.id or 0, "info", "the run before")
+    store.begin(mine.id or 0)
+    for number in range(10):
+        store.log(mine.id or 0, "info", f"line {number}")
+    lines = [line["message"] for line in store.log_lines("u")]
+    assert lines == ["line 0", "line 1", "line 6", "line 7", "line 8", "line 9"], "its first lines, then its last"
+    store.begin(mine.id or 0)
+    store.log(mine.id or 0, "info", "the next run")
+    lines = [line["message"] for line in store.log_lines("u")]
+    assert lines == ["line 7", "line 8", "line 9", "the next run"], "a run's head kept only while it runs"
+
+
 def test_a_new_run_clears_the_last_message_and_logs_its_end(tmp_path, monkeypatch):
     class Failing(FakeSource):
         """A listing that breaks after its first file."""

@@ -55,6 +55,8 @@
 
 ### Fixed
 
+- A long run (a first one of hundreds of files) no longer pushes its own start out of the
+  progress log: its first 30 lines stay beside the job's last 500.
 - A video larger than the job's largest file that yt-dlp finds so only as it downloads is skipped
   for good as one known to be too large (*yt-dlp saved no file for …: larger than the job's
   largest file*), not failed as *yt-dlp left 0 files* in every run.

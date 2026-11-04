@@ -29,12 +29,14 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   the jobs, a **progress log** of what the runs do (searching where, each file downloaded, saved
   or found already there, how many listed files are known already, errors, the outcome, which
   counts the known files too: *0 downloaded, 37 known*), live while one runs, of all jobs or of
-  one; a new run clears its job's last message. The list comes without the jobs' options
-  (`GET /api/jobs?brief=1`, each job's own address instead; without `brief` each job has them,
-  for other clients), and a job's form asks for its own (`GET /api/jobs/<id>`); the log's lines
-  stay when the list is drawn again, and only newer ones are asked for. On a phone (narrower than
-  700 pixels) each job is a card, its columns one below the other with their names and its
-  buttons on a line of their own, and the log's text goes below its time.
+  one; a new run clears its job's last message. A job's last 500 lines are kept, and the first 30
+  of the run in progress too: a long first run keeps where it looked and what it found. The
+  list comes without the jobs' options (`GET /api/jobs?brief=1`, each job's own address instead;
+  without `brief` each job has them, for other clients), and a job's form asks for its own
+  (`GET /api/jobs/<id>`); the log's lines stay when the list is drawn again, and only newer ones
+  are asked for. On a phone (narrower than 700 pixels) each job is a card, its columns one
+  below the other with their names and its buttons on a line of their own, and the log's text
+  goes below its time.
   A screen reader hears the log's errors and outcomes as they come, not each line, and a test's
   outcome in the recorder; an error is announced as it shows, and a refused Save marks the field
   it names (and opens its group).
