@@ -10,6 +10,8 @@ playwright==1.64.1
 # The disguised browser (the website source's option Disguise the browser): Patchright, Playwright
 # patched against bot checks, at Playwright's version (the same Chromium, shared).
 patchright==1.64.4
+# The private library's thumbnails of pictures (harvester/thumbnails.py): wheels for amd64 and arm64.
+pillow==13.0.0
 # The public suffixes (co.uk, github.io) the cookies panel never sets a cookie for: its bundled
 # list, offline.
 publicsuffixlist==1.1.2.20261101

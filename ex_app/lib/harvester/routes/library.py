@@ -1,35 +1,65 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Harvester's private library on the page (library.py), and the files a job saved.
 
-Every route serves the person their own files alone (their user ID, as AppAPI gives it, picks
-the rows and the folder on the disk). A library with a password answers 403 until the browser
-unlocks it: POST /api/library/unlock gives a token, which the page sends as the header
-X-Harvester-Library (or, where a browser cannot send a header, an <img>'s or <video>'s address,
-as ?unlock=); it lapses after the person's minutes without use.
+Every route serves the person their own library alone (their user ID, as AppAPI gives it, picks
+the rows, the keys and the folder on the disk). Reading needs the library unlocked: setting it up,
+unlocking it (the password) or recovering it (the recovery key) opens a session in the server's
+memory (librarykeys.py), whose token the browser holds two ways:
 
-A file is served with its type for what a browser shows safely (pictures but SVG, videos,
-sounds, PDFs, plain text), else as a download, never sniffed (nosniff), and with a sandbox for
-whatever the browser shows of it; a Range gives part of it (a video's seeking).
+- a cookie (COOKIE: HttpOnly, SameSite=Strict, its path the app's proxy path the page names in
+  X-Harvester-Base), which AppAPI's proxy passes to the app (its cookie jar) and back (Set-Cookie
+  among the answer's headers), so that an <img> or <video> of the library needs no token in its
+  address;
+- the answer's token, which the page keeps in memory and sends as X-Harvester-Library.
+
+Whether the cookie came back is in the state (cookie); where it does not (a proxy that drops
+it), the page fetches pictures with the header into blob: addresses and asks a ticket for a video,
+a sound or a PDF (POST …/ticket): ?ticket= opens that one file, while the session lasts, nothing
+else.
+
+Writing (an upload, a new folder) needs the library set up, not unlocked. A file is served with
+its type for what a browser shows safely (pictures but SVG, videos, sounds, PDFs, plain text),
+else as a download, never sniffed (nosniff), and with a sandbox for whatever the browser shows of
+it; a Range gives part of it (a video's seeking), only the chunks that hold it decrypted.
 """
 
-import os
+import itertools
+import logging
+import re
+import secrets
+import threading
+import time
 from collections.abc import Iterator
 from typing import Annotated
 from urllib.parse import quote
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from ..library import LIMITS, LOCK_MINUTES, MAX_LOCK_MINUTES, BadPath, Locked, Locks, Shelf
+from .. import librarycrypt as crypt
+from ..library import LIMITS, BadPath, Incoming, LibraryFull, Shelf
+from ..librarykeys import LOCK_MINUTES, MAX_LOCK_MINUTES, MIN_PASSWORD, Keyring, Locked, NotSetUp, Session
 from .common import NC, STATE, own_job, store
 
+LOGGER = logging.getLogger("harvester")
 ROUTER = APIRouter()
 # The types a browser shows in the page's viewer; any other is downloaded.
 SHOWN = ("image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/bmp", "application/pdf")
 SHOWN_KINDS = ("video/", "audio/")
-PIECE = 1 << 20
 Token = Annotated[str, Header(alias="X-Harvester-Library", max_length=100)]
+Base = Annotated[str, Header(alias="X-Harvester-Base", max_length=300)]
+COOKIE = "harvester_library"
+# The app's path behind AppAPI's proxy, as the page's OC.generateUrl makes it (a web root first,
+# index.php or not): the cookie's path.
+PROXY_PATH = re.compile(r"^(/[\w.~-]+)*?(/index\.php)?/apps/app_api/proxy/harvester$")
+# A ticket opens one file for so long at most (and no longer than its session).
+TICKET_SECONDS = 3600
+# An upload's pieces, at most; an upload unfinished for so long is dropped.
+UPLOAD_PIECE = 16 * 1024 * 1024
+UPLOAD_IDLE = 3600
+# A person's uploads under way at once, at most (each holds a file open).
+UPLOADS_AT_ONCE = 8
 
 
 def shelf() -> Shelf:
@@ -37,34 +67,77 @@ def shelf() -> Shelf:
     return STATE["shelf"]
 
 
-def locks() -> Locks:
-    """The people's library passwords, set at start."""
-    return STATE["locks"]
+def keyring() -> Keyring:
+    """The people's library keys and sessions, set at start."""
+    return STATE["keyring"]
 
 
-async def opened(nc: NC, token: str) -> str:
-    """The person, whose library is open to this browser; else 403."""
+def token_of(request: Request | None, header: str) -> str:
+    """The browser's session token: the header's, else the cookie's."""
+    return header or (request.cookies.get(COOKIE, "") if request is not None else "")
+
+
+async def opened(nc: NC, request: Request | None, header: str) -> Session:
+    """The person's unlocked session of this browser; else 403."""
     user = await nc.user
     try:
-        locks().check(user, token)
+        return keyring().session(user, token_of(request, header))
     except Locked as error:
         raise HTTPException(403, str(error)) from error
-    return user
+
+
+def with_session(data: dict, token: str, request: Request, base: str) -> JSONResponse:
+    """An answer that opens a session: its token, and the cookie (where the page named the app's
+    proxy path)."""
+    response = JSONResponse(data | {"token": token})
+    if PROXY_PATH.match(base):
+        secure = not request.headers.get("origin", "").startswith("http://")
+        response.set_cookie(COOKIE, token, path=base, httponly=True, samesite="strict", secure=secure)
+    return response
 
 
 @ROUTER.get("/api/library/state")
-async def library_state(nc: NC, x_harvester_library: Token = "") -> dict:
-    """Whether the person's library has a password and is open to this browser, its minutes,
-    how much it holds and the limits (bytes; 0: none). Answered locked or not."""
+async def library_state(request: Request, nc: NC, x_harvester_library: Token = "") -> dict:
+    """Whether the person's library is set up and open to this browser (by the cookie alone,
+    too), its minutes, how much it holds (bytes on the disk) and the limits (0: none)."""
     user = await nc.user
-    setting = locks().setting(user)
+    cookie = request.cookies.get(COOKIE, "")
     return {
-        "password": setting is not None,
-        "unlocked": locks().unlocked(user, x_harvester_library),
-        "minutes": setting["minutes"] if setting else LOCK_MINUTES,
+        "setup": keyring().is_set_up(user),
+        "unlocked": keyring().unlocked(user, token_of(request, x_harvester_library)),
+        "cookie": bool(cookie) and keyring().unlocked(user, cookie),
+        "minutes": keyring().minutes(user),
         "usage": shelf().usage(user),
         "limit": LIMITS["person"],
     }
+
+
+@ROUTER.post("/api/library/setup/start")
+async def propose_recovery(nc: NC) -> dict:
+    """A recovery key for the person's setup, shown once (409 when set up already)."""
+    try:
+        return {"recovery": keyring().propose(await nc.user)}
+    except Locked as error:
+        raise HTTPException(409, str(error)) from error
+
+
+class Setup(BaseModel):
+    """The library's password, the recovery key typed back, the minutes it stays unlocked."""
+
+    password: str = Field(min_length=MIN_PASSWORD, max_length=1000)
+    recovery: str = Field(max_length=200)
+    minutes: int = Field(LOCK_MINUTES, ge=1, le=MAX_LOCK_MINUTES)
+
+
+@ROUTER.post("/api/library/setup")
+async def set_up_library(body: Setup, request: Request, nc: NC, x_harvester_base: Base = "") -> Response:
+    """Sets the person's library up (its keys made) and opens it to this browser; 403 when the
+    recovery key typed is not the one shown."""
+    try:
+        token = keyring().set_up(await nc.user, body.password, body.recovery, body.minutes)
+    except Locked as error:
+        raise HTTPException(403, str(error)) from error
+    return with_session({}, token, request, x_harvester_base)
 
 
 class Unlock(BaseModel):
@@ -74,57 +147,105 @@ class Unlock(BaseModel):
 
 
 @ROUTER.post("/api/library/unlock")
-async def unlock_library(body: Unlock, nc: NC) -> dict:
-    """Opens the person's library to this browser: its token ("" without a password), or 403."""
+async def unlock_library(body: Unlock, request: Request, nc: NC, x_harvester_base: Base = "") -> Response:
+    """Opens the person's library to this browser; 403 for a wrong password."""
     try:
-        return {"token": locks().unlock(await nc.user, body.password)}
+        token = keyring().unlock(await nc.user, body.password)
     except Locked as error:
         raise HTTPException(403, str(error)) from error
+    return with_session({}, token, request, x_harvester_base)
+
+
+class Recover(BaseModel):
+    """The recovery key, and the new password."""
+
+    recovery: str = Field(max_length=200)
+    password: str = Field(min_length=MIN_PASSWORD, max_length=1000)
+
+
+@ROUTER.post("/api/library/recover")
+async def recover_library(body: Recover, request: Request, nc: NC, x_harvester_base: Base = "") -> Response:
+    """Opens the person's library with the recovery key and sets the new password; 403 for a
+    wrong recovery key."""
+    try:
+        token = keyring().recover(await nc.user, body.recovery, body.password)
+    except Locked as error:
+        raise HTTPException(403, str(error)) from error
+    return with_session({}, token, request, x_harvester_base)
 
 
 @ROUTER.post("/api/library/lock")
-async def lock_library(_nc: NC, x_harvester_library: Token = "") -> dict:
-    """Locks the library to this browser again."""
-    locks().lock(x_harvester_library)
-    return {}
+async def lock_library(
+    request: Request, _nc: NC, x_harvester_library: Token = "", x_harvester_base: Base = ""
+) -> Response:
+    """Locks the library to this browser again (its session and private key dropped, the
+    cookie too)."""
+    keyring().lock(x_harvester_library)
+    keyring().lock(request.cookies.get(COOKIE, ""))
+    response = JSONResponse({})
+    if PROXY_PATH.match(x_harvester_base):
+        response.delete_cookie(COOKIE, path=x_harvester_base, httponly=True, samesite="strict")
+    return response
 
 
 class Password(BaseModel):
-    """A new password ("" removes it), the one set now, and the minutes it stays unlocked."""
+    """The password set now, a new one ("": the same) and the minutes it stays unlocked."""
 
-    current: str = Field("", max_length=1000)
+    current: str = Field(max_length=1000)
     password: str = Field("", max_length=1000)
     minutes: int = Field(LOCK_MINUTES, ge=1, le=MAX_LOCK_MINUTES)
 
 
 @ROUTER.put("/api/library/password")
-async def set_library_password(body: Password, nc: NC) -> dict:
-    """Sets, changes or removes the person's library password (the current one given, if one is
-    set: else 403); every browser's session of theirs ends."""
-    if body.password and len(body.password) < 8:
+async def set_library_password(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    body: Password, request: Request, nc: NC, x_harvester_library: Token = "", x_harvester_base: Base = ""
+) -> Response:
+    """Changes the person's library password and minutes (unlocked, and the current password
+    given; else 403); every other session of theirs ends."""
+    if body.password and len(body.password) < MIN_PASSWORD:
         raise HTTPException(422, "A library password has 8 characters at least.")
     try:
-        locks().set_password(await nc.user, body.current, body.password, body.minutes)
+        token = keyring().change_password(
+            await nc.user, token_of(request, x_harvester_library), body.current, body.password, body.minutes
+        )
     except Locked as error:
         raise HTTPException(403, str(error)) from error
-    return {}
+    return with_session({}, token, request, x_harvester_base)
 
 
 @ROUTER.get("/api/library")
-async def list_library(
+async def list_library(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    request: Request,
     nc: NC,
     folder: Annotated[str, Query(max_length=4000)] = "/",
     label: Annotated[str, Query(max_length=200)] = "",
+    q: Annotated[str, Query(max_length=200)] = "",
     x_harvester_library: Token = "",
 ) -> dict:
-    """The person's files and folders in folder (or with the label, in it and below it), and
-    the labels of all their files."""
-    user = await opened(nc, x_harvester_library)
+    """The person's files and folders in folder (or with the label, or matching q in their names
+    and labels: in it and below it), and the labels of all their files."""
+    session = await opened(nc, request, x_harvester_library)
     try:
-        entries = shelf().listing(user, folder, label)
+        entries = shelf().listing(session, folder, label, q.strip())
     except BadPath as error:
         raise HTTPException(422, "No such folder.") from error
-    return {"folder": folder, "entries": entries, "labels": shelf().labels(user)}
+    return {"folder": folder, "entries": entries, "labels": shelf().labels(session)}
+
+
+class Folder(BaseModel):
+    """A new folder's path."""
+
+    path: str = Field(min_length=1, max_length=4000)
+
+
+@ROUTER.post("/api/library/folders")
+async def make_library_folder(body: Folder, request: Request, nc: NC, x_harvester_library: Token = "") -> dict:
+    """Makes a folder in the person's library (unlocked); its ID."""
+    session = await opened(nc, request, x_harvester_library)
+    try:
+        return {"id": shelf().mkdir(session.user, body.path)}
+    except BadPath as error:
+        raise HTTPException(422, str(error)) from error
 
 
 def byte_range(header: str, size: int) -> tuple[int, int] | None:
@@ -145,34 +266,17 @@ def byte_range(header: str, size: int) -> tuple[int, int] | None:
     return start, end
 
 
-def pieces(path: str, start: int, length: int) -> Iterator[bytes]:
-    """length bytes of the file from start."""
-    with open(path, "rb") as file:
-        file.seek(start)
-        while length > 0:
-            piece = file.read(min(PIECE, length))
-            if not piece:
-                return
-            length -= len(piece)
-            yield piece
-
-
 def disposition(name: str, attached: bool) -> str:
     """Content-Disposition with the file's name (RFC 6266: an ASCII stand-in, and UTF-8)."""
     plain = "".join(char if 32 <= ord(char) < 127 and char not in '"\\' else "_" for char in name)
     return f"{'attachment' if attached else 'inline'}; filename=\"{plain}\"; filename*=UTF-8''{quote(name, safe='')}"
 
 
-def on_disk(user: str, file_id: int) -> tuple[dict, str, int]:
-    """One of the person's files: its entry, where it is on the disk and its size; else 404."""
-    entry = shelf().entry(user, file_id)
-    if entry is None or entry["dir"]:
-        raise HTTPException(404, "No such file.")
-    try:
-        path = str(shelf().disk(user, entry["path"]))
-        return entry, path, os.stat(path).st_size
-    except (BadPath, OSError) as error:
-        raise HTTPException(404, "No such file.") from error
+SAFE_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "Cache-Control": "private, no-store",
+    "Content-Security-Policy": "default-src 'none'; img-src 'self'; media-src 'self'; sandbox",
+}
 
 
 def served(entry: dict, download: bool) -> tuple[str, dict[str, str]]:
@@ -180,53 +284,263 @@ def served(entry: dict, download: bool) -> tuple[str, dict[str, str]]:
     and the headers that go with it."""
     kind = entry["type"]
     shown = not download and (kind in SHOWN or kind.startswith(SHOWN_KINDS) or kind == "text/plain")
-    headers = {
-        "Accept-Ranges": "bytes",
-        "Content-Disposition": disposition(entry["name"], not shown),
-        "X-Content-Type-Options": "nosniff",
-        "Cache-Control": "private, no-store",
-    }
-    if kind != "application/pdf":
+    headers = SAFE_HEADERS | {"Accept-Ranges": "bytes", "Content-Disposition": disposition(entry["name"], not shown)}
+    if kind == "application/pdf":
         # A PDF viewer does not work in a sandbox; anything else shown runs no script.
-        headers["Content-Security-Policy"] = "default-src 'none'; img-src 'self'; media-src 'self'; sandbox"
+        del headers["Content-Security-Policy"]
     return (kind if shown else "application/octet-stream") + (
         "; charset=utf-8" if kind == "text/plain" else ""
     ), headers
 
 
+# Tickets that open one file each (where the cookie does not come back): by ticket, [token,
+# user, file ID, when it lapses].
+TICKETS: dict[str, list] = {}
+_TICKETS_LOCK = threading.Lock()
+
+
+def ticket_session(ticket: str, user: str, file_id: int) -> Session:
+    """The session a ticket of this person's file stands for; else 403."""
+    now = time.monotonic()
+    with _TICKETS_LOCK:
+        for lapsed in [key for key, value in TICKETS.items() if value[3] < now]:
+            TICKETS.pop(lapsed)
+        held = TICKETS.get(ticket)
+    if held is None or held[1] != user or held[2] != file_id:
+        raise HTTPException(403, "The library is locked.")
+    try:
+        return keyring().session(user, held[0])
+    except Locked as error:
+        raise HTTPException(403, str(error)) from error
+
+
+async def file_session(nc: NC, request: Request, header: str, ticket: str, file_id: int) -> Session:
+    """The session that opens the person's file: the browser's, or the file's ticket's."""
+    if ticket:
+        return ticket_session(ticket, await nc.user, file_id)
+    return await opened(nc, request, header)
+
+
+@ROUTER.post("/api/library/files/{file_id}/ticket")
+async def file_ticket(file_id: int, request: Request, nc: NC, x_harvester_library: Token = "") -> dict:
+    """A ticket that opens this one file (?ticket=) while the session lasts, an hour at most."""
+    session = await opened(nc, request, x_harvester_library)
+    if shelf().entry(session, file_id) is None:
+        raise HTTPException(404, "No such file.")
+    ticket = secrets.token_urlsafe(24)
+    with _TICKETS_LOCK:
+        TICKETS[ticket] = [
+            token_of(request, x_harvester_library),
+            session.user,
+            file_id,
+            time.monotonic() + TICKET_SECONDS,
+        ]
+    return {"ticket": ticket}
+
+
+def primed(pieces: Iterator[bytes]) -> Iterator[bytes]:
+    """The pieces, the first read now: a blob that is not the file's (changed, cut off) is
+    found before the answer starts (Tampered)."""
+    first = next(pieces, b"")
+    return itertools.chain([first], pieces)
+
+
+def guarded(pieces: Iterator[bytes], file_id: int) -> Iterator[bytes]:
+    """The pieces; a chunk that does not open ends the answer, logged by the file's ID."""
+    try:
+        yield from pieces
+    except crypt.Tampered:
+        LOGGER.warning("library: file %s is damaged (changed outside the app?)", file_id)
+
+
 @ROUTER.get("/api/library/files/{file_id}")
-async def library_file(  # pylint: disable=too-many-arguments
+async def library_file(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     file_id: int,
     request: Request,
     nc: NC,
     download: bool = False,
-    unlock: Annotated[str, Query(max_length=100)] = "",
+    ticket: Annotated[str, Query(max_length=100)] = "",
     x_harvester_library: Token = "",
 ) -> Response:
-    """One of the person's files: shown (a type the browser shows safely) or downloaded, the
-    part a Range asks for (206) if it asks for one."""
-    user = await opened(nc, x_harvester_library or unlock)
-    entry, path, size = on_disk(user, file_id)
+    """One of the person's files, decrypted: shown (a type the browser shows safely) or
+    downloaded, the part a Range asks for (206) if it asks for one."""
+    session = await file_session(nc, request, x_harvester_library, ticket, file_id)
+    entry = shelf().entry(session, file_id)
+    if entry is None or entry["dir"]:
+        raise HTTPException(404, "No such file.")
+    size = entry["size"]
     media, headers = served(entry, download)
     try:
         part = byte_range(request.headers.get("range", ""), size)
     except ValueError:
         return Response(status_code=416, headers={"Content-Range": f"bytes */{size}"})
+    start, end = part if part is not None else (0, size - 1)
+    try:
+        pieces = primed(shelf().content(session, file_id, start, end))
+    except (crypt.Tampered, OSError) as error:
+        LOGGER.warning("library: file %s is damaged or missing (%s)", file_id, type(error).__name__)
+        raise HTTPException(500, "The file is damaged: it does not decrypt.") from error
+    headers["Content-Length"] = str(end - start + 1)
     if part is None:
-        headers["Content-Length"] = str(size)
-        return StreamingResponse(pieces(path, 0, size), media_type=media, headers=headers)
-    start, end = part
-    headers |= {"Content-Range": f"bytes {start}-{end}/{size}", "Content-Length": str(end - start + 1)}
-    return StreamingResponse(pieces(path, start, end - start + 1), status_code=206, media_type=media, headers=headers)
+        return StreamingResponse(guarded(pieces, file_id), media_type=media, headers=headers)
+    headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+    return StreamingResponse(guarded(pieces, file_id), status_code=206, media_type=media, headers=headers)
+
+
+@ROUTER.get("/api/library/files/{file_id}/thumbnail")
+async def library_thumbnail(
+    file_id: int,
+    request: Request,
+    nc: NC,
+    ticket: Annotated[str, Query(max_length=100)] = "",
+    x_harvester_library: Token = "",
+) -> Response:
+    """The thumbnail of one of the person's pictures (a small JPEG), decrypted; 404 for none."""
+    session = await file_session(nc, request, x_harvester_library, ticket, file_id)
+    picture = shelf().thumbnail(session, file_id)
+    if picture is None:
+        raise HTTPException(404, "No thumbnail.")
+    return Response(picture, media_type="image/jpeg", headers=SAFE_HEADERS)
+
+
+class Change(BaseModel):
+    """A file's or folder's new name, and/or the folder it goes into."""
+
+    name: str = Field("", max_length=255)
+    folder: str | None = Field(None, max_length=4000)
+
+
+@ROUTER.put("/api/library/files/{file_id}")
+async def change_library_file(
+    file_id: int, body: Change, request: Request, nc: NC, x_harvester_library: Token = ""
+) -> dict:
+    """Renames or moves one of the person's files or folders; the entry after."""
+    session = await opened(nc, request, x_harvester_library)
+    if "/" in body.name:
+        raise HTTPException(422, "A name has no /.")
+    try:
+        return shelf().update(session, file_id, body.name, body.folder)
+    except KeyError as error:
+        raise HTTPException(404, "No such file.") from error
+    except BadPath as error:
+        raise HTTPException(422, str(error)) from error
 
 
 @ROUTER.delete("/api/library/files/{file_id}")
-async def delete_library_file(file_id: int, nc: NC, x_harvester_library: Token = "") -> dict:
+async def delete_library_file(file_id: int, request: Request, nc: NC, x_harvester_library: Token = "") -> dict:
     """Deletes one of the person's files, or a folder with everything in it. A job whose file it
     was fetches it again if its Download deleted files again is on, as after a delete in Files."""
-    user = await opened(nc, x_harvester_library)
-    if not shelf().delete(user, file_id):
+    session = await opened(nc, request, x_harvester_library)
+    if not shelf().delete(session.user, file_id):
         raise HTTPException(404, "No such file.")
+    return {}
+
+
+# Uploads under way: by ID, [user, Incoming, bytes received, size announced, last use].
+UPLOADS: dict[str, list] = {}
+_UPLOADS_LOCK = threading.Lock()
+
+
+def _sweep_uploads() -> None:
+    """Drops the uploads unused for UPLOAD_IDLE seconds."""
+    now = time.monotonic()
+    with _UPLOADS_LOCK:
+        stale = [key for key, value in UPLOADS.items() if now - value[4] > UPLOAD_IDLE]
+        dropped = [UPLOADS.pop(key) for key in stale]
+    for upload in dropped:
+        upload[1].abort()
+
+
+class Upload(BaseModel):
+    """A file to upload: the folder it goes into, its name and size."""
+
+    folder: str = Field("/", max_length=4000)
+    name: str = Field(min_length=1, max_length=255)
+    size: int = Field(ge=0)
+
+
+def write_problem(error: Exception) -> HTTPException:
+    """The answer to a write the library refuses."""
+    if isinstance(error, NotSetUp):
+        return HTTPException(409, str(error))
+    return HTTPException(422, str(error))
+
+
+@ROUTER.post("/api/library/uploads")
+async def start_upload(body: Upload, nc: NC) -> dict:
+    """Starts an upload into the person's library (set up; locked or not): its ID. The pieces
+    come in order (PUT …?offset=), encrypted as they come; done puts the file in place."""
+    _sweep_uploads()
+    if "/" in body.name:
+        raise HTTPException(422, "A name has no /.")
+    user = await nc.user
+    with _UPLOADS_LOCK:
+        if sum(1 for held in UPLOADS.values() if held[0] == user) >= UPLOADS_AT_ONCE:
+            raise HTTPException(429, "Too many uploads at once.")
+    try:
+        incoming = shelf().receive(user, f"{body.folder.rstrip('/')}/{body.name}", expected=body.size)
+    except (NotSetUp, BadPath, LibraryFull) as error:
+        raise write_problem(error) from error
+    upload = secrets.token_urlsafe(18)
+    with _UPLOADS_LOCK:
+        UPLOADS[upload] = [user, incoming, 0, body.size, time.monotonic()]
+    return {"upload": upload}
+
+
+def _upload(upload: str, user: str) -> list:
+    with _UPLOADS_LOCK:
+        held = UPLOADS.get(upload)
+    if held is None or held[0] != user:
+        raise HTTPException(404, "No such upload.")
+    return held
+
+
+@ROUTER.put("/api/library/uploads/{upload}")
+async def upload_piece(upload: str, request: Request, nc: NC, offset: int = 0) -> dict:
+    """A piece of an upload, at its offset (the bytes received so far; else 409)."""
+    held = _upload(upload, await nc.user)
+    if offset != held[2]:
+        raise HTTPException(409, f"The upload has {held[2]} bytes.")
+    incoming: Incoming = held[1]
+    count = 0
+    try:
+        async for piece in request.stream():
+            count += len(piece)
+            if count > UPLOAD_PIECE or held[2] + count > held[3]:
+                raise HTTPException(413, "More than the upload announced.")
+            incoming.write(piece)
+    except (LibraryFull, HTTPException) as error:
+        with _UPLOADS_LOCK:
+            UPLOADS.pop(upload, None)
+        incoming.abort()
+        raise error if isinstance(error, HTTPException) else write_problem(error) from error
+    held[2] += count
+    held[4] = time.monotonic()
+    return {"received": held[2]}
+
+
+@ROUTER.post("/api/library/uploads/{upload}/done")
+async def finish_upload(upload: str, nc: NC) -> dict:
+    """Puts the uploaded file in place (over a file of its name); its ID."""
+    held = _upload(upload, await nc.user)
+    with _UPLOADS_LOCK:
+        UPLOADS.pop(upload, None)
+    if held[2] != held[3]:
+        held[1].abort()
+        raise HTTPException(409, "The upload is not complete.")
+    try:
+        return {"id": held[1].commit()}
+    except (BadPath, LibraryFull) as error:
+        raise write_problem(error) from error
+
+
+@ROUTER.delete("/api/library/uploads/{upload}")
+async def cancel_upload(upload: str, nc: NC) -> dict:
+    """Drops an upload under way."""
+    held = _upload(upload, await nc.user)
+    with _UPLOADS_LOCK:
+        UPLOADS.pop(upload, None)
+    held[1].abort()
     return {}
 
 

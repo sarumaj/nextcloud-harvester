@@ -23,7 +23,8 @@ from pydantic import BaseModel, Field
 from harvester import browser, destinations, dns, l10n, places, needs, ondemand, schedule, settings, watch
 from harvester.rclone_wizard import AUTHORIZE_ORIGIN, Authorization, WizardError
 from harvester.browser.recorder import Recorder
-from harvester.library import Locks, Shelf
+from harvester.library import Shelf
+from harvester.librarykeys import Keyring
 from harvester.executor import (
     RUNNERS,
     Executor,
@@ -57,8 +58,8 @@ async def lifespan(app: FastAPI):
     if not browser.undumpable():
         LOGGER.warning("the app's process stays dumpable: its helpers could read its environment")
     STATE["store"] = Store(os.path.join(persistent_storage(), "harvester.db"))
-    STATE["shelf"] = Shelf(STATE["store"], os.path.join(persistent_storage(), "library"))
-    STATE["locks"] = Locks(STATE["store"])
+    STATE["keyring"] = Keyring(STATE["store"])
+    STATE["shelf"] = Shelf(STATE["store"], os.path.join(persistent_storage(), "library"), STATE["keyring"])
     places.SHELF[:] = [STATE["shelf"]]
     STATE["executor"] = Executor(STATE["store"])
     STATE["executor"].start()
