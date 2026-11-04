@@ -28,6 +28,8 @@ from .sources.base import SourceError
 # The most of a page's text kept and compared (characters), and of a change's excerpt.
 MAX_TEXT = 200_000
 EXCERPT = 300
+# The excerpt in the run's outcome (the jobs' list): one line of at most this many characters.
+NOTE_EXCERPT = 100
 # What a person does not read on a page.
 UNREAD = ("script", "style", "noscript", "template")
 
@@ -75,6 +77,12 @@ def excerpt(before: str, after: str) -> str:
     return text if len(text) <= EXCERPT else text[: EXCERPT - 1] + "…"
 
 
+def shortened(change: str) -> str:
+    """The change's excerpt on one line, at most NOTE_EXCERPT characters: the run's outcome."""
+    text = " ".join(change.split())
+    return text if len(text) <= NOTE_EXCERPT else text[: NOTE_EXCERPT - 1] + "…"
+
+
 def page_html(page: Any) -> str:
     """A page's HTML: one read over HTTP (its soup), or the browser's."""
     soup = getattr(page, "soup", None)
@@ -115,4 +123,4 @@ def look(walk: Any) -> None:
         change = excerpt(before, text)
         site.report("warning", said("The page changed: {excerpt}", excerpt=change))
         contents.tell(url, change)
-        site.note = said("The page changed")
+        site.note = said("The page changed: {excerpt}", excerpt=shortened(change))

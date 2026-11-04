@@ -910,7 +910,6 @@ OC.L10N.register(
         "The watched text: {count} characters": "Der beobachtete Text: {count} Zeichen",
         "Watching {address}: its text is kept, a change is told from the next run": "Beobachte {address}: Ihr Text wird behalten, eine Änderung wird ab dem nächsten Lauf gemeldet",
         "The page is as before": "Die Seite ist wie zuvor",
-        "The page changed": "Die Seite hat sich geändert",
         "The page changed: {excerpt}": "Die Seite hat sich geändert: {excerpt}",
         "In this recipe, {warning}.": "In diesem Rezept: {warning}.",
         "the listing's address carries {names}: a token of this visit, likely spent when the job runs. Pick on the page the steps lead to, without browsing away first: the job starts where its steps end then.": "die Adresse der Übersicht enthält {names}: ein Token dieses Besuchs, der beim Durchlauf des Jobs wahrscheinlich verbraucht ist. Wählen Sie auf der Seite aus, zu der die Schritte führen, ohne vorher weiterzusurfen: Der Job beginnt dann dort, wo seine Schritte enden.",

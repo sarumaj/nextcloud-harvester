@@ -947,7 +947,6 @@
         "The watched text: {count} characters": "Obserwowany tekst: {count} znaków",
         "Watching {address}: its text is kept, a change is told from the next run": "Obserwuję {address}: jej tekst jest zachowany, o zmianie dowiesz się od następnego uruchomienia",
         "The page is as before": "Strona jest taka jak wcześniej",
-        "The page changed": "Strona się zmieniła",
         "The page changed: {excerpt}": "Strona się zmieniła: {excerpt}",
         "In this recipe, {warning}.": "W tym przepisie: {warning}.",
         "the listing's address carries {names}: a token of this visit, likely spent when the job runs. Pick on the page the steps lead to, without browsing away first: the job starts where its steps end then.": "adres listy zawiera {names}: to token tej wizyty, prawdopodobnie zużyty, gdy zadanie się uruchomi. Wybieraj na stronie, do której prowadzą kroki, bez przechodzenia wcześniej gdzie indziej: zadanie zacznie wtedy tam, gdzie kończą się jego kroki.",

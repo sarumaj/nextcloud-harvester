@@ -47,6 +47,8 @@
   command line is said as the job's options: *Use --cookies-from-browser or --cookies* reads
   *Set the job's account: Cookies*, likewise its user name and password, its formats and
   impersonation.
+- A watched page's run outcome says what changed: *The page changed: -Tea: 2 EUR +Tea: 2.50 EUR*
+  (one line, 100 characters at most; *The page changed* alone before).
 - A mail job's progress log says what the mailbox search found (*Folder INBOX: 12 new messages,
   3 from the sender and with the subject asked for*, or no new messages and how many were done
   with before) and names each message of the sender and subject, with what the job takes from it

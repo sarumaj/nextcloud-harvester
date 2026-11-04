@@ -71,7 +71,9 @@ def test_a_change_of_the_pages_text_is_logged_and_told(tmp_path, monkeypatch):
     assert watched.run().last_message == "The page is as before"
     assert not watched.nc.sent
     watched.page = PAGE.format(now=2, tea="2.50 EUR")
-    assert watched.run().last_message == "The page changed"
+    assert (
+        watched.run().last_message == "The page changed: -Tea: 2 EUR +Tea: 2.50 EUR -Visited 1 times +Visited 2 times"
+    )
     change = "-Tea: 2 EUR\n+Tea: 2.50 EUR\n-Visited 1 times\n+Visited 2 times"
     assert f"The page changed: {change}" in watched.log()
     assert watched.nc.sent[0][:2] == ("Harvester: Tea — the page changed", f"https://shop.example/prices: {change}")
@@ -128,3 +130,9 @@ def test_the_recipes_test_reads_the_watched_text_and_keeps_nothing():
     site.close()
     assert (result["files"], result["problems"], len(result["pages"])) == (0, [], 1)
     assert lines == ["The watched text: 22 characters"]
+
+
+def test_the_outcomes_excerpt_is_one_short_line():
+    assert pagewatch.shortened("-a\n+b") == "-a +b"
+    long = pagewatch.shortened("+" + "x" * 300)
+    assert len(long) == pagewatch.NOTE_EXCERPT and long.endswith("…")
