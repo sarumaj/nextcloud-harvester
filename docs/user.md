@@ -502,6 +502,17 @@ is a job like any other; what you upload or move there leaves no name in plain.
   Ordinary
   scrolling is never recorded: a position depends on the window's size and the page's state,
   and replays wrongly in a job's window; a **Load more** button is a click, recorded as one.
+  The step loads the whole listing before the job reads any of it, however few files the run
+  then takes; for a long listing, read it as it is scrolled instead (below).
+- **Read as it is scrolled:** `"next": {"kind": "scroll", "level": 0}` (no element) is a next
+  page that is the same page scrolled further. The job reads the links the listing shows, then
+  scrolls it to its end until more of the level's links come (two tries of the scroll step's
+  waits), reads only those new ones, and so on: each batch is a page of its own, so the listing
+  ends where a listing of pages ends: when no more comes, after *Pages* (a batch each), at known
+  files (*Stop at known files*: a batch of only known files scrolls no further), at *Files per
+  run* or the run's time. It needs the browser. In the recorder, **Read it as it is scrolled**
+  (beside *Next page: none*) sets it for the level of the page shown, and takes the place of a
+  scroll step at the steps' end. A recipe with that step and no next page works as before.
 - **Steps in frames:** recorder.js runs in every frame of the page, cross-origin ones (a consent
   banner's, a sign-in's) included. A step done inside a frame keeps the frame's path from the
   page down, `"frame": [{"selector": "iframe[title=\"Consent\"]", "url":

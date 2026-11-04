@@ -21,6 +21,11 @@ recipe's test (listing_only) lists the pages without opening them.
 
 A walk of one choice (harvester.choices) starts with its values ({choice}), its listing's address
 filled in with them; its files are keyed by the choice too, and known only by their keys.
+
+A next page of kind scroll is the same page scrolled until it shows more of the level's links:
+each round is read as a page (its links taken already are no more), so known files, Pages, Files
+per run and the run's time end the scrolling where they end the run, as they end a listing of
+pages, rather than the page being scrolled to its end before it is read.
 """
 
 import dataclasses
@@ -339,10 +344,14 @@ class Walk:  # pylint: disable=too-many-instance-attributes,too-many-public-meth
         return False
 
     def following(self, page: Any, level: int, number: int) -> Any:
-        """The listing's next page after this one at the level, or None (no next page there)."""
-        if not self.after.get("selector") or int(self.after.get("level", 0)) != level:
+        """The listing's next page after this one at the level, or None (no next page there): the
+        same page scrolled until more of its links show, for a next of kind scroll."""
+        scrolling = self.after.get("kind") == "scroll"
+        if not (scrolling or self.after.get("selector")) or int(self.after.get("level", 0)) != level:
             return None
         awaits = self.awaits(level)
+        if scrolling:
+            return self.paced(self.driver.scrolled, page, awaits)
         if self.after.get("kind") == "number":
             return self.paced(self.driver.numbered, page, self.after["selector"], number, awaits)
         return self.paced(self.site.next_page, self.driver, page, self.after, awaits)

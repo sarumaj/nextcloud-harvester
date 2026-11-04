@@ -17,6 +17,8 @@ from fake_site import SITE, Site
 from harvester.browser.recorder import Recorder
 from harvester.sources import SourceError
 from harvester.sources import site as site_module
+from harvester.sources import walk
+from harvester.sources.driver import HttpDriver
 
 
 def browser_source(site: Site, monkeypatch, recipe: dict, **options) -> site_module.Site:
@@ -53,6 +55,44 @@ def test_a_scroll_step_loads_what_the_listing_adds_as_it_is_scrolled(monkeypatch
     kept = browser_source(Site(), monkeypatch, scrolled | {"start": f"{SITE}/feed"})
     kept.restore({"cookies": [], "origins": []})
     assert len(paths(kept)) == 35
+
+
+@needs_chromium
+def test_a_listing_scrolled_as_its_next_page_is_read_a_batch_at_a_time(monkeypatch):
+    feed = {"start": f"{SITE}/feed", "links": {"selector": "a.post", "pattern": r"post-(?P<n>\d+)\.pdf$"}}
+    scrolling = feed | {"next": {"kind": "scroll", "level": 0}}
+    source = browser_source(Site(), monkeypatch, scrolling)
+    pages: list[int] = []
+    source.observe = lambda event: pages.append((event["page"], event["matching"])) and None
+    assert len(paths(source)) == 35
+    assert pages == [(1, 10), (2, 10), (3, 10), (4, 5)], "each round's new links, until no more comes"
+    # Pages ends the scrolling, as it ends a listing of pages.
+    assert len(paths(browser_source(Site(), monkeypatch, scrolling, max_pages=2))) == 20
+
+
+@needs_chromium
+def test_a_scrolled_listing_of_known_files_is_not_scrolled_further(monkeypatch):
+    scrolling = {
+        "start": f"{SITE}/feed",
+        "links": {"selector": "a.post", "pattern": r"post-(?P<n>\d+)\.pdf$"},
+        "next": {"kind": "scroll", "level": 0},
+    }
+    monkeypatch.setattr(site_module, "guard", site_with_cookies(Site()))
+    source = site_module.Site({"recipe": json.dumps(scrolling), "stop_at_seen": 1}, {}, None)
+    pages: list[int] = []
+    source.observe = lambda event: pages.append(event["page"]) and None
+    known = {walk.FULL_PASS} | {f"{SITE}/files/post-{n}.pdf" for n in range(1, 11)}
+    try:
+        assert not list(source.items(lambda key: key in known))
+    finally:
+        source.close()
+    assert pages == [1], "the first batch was all known: no scroll"
+
+
+def test_over_http_a_scrolled_next_page_says_it_needs_the_browser():
+    driver = HttpDriver.__new__(HttpDriver)
+    with pytest.raises(SourceError, match="the next page is the listing scrolled further, which only the browser can"):
+        driver.scrolled(("https://example.org/feed", ""))
 
 
 @needs_chromium
@@ -203,6 +243,25 @@ def test_scroll_to_load_more_is_a_step_and_loads_the_page():
     steps, posts = asyncio.run(scenario())
     assert steps == [{"action": "goto", "url": f"{SITE}/feed"}, {"action": "scroll"}], "the wheel is no step"
     assert posts == 35
+
+
+@needs_chromium
+def test_reading_as_it_is_scrolled_is_the_next_page_in_place_of_the_scroll_step():
+    async def scenario():
+        _, recorder = await recording(Site())
+        try:
+            await recorder.handle({"type": "goto", "url": f"{SITE}/feed"})
+            await recorder.handle({"type": "scroll"})
+            await recorder.handle({"type": "next-kind", "kind": "scroll"})
+            chosen = dict(recorder.recipe)
+            recorder.load({"steps": chosen["steps"], "next": chosen["next"]})
+            return chosen, recorder.recipe["next"]
+        finally:
+            await recorder.close()
+
+    chosen, loaded = asyncio.run(scenario())
+    assert chosen["steps"] == [{"action": "goto", "url": f"{SITE}/feed"}], "the scroll step went"
+    assert chosen["next"] == {"kind": "scroll", "level": 0} == loaded
 
 
 async def trial_result(driver: Driver, recorder: Recorder, message: dict, stop: bool = False) -> dict:

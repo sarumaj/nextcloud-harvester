@@ -34,6 +34,7 @@ def test_every_preset_and_old_recipe_still_passes():
         options = ondemand.checked_options("site", job["options"]) if not job["schedule"] else job["options"]
         assert check_recipe(json.loads(options["recipe"])) == [], name
     assert not problems(next={"selector": "a.next", "level": 0})
+    assert not problems(next={"kind": "scroll", "level": 0}), "scrolling needs no element"
 
 
 @pytest.mark.parametrize(
@@ -44,6 +45,8 @@ def test_every_preset_and_old_recipe_still_passes():
         ({"next": {"selector": "a.next", "level": True}}, "next page: the level is a number from 0"),
         ({"next": {"selector": ["a"]}}, "next page: the element (selector) is text"),
         ({"next": {"selector": "a", "buttons": "yes"}}, "next page: buttons is true or false"),
+        ({"next": {"kind": "scroll", "level": 1}}, "next page: the level is a number from 0 (the listing) to 0"),
+        ({"next": {"kind": "scrolling", "selector": "a"}}, "next page: unknown kind scrolling"),
         ({"links": {"selector": 5}}, "file links: the element (selector) is text"),
         ({"links": {"selector": "a", "pattern": 5}}, "file links: the pattern is text"),
         ({"follow": {"selector": "a"}}, "the levels (follow) are a list"),
@@ -109,6 +112,7 @@ def test_what_needs_the_browser():
     assert uses_browser(LISTING | {"links": {"selector": "button", "click": True}})
     assert uses_browser(LISTING | {"follow": [{"selector": "a", "load_more": "button.more"}]})
     assert uses_browser(LISTING | {"links": {"selector": "a", "scroll": 5}})
+    assert uses_browser(LISTING | {"next": {"kind": "scroll"}}), "only the browser scrolls"
 
 
 def test_dates_in_a_value_are_filled_in_for_the_day():

@@ -49,7 +49,9 @@ Navigation (Back, Forward, Reload, an address) is never a step outside the mode 
 an address typed, Back and Forward are a step "goto" to the page arrived at (a job's browser has
 no history to go back in); Reload is none (the same page). Scrolling is no step: positions
 depend on the window's size; a listing that loads more as it is scrolled gets the step "scroll"
-(scroll to its end until no more comes), added with its button.
+(scroll to its end until no more comes), added with its button, or, better for a long one, a
+next page of kind scroll ({type: next-kind, kind: scroll}: read a batch at a time, which takes
+the place of a scroll step at the steps' end).
 
 recorder.js finds each step's element and each pick by several selectors (harvester.selectors):
 the step or the pick keeps the best and the others as alternatives. The listing (the recipe's
@@ -771,7 +773,19 @@ class Recorder(LinkPicks, Popups, Trials):  # pylint: disable=too-many-instance-
             await self._describe(f"follow{level}")
 
     async def _next_kind(self, kind: object) -> None:
-        """The next page as picked: its link alone, or the numbered pages proposed with it."""
+        """The next page as picked: its link alone, or the numbered pages proposed with it; or the
+        listing scrolled further (kind scroll: no pick), read a batch at a time. A scroll step at
+        the steps' end then goes: it would load the whole listing before the job reads any of it."""
+        if kind == "scroll":
+            assert self._page is not None
+            self._remember()
+            self.next = {"kind": "scroll", "level": self.depth(self._page.url)}
+            self.proposals.pop("next", None)
+            steps = self.steps.all()
+            if steps and steps[-1].get("action") == "scroll" and not steps[-1].get("frame"):
+                self.steps.edit("step-delete", {"step": len(steps) - 1})
+            await self._update()
+            return
         proposal = self.proposals.get("next") or {}
         chosen = proposal.get("number") if kind == "number" else proposal.get("link")
         if chosen:
@@ -791,7 +805,9 @@ class Recorder(LinkPicks, Popups, Trials):  # pylint: disable=too-many-instance-
         for name in ("links", "next"):
             spec = recipe.get(name)
             # A JSON listing has no element: its address and fields (the answer is chosen anew).
-            if isinstance(spec, dict) and (spec.get("selector") or (name == "links" and spec.get("kind") == "json")):
+            if isinstance(spec, dict) and (
+                spec.get("selector") or spec.get("kind") == ("json" if name == "links" else "scroll")
+            ):
                 setattr(self, name, copy.deepcopy(spec))
         if isinstance(recipe.get("start"), str):
             self.start_url = recipe["start"]

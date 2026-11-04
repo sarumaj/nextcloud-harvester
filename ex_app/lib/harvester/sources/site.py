@@ -56,6 +56,7 @@ from .tabs import (
     in_frame,
     listing_shown,
     load_more,
+    scroll_for_more,
     scroll_to_load,
     settle,
     short_error,
@@ -445,6 +446,9 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes,too
             return None
         clicked(page, lambda: page.click("[data-harvester-next]"), awaits)
         return page
+
+    def scrolled(self, page: Any, awaits: tuple[str, ...] = ()) -> Any:
+        return page if scroll_for_more(page, awaits) else None
 
     def address(self, page: Any) -> str:
         return page.url

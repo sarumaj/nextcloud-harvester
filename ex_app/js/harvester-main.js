@@ -1319,6 +1319,16 @@
 		return box
 	}
 
+	// The next page that is the listing scrolled further (kind scroll): no element to pick, only
+	// where (the level of the page it was chosen on) and Remove.
+	function renderScrolling(spec, send) {
+		const level = Number(spec.level || 0)
+		return el('div', { class: 'harvester-level', 'data-target': 'next', 'data-level': String(level) },
+			el('div', { class: 'harvester-level-head' }, el('h4', { text: t('Next page') }),
+				el('button', { type: 'button', text: t('Remove'), title: t('Remove this pick'), onclick: () => send({ type: 'remove', target: 'next', level }) })),
+			el('p', { text: `${t('Scrolled: the job reads what the page shows, then scrolls it for more, a batch at a time, each a page (Pages), and stops at known files.')} ${level === 0 ? t('On the listing.') : t('On the pages of level {level}.', { level })}` }))
+	}
+
 	// The next page: one link, or numbered pages (‹ 1 [2] 3 ›: the number one higher than the
 	// current page's), with what this page shows and the switch between the two when both fit.
 	function renderNext(box, spec, proposal, send) {
@@ -2528,9 +2538,16 @@
 				recipe.links && (recipe.links.selector || recipe.links.kind === 'json')
 					? renderLevel(t('File links'), recipe.links, proposals.links, send, 'links', 0, suggestions, repick)
 					: el('p', { text: t('File links: not picked yet.') }),
-				recipe.next && recipe.next.selector
-					? renderLevel(t('Next page'), recipe.next, proposals.next, send, 'next', Number(recipe.next.level || 0), suggestions, repick)
-					: el('p', { text: t('Next page: none.') }),
+				recipe.next && recipe.next.kind === 'scroll'
+					? renderScrolling(recipe.next, send)
+					: recipe.next && recipe.next.selector
+						? renderLevel(t('Next page'), recipe.next, proposals.next, send, 'next', Number(recipe.next.level || 0), suggestions, repick)
+						: el('p', {}, t('Next page: none.'), ' ', el('button', {
+							type: 'button',
+							text: t('Read it as it is scrolled'),
+							title: t('For a listing that loads more as it is scrolled: the job reads what it shows, then scrolls for more, a batch at a time (each a page), and stops where the run stops, not after loading it all. Replaces a scroll step at the steps’ end.'),
+							onclick: () => send({ type: 'next-kind', kind: 'scroll' }),
+						})),
 				testing ? el('p', { class: 'harvester-muted', text: t('Testing: the browser shows the job’s way through the site…') }) : '',
 				askingLine(),
 				tested && !testing ? renderTest(tested) : '')

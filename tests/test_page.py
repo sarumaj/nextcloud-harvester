@@ -303,6 +303,15 @@ def test_the_recorders_controls(page):
         {"type": "scroll"},
     ]
 
+    # Without a next page: read as it is scrolled, which then shows as the next page.
+    receive(page, {"type": "recipe", "recipe": RECIPE | {"next": {}}, "proposals": {}})
+    page.get_by_role("button", name="Read it as it is scrolled").click()
+    assert sent(page)[-1] == {"type": "next-kind", "kind": "scroll"}
+    receive(page, {"type": "recipe", "recipe": RECIPE | {"next": {"kind": "scroll", "level": 0}}, "proposals": {}})
+    assert "a batch at a time" in level(page, "next").inner_text()
+    level(page, "next").get_by_role("button", name="Remove").click()
+    assert sent(page)[-1] == {"type": "remove", "target": "next", "level": 0}
+
     page.get_by_role("button", name="Test the recipe").click()
     test = sent(page)[-1]
     assert test["type"] == "test" and test["settings"]["path"] == "{year}/{text}"

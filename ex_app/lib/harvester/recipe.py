@@ -16,9 +16,15 @@ before the file links (a year, then its issues); next is the link to a listing's
 that level (0: start's). A next of {"kind": "number", "selector": <the pagination's container>,
 "level": 0} is a pagination of numbers instead (harvester.pagination): the item numbered one
 higher than the current page, a link or a button ("buttons": true: only the browser clicks them).
+A next of {"kind": "scroll", "level": 0} (no selector) is a listing that loads more as it is
+scrolled, read a batch at a time: its links shown, then the page scrolled to its end until more
+of them come, those new ones, and so on, each round a page of its own (Pages, known files and the
+run's limits end it as they end a listing of pages). Only the browser scrolls.
 
 A step {"action": "scroll", "rounds": 20} scrolls the page to its end until no more comes (a
-listing that loads more as it is scrolled), at most rounds times (SCROLL_ROUNDS without).
+listing that loads more as it is scrolled), at most rounds times (SCROLL_ROUNDS without), before
+the walk reads it: all at once, however many files the run then takes. A next of kind scroll
+reads such a listing a batch at a time instead, and stops scrolling where the run stops.
 
 A step inside a frame (a consent banner's, a sign-in's) has "frame": its path from the page
 down, one entry per frame: {"selector": <the frame's element in its parent>, "url": <its
@@ -146,7 +152,7 @@ LOAD_MORE_MAX = 50
 WAIT_FOR_TIMEOUT = 300
 WAIT_FOR_MAX = 1800
 WAIT_FOR_RELOAD = 5
-NEXT_KINDS = ("link", "number")
+NEXT_KINDS = ("link", "number", "scroll")
 # The actions that act on an element, and so may do it inside a frame.
 ON_ELEMENTS = ("click", "fill", "press", "mail-code", "select", "hover", "each", "ask-code")
 # The actions that switch the tab the steps act in, and so have no element.
@@ -501,6 +507,9 @@ def _rounds_ok(rounds: object) -> bool:
 
 
 def _check_next(after: object, depth: int) -> list[str]:
+    if isinstance(after, dict) and after.get("kind") == "scroll":
+        # Scrolling has no element: the page itself grows.
+        return _check_next_level(after, depth)
     # A next without its element has always meant none (the walk ends after the first page).
     if not isinstance(after, dict) or not after.get("selector"):
         return [] if not after or isinstance(after, dict) else ["next page: not an object"]
@@ -508,11 +517,17 @@ def _check_next(after: object, depth: int) -> list[str]:
         return ["next page: the element (selector) is text"]
     if after.get("kind", "link") not in NEXT_KINDS:
         return [f"next page: unknown kind {after.get('kind')}"]
+    problems = _check_next_level(after, depth)
+    if not problems and not isinstance(after.get("buttons", False), bool):
+        return ["next page: buttons is true or false"]
+    return problems
+
+
+def _check_next_level(after: dict, depth: int) -> list[str]:
+    """The next page's level: 0 (the listing) to depth (the file links' pages)."""
     level = after.get("level", 0)
     if not isinstance(level, int) or isinstance(level, bool) or not 0 <= level <= depth:
         return [f"next page: the level is a number from 0 (the listing) to {depth} (the file links' pages)"]
-    if not isinstance(after.get("buttons", False), bool):
-        return ["next page: buttons is true or false"]
     return []
 
 
@@ -918,12 +933,12 @@ def token_warnings(recipe: dict) -> list[Said]:
 
 def uses_browser(recipe: dict) -> bool:
     """Whether the recipe needs the browser: it has steps to replay, a next page or numbered
-    pages that are buttons (clicked, no address to fetch), file links or links to follow that
+    pages that are buttons (clicked, no address to fetch) or scrolled to, file links or links to follow that
     are clicked, a level that loads more by scrolling or with a button or waits for an element
     (wait_for), pages it saves or
     captures files of, or a JSON listing's header read from the page's storage."""
     after = recipe.get("next") or {}
-    buttons = isinstance(after, dict) and bool(after.get("buttons"))
+    buttons = isinstance(after, dict) and (bool(after.get("buttons")) or after.get("kind") == "scroll")
     clicked = any(spec.get("click") for spec in levels(recipe))
     loading = any("scroll" in spec or "load_more" in spec or "wait_for" in spec for spec in levels(recipe))
     keeping = bool(recipe.get("save")) or any(spec.get("save") or spec.get("capture") for spec in levels(recipe))

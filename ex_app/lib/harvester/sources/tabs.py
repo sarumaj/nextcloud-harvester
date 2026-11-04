@@ -324,6 +324,19 @@ def load_more(page, selector: str) -> None:
             return
 
 
+def scroll_for_more(page, selectors: tuple[str, ...]) -> bool:
+    """Scrolls to the page's end until more of what the selectors find shows (a listing's next
+    batch; without selectors, until the page grows), SCROLL_STILL rounds at most of GROW_WAIT
+    each; whether more came."""
+    before = found_elements(page, selectors) if selectors else None
+    for _ in range(SCROLL_STILL):
+        size = page.evaluate(PAGE_SIZE)
+        page.evaluate(SCROLL_DOWN)
+        if grown(page, size) and (not selectors or found_elements(page, selectors) not in (before, None)):
+            return True
+    return False
+
+
 def scroll_to_load(page, rounds: int) -> None:
     """Scrolls to the page's end until it stops growing (no new links, elements or height for
     SCROLL_STILL rounds of GROW_WAIT each), at most rounds times or SCROLL_SECONDS."""

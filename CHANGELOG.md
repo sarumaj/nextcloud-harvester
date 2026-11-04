@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added
+
+- A listing that loads more as it is scrolled can be **read as it is scrolled**
+  (`"next": {"kind": "scroll"}`, the recorder's *Read it as it is scrolled*): a batch at a time,
+  each a page, so the job stops scrolling at known files, *Pages* or *Files per run* instead of
+  loading the whole listing first, as the step *scroll to load more* does.
+
 ### Fixed
 
 - YouTube's formats are all there again: yt-dlp solves YouTube's challenges ("n challenge

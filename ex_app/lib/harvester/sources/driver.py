@@ -149,6 +149,14 @@ class Driver(abc.ABC):  # pylint: disable=too-many-public-methods
         """The page numbered one higher than this one in the pagination (harvester.pagination),
         or None; counted is the walk's count of the listing's pages so far, awaits as open's."""
 
+    def scrolled(self, page: Any, awaits: tuple[str, ...] = ()) -> Any:
+        """The page scrolled to its end until it shows more of what awaits finds (a listing that
+        loads more as it is scrolled: its next batch), or None when no more comes. Only the
+        browser scrolls."""
+        raise SourceError(
+            f"{self.address(page)}: the next page is the listing scrolled further, which only the browser can"
+        )
+
     @abc.abstractmethod
     def address(self, page: Any) -> str:
         """The page's address."""
