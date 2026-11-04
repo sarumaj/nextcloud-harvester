@@ -29,7 +29,7 @@ from typing import Any
 
 from playwright.sync_api import Error as PlaywrightError
 
-from .. import choices, jsonlist, pagewatch, patterns, selectors
+from .. import choices, jsonlist, pageinfo, pagewatch, patterns, selectors
 from .. import recipe as recipes
 from ..l10n import said, said_n
 from . import keep, near
@@ -72,6 +72,9 @@ class Walk:  # pylint: disable=too-many-instance-attributes,too-many-public-meth
         self.opened = 0
         # What the level's links on the page read last were: found, and matching (matching()).
         self.counted = (0, 0)
+        # The names of the values read from the pages (pageinfo): no link's pattern disagrees with
+        # them (groups()).
+        self.read_names: set[str] = set()
 
     def items(self) -> Iterator[Item]:
         """The walk from the recipe's start (None: the page its steps ended on); a recipe that
@@ -190,8 +193,7 @@ class Walk:  # pylint: disable=too-many-instance-attributes,too-many-public-meth
             groups |= patterns.page_values(spec["values"], texts[0], pattern_search, groups)
         return url, text, groups | ({"_click": index} if clicked else {})
 
-    @staticmethod
-    def groups(spec: dict, text: str, values: dict) -> dict | None:
+    def groups(self, spec: dict, text: str, values: dict) -> dict | None:
         """The values the level's pattern takes from a link (its address, or a click link's
         text), or None when it does not match, or when they disagree with the levels' above it
         (another year's issue shown on every year's page): that link is the other listing's,
@@ -201,7 +203,9 @@ class Walk:  # pylint: disable=too-many-instance-attributes,too-many-public-meth
         if not match:
             return None
         groups = patterns.group_values(match)
-        if any(name in values and values[name] != value for name, value in groups.items()):
+        if any(
+            name in values and name not in self.read_names and values[name] != value for name, value in groups.items()
+        ):
             return None
         return groups
 
@@ -400,6 +404,19 @@ class Walk:  # pylint: disable=too-many-instance-attributes,too-many-public-meth
             )
             return None
 
+    def read_page(self, page: Any, level: int, number: int, given: dict) -> dict:
+        """The values of a listing's page (pageinfo): the built-in ones, and on the first page a
+        level's link opened, that level's page_values (given: the walk's values so far)."""
+        if isinstance(page, jsonlist.JsonPage):
+            return {}
+        above = self.follow[level - 1] if level and number == 1 else {}
+        specs = above.get("page_values") or [] if isinstance(above, dict) else []
+        read = pageinfo.values(
+            self.driver.page_info(page, specs), self.driver.address(page), specs, pattern_search, given
+        )
+        self.read_names |= set(read)
+        return read
+
     def walk(self, url: str | None, level: int, values: dict, outcome: dict) -> Iterator[Item]:
         """A listing at the level, page after page; outcome tells whether it found files and
         whether any was new."""
@@ -407,6 +424,8 @@ class Walk:  # pylint: disable=too-many-instance-attributes,too-many-public-meth
         page = self.open_listing(url, level)
         if page is None:
             return
+        # The values picked on the page this level's link opened (its first), kept for its next pages.
+        picked: dict = {}
         try:
             for number in range(1, int(self.site.settings["max_pages"]) + 1):
                 if spec.get("wait_for") and number == 1 and self.once(f"wait {level}"):
@@ -423,15 +442,18 @@ class Walk:  # pylint: disable=too-many-instance-attributes,too-many-public-meth
                 self.driver.expand(page, spec)
                 if self.repeated(page, level, spec) and number > 1:
                     return
+                read = self.read_page(page, level, number, values | picked)
+                picked |= {name: value for name, value in read.items() if name not in pageinfo.BUILT_IN}
+                here = values | picked | read
                 if level < len(self.follow):
-                    links = self.matching(page, spec, (level, number), values)
+                    links = self.matching(page, spec, (level, number), here)
                     if not links:
                         self.blocked(page, level, number)
                     if spec.get("click"):
                         links = [self.clicked(page, spec, level, link) for link in links]
-                    if (yield from self.children(links, level, values, outcome)):
+                    if (yield from self.children(links, level, here, outcome)):
                         return
-                elif (yield from self.files(page, number, values, outcome, level)):
+                elif (yield from self.files(page, number, here, outcome, level)):
                     return
                 later = self.following(page, level, number)
                 if later is None:

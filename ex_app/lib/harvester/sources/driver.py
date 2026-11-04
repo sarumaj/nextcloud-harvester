@@ -19,7 +19,7 @@ from urllib.parse import urljoin, urlparse
 import httpx
 from bs4 import BeautifulSoup
 
-from .. import browser, images, pagination, patterns, selectors
+from .. import browser, images, pageinfo, pagination, patterns, selectors
 from . import download, near
 from .base import AuthError, ChallengeError, SourceError
 from .download import Response
@@ -116,6 +116,11 @@ class Driver(abc.ABC):  # pylint: disable=too-many-public-methods
         """The page's links matching the selector, as links() gives them, each with the texts of
         the values (specs: a level's "values"; None where a value's element is missing)."""
         return [(url, text, [None] * len(specs)) for url, text in self.links(page, selector)]
+
+    def page_info(self, page: Any, specs: list[dict]) -> dict:  # pylint: disable=unused-argument
+        """The page's raw values (harvester.pageinfo: its title, <meta>, JSON-LD, first <time>,
+        language) with the texts of a level's page_values (specs); {} where it cannot be read."""
+        return {}
 
     def read_json(self, url: str, request: dict | None = None) -> Any:
         """A JSON listing's page, asked for as a file is (near.read_json); request: its method,
@@ -263,6 +268,9 @@ class HttpDriver(Driver):
         base = self._base(page)
         found = [(self._address(link, base), link) for link in page.soup.select(selector)]
         return [(url, text, [near.soup_value(link, spec) for spec in specs]) for (url, text), link in found if url]
+
+    def page_info(self, page: Any, specs: list[dict]) -> dict:
+        return pageinfo.soup_info(page.soup, specs)
 
     def next(self, page: Any, selector: str, awaits: tuple[str, ...] = ()) -> Any:
         found = self.links(page, selector)

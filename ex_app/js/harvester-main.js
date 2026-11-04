@@ -1175,11 +1175,15 @@
 		return box
 	}
 
+	// Values as name=value chips; a list (a page's tags) as its entries joined.
+	function valueChips(values) {
+		return Object.entries(values || {}).map(([k, v]) => el('span', { class: 'harvester-value', text: `${k}=${Array.isArray(v) ? `[${v.join(', ')}]` : v}` }))
+	}
+
 	// The examples of a pick: each link's text and its values (the pattern's and the page's).
 	function examplesList(proposal) {
 		return el('ul', {}, ...(proposal.examples || []).map((example) => el('li', {},
-			el('span', { text: example.text || example.url }), ' ',
-			...Object.entries(example.values).map(([k, v]) => el('span', { class: 'harvester-value', text: `${k}=${v}` })))))
+			el('span', { text: example.text || example.url }), ' ', ...valueChips(example.values))))
 	}
 
 	// Where a value of the page is read, in words: in the link, or in its row or card.
@@ -1377,6 +1381,7 @@
 			page.choice ? el('small', { class: 'harvester-muted', text: ` ${t('(choice “{choice}”)', { choice: page.choice })}` }) : '',
 			page.files.length ? el('ul', {}, ...page.files.map((file) => el('li', {},
 				file.problem ? el('span', { class: 'harvester-error', text: `${file.url}: ${file.problem}` }) : el('span', { text: file.path, title: file.url }),
+				file.values && Object.keys(file.values).length ? el('span', {}, ' ', ...valueChips(file.values)) : '',
 				file.click ? el('small', { class: 'harvester-muted', text: ` ${t('(clicked: “{text}”)', { text: file.text })}` }) : '',
 				file.save ? el('small', { class: 'harvester-muted', text: ` ${t('(the page saved as {kind})', { kind: SAVED_AS[file.save] || file.save })}` }) : '',
 				file.capture && file.capture.length ? el('small', { class: 'harvester-muted', text: ` ${t('(its files of the types {types})', { types: file.capture.join(', ') })}` }) : ''))) : ''))))

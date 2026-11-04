@@ -34,7 +34,7 @@ from playwright.sync_api import Error as PlaywrightError, Route, WebSocketRoute
 
 from .. import browser
 from .. import cookies as cookie_jar
-from .. import choices, images, jsonlist, otp, pagination, patterns, selectors
+from .. import choices, images, jsonlist, otp, pageinfo, pagination, patterns, selectors
 from .. import recipe as recipes
 from ..l10n import said
 from ..browser import consent as banners, engine
@@ -375,6 +375,12 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes,too
         found = page.eval_on_selector_all(selector, near.VALUES, specs)
         return [(*images.link(href, text, info), values) for href, text, values, info in found]
 
+    def page_info(self, page: Any, specs: list[dict]) -> dict:
+        try:
+            return page.evaluate(pageinfo.PAGE_INFO, specs)
+        except PlaywrightError:
+            return {}  # a page that went on meanwhile: its values are missing
+
     def targets(self, page: Any, selector: str) -> list[str]:
         return page.eval_on_selector_all(selector, clicks.TARGETS)
 
@@ -672,6 +678,8 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
     credentials = siteoptions.CREDENTIALS
     credential_help = siteoptions.CREDENTIAL_HELP
     options = siteoptions.OPTIONS
+    # Tags picked on the pages (a level's page_values, many), and the values every page gives.
+    tag_values = ("tags", "site_name", "page_lang")
     pause = 2.0
     listing_options = ("recipe", "browser", "max_pages")
     # The address is the recipe's listing: a fetch's page is walked with the recipe's levels and

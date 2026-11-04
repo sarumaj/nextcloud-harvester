@@ -82,7 +82,17 @@ A level of links to follow, or the file links, may take "values" from the page a
 (harvester.patterns.page_values): [{"name": "date", "closest": "tr", "selector": "td.date",
 "attribute": "", "regex": "...", "type": "date"}, ...]: the link's closest element matching
 closest (none: the link itself), then the element in it matching selector (none: that element),
-its attribute or else its text, narrowed by regex, of a type (text, number, date).
+its attribute or else its text, narrowed by regex, of a type (text, number, date). A value with
+"many": true is a list: the texts of every element in the closest element that selector matches
+(a card's tag chips), cleaned (a leading "#" and a count after them left out), the regex keeping
+those it matches; a job's tag that is that value alone ({tags}) gives a tag per entry.
+
+Every listing page a walk opens gives values of its own (harvester.pageinfo): {page_title},
+{site_name}, {page_date} (with {page_year}, {page_month}, {page_day}) and {page_lang}. A level to
+follow may read more on the page its links open: "page_values": [{"name": "tags", "selector":
+"ul.tags a", "many": true}, {"name": "author", "selector": ".byline", "attribute": "", "regex":
+"", "type": "text"}] (as values, without closest: the page holds one each). Both go down to the
+next levels and the file links as the levels' values do, a deeper page's winning.
 
 The file links may be a JSON listing instead ("kind": "json", harvester.jsonlist): the request's
 address, the path to its items and the fields of each item; their values have a "field" in
@@ -119,7 +129,7 @@ import re
 import string
 from urllib.parse import urlsplit
 
-from . import choices, jsonrequest, needs, pagewatch, patterns
+from . import choices, jsonrequest, needs, pageinfo, pagewatch, patterns
 from .browser import VIEWPORT_MAX, VIEWPORT_MIN, allowed_url
 from .l10n import Said, listed, said
 from .patterns import token_parameters
@@ -560,7 +570,9 @@ def _check_key(spec: dict, recipe: dict) -> list[str]:
         groups |= {"choice", "choice_value"}
     for level in [*(recipe.get("follow") or []), spec]:
         # Values read from the page count too, a date's year, month and day with them.
-        for value in (level.get("values") or []) if isinstance(level, dict) else []:
+        for value in (
+            [*(level.get("values") or []), *(level.get("page_values") or [])] if isinstance(level, dict) else []
+        ):
             if isinstance(value, dict):
                 groups |= {str(value.get("name"))} | (
                     {"year", "month", "day"} if value.get("type") == "date" else set()
@@ -698,28 +710,51 @@ def _check_steps(steps: list) -> list[str]:
     return problems
 
 
-def _check_values(where: str, values: object, json_items: bool = False) -> list[str]:
-    """The problems of a level's values from the page (or of a JSON listing's items)."""
+def _check_values(where: str, values: object, json_items: bool = False, page: bool = False) -> list[str]:
+    """The problems of a level's values from the page around its links (or of a JSON listing's
+    items; page: of its page_values, read on the page its links open)."""
     if values in (None, []):
         return []
+    what = "page_values" if page else "values"
     if not isinstance(values, list) or len(values) > patterns.MAX_VALUES:
-        return [f"{where}: the values are a list of at most {patterns.MAX_VALUES}"]
+        return [f"{where}: the {what} are a list of at most {patterns.MAX_VALUES}"]
     problems: list[str] = []
     for value in values:
-        place = ("field",) if json_items else ("closest", "selector", "attribute")
+        place = (
+            ("field",) if json_items else ("selector", "attribute") if page else ("closest", "selector", "attribute")
+        )
         if not isinstance(value, dict) or not patterns.VALUE_NAME.match(str(value.get("name", ""))):
             problems.append(f"{where}: a value without a name of letters, digits and _")
-        elif value.get("type", "text") not in patterns.VALUE_TYPES:
-            problems.append(f"{where}: the value {value['name']} is of an unknown type {value.get('type')}")
-        elif not all(isinstance(value.get(key, ""), str) for key in (*place, "regex")):
-            problems.append(f"{where}: the value {value['name']}'s {', '.join(place)} and regex are text")
-        elif json_items and not value.get("field"):
-            problems.append(f"{where}: the value {value['name']} has no field")
-        elif value.get("attribute") and not ATTRIBUTE.match(value["attribute"]):
-            problems.append(f"{where}: the value {value['name']}'s attribute is no attribute's name")
         else:
-            problems += _check_pattern(f"{where}: the value {value['name']}", value.get("regex", ""))
+            problems += _value_problems(f"{where}: the value {value['name']}", value, place, page)
     return problems
+
+
+def _value_problems(where: str, value: dict, place: tuple[str, ...], page: bool) -> list[str]:
+    """The problems of one value (where: its level and name; place: the keys that say where it is
+    read): the first of its checks that fails, else its pattern's."""
+    many = value.get("many")
+    checks = (
+        (lambda: value.get("type", "text") not in patterns.VALUE_TYPES, f" is of an unknown type {value.get('type')}"),
+        (
+            lambda: not all(isinstance(value.get(key, ""), str) for key in (*place, "regex")),
+            f"'s {', '.join(place)} and regex are text",
+        ),
+        (lambda: "field" in place and not value.get("field"), " has no field"),
+        (
+            lambda: value.get("attribute") and not ATTRIBUTE.match(value["attribute"]),
+            "'s attribute is no attribute's name",
+        ),
+        (lambda: not isinstance(many, bool) and many is not None, ": many is true or false"),
+        (lambda: many and "field" in place, ": a JSON item's field gives one value, not many"),
+        (lambda: many and value.get("type") == "date", ": a value of many elements is text or numbers, not dates"),
+        (lambda: (many or page) and not value.get("selector"), " has no selector of its elements"),
+        (lambda: page and value["name"] in pageinfo.BUILT_IN, " is the name of a value every page gives"),
+    )
+    for failed, problem in checks:
+        if failed():
+            return [f"{where}{problem}"]
+    return _check_pattern(where, value.get("regex", ""))
 
 
 def _check_json(links: dict) -> list[str]:
@@ -789,6 +824,7 @@ def check_recipe(recipe: dict) -> list[str]:
         problems += _check_level(f"level {level}", spec)
         if isinstance(spec, dict):
             problems += _check_values(f"level {level}", spec.get("values"))
+            problems += _check_values(f"level {level}", spec.get("page_values"), page=True)
     links = recipe.get("links")
     problems += _check_links(links, recipe)
     picks = [("file links", links), ("next page", recipe.get("next"))]
@@ -817,6 +853,8 @@ def _check_links(links: object, recipe: dict) -> list[str]:
     problems = _check_level("file links", links)
     if isinstance(links, dict):
         problems += _check_values("file links", links.get("values"))
+        if links.get("page_values"):
+            problems.append("file links: page_values are read on the pages a level's links open, not on files")
         problems += _check_key(links, recipe)
         problems += _check_keep(links)
     return problems

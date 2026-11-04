@@ -533,16 +533,55 @@ def _typed(name: str, kind: str, text: str, given: dict) -> dict:
     return {name: cleaned} if cleaned else {}
 
 
+# The entries a value of many elements ("many": true, a post's tag chips) reads at most.
+MAX_ENTRIES = 200
+# A count after a tag's name ("sky (123)", "sky 1.2k"): sites show how many posts have it.
+COUNT = re.compile(r"(?:\s*\(\s*\d[\d.,]*\s*[kKmM]?\s*\)|\s+\d[\d.,]*\s*[kKmM]?)$")
+
+
+def clean_entry(text: str) -> str:
+    """An entry of a value of many elements as a tag: one line, without a leading "#" and a
+    count after it (COUNT); as it was where nothing else is left (a tag "2026")."""
+    text = re.sub(r"\s+", " ", text).strip().lstrip("#").strip()
+    return COUNT.sub("", text).strip() or text
+
+
+def _entries(spec: dict, texts: object, search: Callable[[str, str], Any]) -> list:
+    """A value of many elements: each element's text cleaned (clean_entry), those its pattern
+    matches (its group of the value's name, else its first group, else the whole match), of the
+    value's type (text, number), without repeats."""
+    name, pattern = str(spec.get("name", "")), str(spec.get("regex") or "")
+    kind = "number" if spec.get("type") == "number" else "text"
+    found = []
+    for text in (texts if isinstance(texts, list) else [texts])[:MAX_ENTRIES]:
+        entry = clean_entry(str(text or "")[:VALUE_TEXT])
+        if pattern:
+            match = search(pattern, entry)
+            if not match:
+                continue
+            group = match.groupdict().get(name)
+            entry = group or (match.group(1) if match.re.groups and match.group(1) else match.group(0))
+        typed = _typed(name, kind, entry or "", {}).get(name)
+        if typed not in (None, ""):
+            found.append(typed)
+    return list(dict.fromkeys(found))
+
+
 def page_values(specs: list[dict], texts: list, search: Callable[[str, str], Any], given: dict) -> dict:
     """The values a link's page gives (specs: the level's "values"; texts: what each found near the
     link, None where it found nothing): each spec's pattern searched in its text (with search, a
     person's pattern's time limit) and its value of its type. The pattern's named groups are values
     too; the value is the group of its own name, else the first group, else the whole match. A value
     whose text or pattern finds nothing is missing: a file name naming it fails, a tag is left out.
-    given: the link's values so far (a date's year does not replace the address's)."""
+    A value of many elements ("many": true) is a list of their texts (_entries), the pattern
+    keeping those it matches. given: the link's values so far (a date's year does not replace the
+    address's)."""
     values: dict = {}
     for spec, text in zip(specs, texts):
         if text is None:
+            continue
+        if spec.get("many"):
+            values[str(spec.get("name", ""))] = _entries(spec, text, search)
             continue
         text = re.sub(r"\s+", " ", str(text)).strip()[:VALUE_TEXT]
         name, pattern = str(spec.get("name", "")), str(spec.get("regex") or "")

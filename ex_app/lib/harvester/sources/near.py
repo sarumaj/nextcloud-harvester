@@ -14,16 +14,25 @@ from .base import SourceError, check_stop
 
 # A level's links with the texts of its values (harvester.recipe: "values"): each value's element
 # (the link's closest match of closest, then the match of selector in it), its attribute or its
-# text; null where there is none, or a selector the page cannot read. Last, an image's attributes
+# text; with many, those of every match of selector in it (a card's tag chips); null where there
+# is none, or a selector the page cannot read. Last, an image's attributes
 # (harvester.images.INFO).
-VALUES = """(els, specs) => els.map(e => [e.href || '', (e.innerText || '').trim(), specs.map(s => {
+VALUES = (
+    """(els, specs) => els.map(e => [e.href || '', (e.innerText || '').trim(), specs.map(s => {
   try {
+    const text = (el) => s.attribute ? el.getAttribute(s.attribute) : (el.innerText || el.textContent || '').trim()
     let at = s.closest ? e.closest(s.closest) : e
+    if (at && s.many) return [...at.querySelectorAll(s.selector)].slice(0, """
+    + str(patterns.MAX_ENTRIES)
+    + """).map((el) => text(el) || '')
     if (at && s.selector) at = at.querySelector(s.selector)
     if (!at) return null
-    return s.attribute ? at.getAttribute(s.attribute) : (at.innerText || at.textContent || '').trim()
+    return text(at)
   } catch (error) { return null }
-}), (""" + images.INFO + ")(e)])"
+}), ("""
+    + images.INFO
+    + ")(e)])"
+)
 
 # What a page holds under a name (Driver.page_value): a <meta name>'s content, a localStorage key's
 # value; null without one.
@@ -36,22 +45,29 @@ PAGE_VALUE = """([kind, name]) => {
 }"""
 
 
-def soup_value(link: Any, spec: dict) -> str | None:
+def soup_value(link: Any, spec: dict) -> str | list | None:
     """A value's text for a link of a page read over HTTP, as VALUES finds it in the browser: the
-    link's closest match of closest, the match of selector in it, its attribute or its text; None
-    where there is none (or a selector BeautifulSoup cannot read)."""
+    link's closest match of closest, the match of selector in it (every match, with many), its
+    attribute or its text; None where there is none (or a selector BeautifulSoup cannot read)."""
     try:
         at = link.css.closest(spec["closest"]) if spec.get("closest") else link
+        if at is not None and spec.get("many"):
+            return [_text(element, spec) for element in at.select(spec["selector"])[: patterns.MAX_ENTRIES]]
         if at is not None and spec.get("selector"):
             at = at.select_one(spec["selector"])
     except Exception:  # pylint: disable=broad-exception-caught
         return None  # soupsieve's SelectorSyntaxError and its kin: the value is missing
     if at is None:
         return None
+    return _text(at, spec)
+
+
+def _text(element: Any, spec: dict) -> str:
+    """An element's attribute that the value reads, else its text."""
     if spec.get("attribute"):
-        value = at.get(spec["attribute"])
-        return " ".join(value) if isinstance(value, list) else value
-    return at.get_text(" ", strip=True)
+        value = element.get(spec["attribute"])
+        return " ".join(value) if isinstance(value, list) else str(value or "")
+    return element.get_text(" ", strip=True)
 
 
 def mail_code(page, step: dict, secrets: dict[str, str], began: float) -> str:

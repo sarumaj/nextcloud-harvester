@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The recipe's test (harvester.sources.site: Site.survey): the site's walk as a run walks it,
 downloading nothing, and what it found: each listing page read with the links its selector and
-pattern matched, the first file links with their file names, and the problems met. The recorder's
+pattern matched, the first file links with their file names and values, and the problems met. The recorder's
 Test the recipe (harvester.browser.trial) and a job's weekly test (harvester.watch) show it.
 """
 
@@ -11,12 +11,24 @@ from typing import Any
 
 from playwright.sync_api import Error as PlaywrightError
 
+from .. import patterns
 from . import keep
 from .base import SourceError, Stopped
 
 # The file links a test lists, and the listing pages it opens at most.
 SURVEY_FILES = 20
 SURVEY_PAGES = 30
+# The values a test shows per file link at most (besides the link's own, LINK_VALUES).
+SURVEY_VALUES = 16
+# The values every link gives (its address, text, file name, ...): no news in a test.
+LINK_VALUES = frozenset(patterns.link_values("https://example.org/", "", 1))
+
+
+def shown_values(values: dict) -> dict:
+    """A file link's values a test shows: those of the pattern and of the pages (a page's title,
+    its tags), not the link's own; a list as it is."""
+    kept = {name: value for name, value in values.items() if name not in LINK_VALUES and not name.startswith("_")}
+    return dict(list(kept.items())[:SURVEY_VALUES])
 
 
 def survey(
@@ -52,6 +64,7 @@ def survey(
             problem = str(item.problem) if item.problem else ""
             # A file link that is clicked is told by its text (its address is the listing's).
             entry = {"url": item.url, "path": item.path, "problem": problem, "text": item.values.get("text", "")}
+            entry["values"] = shown_values(item.values)
             entry |= kept | {"click": item.trigger is not None and not isinstance(item.trigger, keep.Opened)}
             result["pages"][-1]["files"].append(entry)
             result["files"] += 1
