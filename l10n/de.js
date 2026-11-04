@@ -1082,6 +1082,55 @@ OC.L10N.register(
         "the next page {address} was read already (a loop): its listing ends": "die nächste Seite {address} wurde schon gelesen (eine Schleife): Die Übersicht endet hier",
         "level {level}: clicking “{element}” failed: {why}": "Ebene {level}: Klick auf „{element}“ fehlgeschlagen: {why}",
         "waiting for {selector} to show, at most {seconds} s": "warte darauf, dass {selector} erscheint, höchstens {seconds} s",
+        "The site refused the account: check its fields (a password, a token, the cookies).": "Die Website hat das Konto abgelehnt: Prüfe seine Felder (ein Passwort, ein Token, die Cookies).",
+        "The site asks for a person: a job of this type cannot answer that (a website job can).": "Die Website verlangt nach einem Menschen: Ein Job dieses Typs kann das nicht beantworten (ein Website-Job kann es).",
+        "The DNS servers block this site (the administrator's filter): ask them to allow it.": "Die DNS-Server sperren diese Website (der Filter des Administrators): Bitte ihn, sie zuzulassen.",
+        "Harvester opens only public http(s) addresses, not local or private ones.": "Harvester öffnet nur öffentliche http(s)-Adressen, keine lokalen oder privaten.",
+        "{tool} does not know this site: check the address, or use a website job.": "{tool} kennt diese Website nicht: Prüfe die Adresse oder nimm einen Website-Job.",
+        "The site may want the account: its user name and password, or a signed-in browser's cookies.": "Die Website will vielleicht das Konto: seinen Benutzernamen und sein Passwort oder die Cookies eines angemeldeten Browsers.",
+        "The address is a page, not a feed: look for its RSS or Atom link (Browse).": "Die Adresse ist eine Seite, kein Feed: Suche ihren RSS- oder Atom-Link (Navigieren).",
+        "The site did not answer: check the address, or try again later.": "Die Website hat nicht geantwortet: Prüfe die Adresse oder versuche es später noch einmal.",
+        "_found %n file_::_found %n files_": [
+            "%n Datei gefunden",
+            "%n Dateien gefunden"
+        ],
+        "_found %n file in {seconds} s (the try's time limit; there may be more)_::_found %n files in {seconds} s (the try's time limit; there may be more)_": [
+            "%n Datei in {seconds} s gefunden (die Zeitgrenze des Versuchs; es kann mehr geben)",
+            "%n Dateien in {seconds} s gefunden (die Zeitgrenze des Versuchs; es kann mehr geben)"
+        ],
+        "_%n would be fetched this run_::_%n would be fetched this run_": [
+            "%n würde in diesem Durchlauf geholt",
+            "%n würden in diesem Durchlauf geholt"
+        ],
+        "_found %n file (a try looks at no more; there may be more)_::_found %n files (a try looks at no more; there may be more)_": [
+            "%n Datei gefunden (mehr sieht sich ein Versuch nicht an; es kann mehr geben)",
+            "%n Dateien gefunden (mehr sieht sich ein Versuch nicht an; es kann mehr geben)"
+        ],
+        "_%n in later runs (Files per run: {limit})_::_%n in later runs (Files per run: {limit})_": [
+            "%n in späteren Durchläufen (Dateien pro Durchlauf: {limit})",
+            "%n in späteren Durchläufen (Dateien pro Durchlauf: {limit})"
+        ],
+        "_%n already in the job's history_::_%n already in the job's history_": [
+            "%n schon im Verlauf des Jobs",
+            "%n schon im Verlauf des Jobs"
+        ],
+        "_%n skipped: not of the job's file types_::_%n skipped: not of the job's file types_": [
+            "%n übersprungen: nicht von den Dateitypen des Jobs",
+            "%n übersprungen: nicht von den Dateitypen des Jobs"
+        ],
+        "_%n skipped: outside the job's sizes_::_%n skipped: outside the job's sizes_": [
+            "%n übersprungen: außerhalb der Größen des Jobs",
+            "%n übersprungen: außerhalb der Größen des Jobs"
+        ],
+        "_%n left out by the job's patterns_::_%n left out by the job's patterns_": [
+            "%n von den Mustern des Jobs ausgelassen",
+            "%n von den Mustern des Jobs ausgelassen"
+        ],
+        "_%n with a problem (below)_::_%n with a problem (below)_": [
+            "%n mit einem Problem (unten)",
+            "%n mit einem Problem (unten)"
+        ],
+        "No runner is free (all {runners} busy), or the job's site is in use: try again in a few minutes.": "Kein Runner ist frei (alle {runners} belegt), oder die Website des Jobs wird benutzt: Versuche es in ein paar Minuten noch einmal.",
         "_Unpacked %n file of {path} into {folder}_::_Unpacked %n files of {path} into {folder}_": [
             "%n Datei von {path} nach {folder} entpackt",
             "%n Dateien von {path} nach {folder} entpackt"
@@ -1105,6 +1154,9 @@ OC.L10N.register(
         "The job's browser has shown nothing to keep yet.": "Der Browser des Jobs hat noch nichts gezeigt, das sich behalten ließe.",
         "The job has no address of its own: fetch one with it.": "Der Job hat keine eigene Adresse: Rufe mit ihm eine ab.",
         "Only a website job with a listing of its own has a recipe to test.": "Nur ein Website-Job mit eigener Übersicht hat ein Rezept zum Testen.",
+        "A website job is tried with Test the recipe in its recorder.": "Ein Website-Job wird mit „Rezept testen“ in seinem Rekorder ausprobiert.",
+        "Type the address to try first.": "Gib zuerst die Adresse ein, die du ausprobieren willst.",
+        "A try of yours is still going on: wait for its end.": "Ein Versuch von dir läuft noch: Warte sein Ende ab.",
         "The address is being fetched: Stop ends that.": "Die Adresse wird gerade abgerufen: „Stoppen“ beendet das.",
         "The address is not waiting (fetched already?).": "Die Adresse wartet nicht (schon abgerufen?).",
         "A code is letters, digits and signs on one line.": "Ein Code besteht aus Buchstaben, Ziffern und Zeichen in einer Zeile.",

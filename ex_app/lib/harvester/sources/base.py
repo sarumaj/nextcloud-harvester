@@ -118,11 +118,22 @@ def _compiled(pattern: str) -> "regex.Pattern[str]":
 
 def pattern_search(pattern: str, text: str) -> "regex.Match[str] | None":
     """A person's pattern (as Python's re reads it; checked with re when the job is saved)
-    searched in text, within PATTERN_TIMEOUT; SourceError if it takes longer."""
+    searched in text, within PATTERN_TIMEOUT; SourceError if it takes longer. A miss is counted
+    where this thread counts them (count_misses)."""
     try:
-        return _compiled(pattern).search(text, timeout=PATTERN_TIMEOUT, concurrent=True)
+        found = _compiled(pattern).search(text, timeout=PATTERN_TIMEOUT, concurrent=True)
     except TimeoutError as error:
         raise SourceError(f"the pattern {pattern} takes too long (more than {PATTERN_TIMEOUT:g} s)") from error
+    misses = getattr(_RUN, "misses", None)
+    if found is None and misses is not None:
+        misses[0] += 1
+    return found
+
+
+def count_misses(counter: list[int] | None) -> None:
+    """Counts the misses of the job's patterns in this thread into counter[0] (None: no more):
+    a try of a job's listing (tryout.py) says how many files and messages they left out."""
+    _RUN.misses = counter
 
 
 class SourceError(Exception):

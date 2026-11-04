@@ -24,6 +24,7 @@ from . import browser, dns, needs, ondemand, runner, settings, versions
 from .deleted import Deleted
 from .l10n import Said, error_text, said, said_n
 from .schedule import zone
+from .tryout import Tries
 from .watch import Watch, test_due
 from .nextcloud import NextcloudLibrary
 from .sources import MARK, SOURCES, AuthError, ChallengeError, Source, SourceError, Stopped
@@ -184,7 +185,7 @@ def through_proxy(client: httpx.Client) -> Said:
     return said("Through {proxy}: sites see {address}", proxy=proxy, address=seen["ip"])
 
 
-class Executor:
+class Executor(Tries):
     """The background thread: a queue of the runs asked for, and the schedule checked each minute.
 
     nc_py_api's client is asynchronous, the sources are not: each Nextcloud request runs to its
@@ -219,6 +220,10 @@ class Executor:
         self._events_lock = threading.Lock()
         # What the running jobs ask their people (a code from the phone), and their answers.
         self.desk = needs.Desk()
+        # The tries of a job's listing from its form (tryout.Tries), each in a runner's place:
+        # their sites, by try; and the people with a try going on (one each).
+        self._trials: dict[int, str] = {}
+        self._trying: set[str] = set()
 
     @property
     def running(self) -> list[int]:
@@ -236,7 +241,7 @@ class Executor:
         """What everyone's jobs and recordings hold, without whose they are: the runners busy,
         the browsers open (for jobs, for recordings and sign-ins) and the jobs queued."""
         with self._lock:
-            busy, queued = len(self.controls), len(self._queued)
+            busy, queued = len(self.controls) + len(self._trials), len(self._queued)
         taken = browser.SLOTS.taken()
         return {
             "runners": {"busy": busy, "total": self.runners},
@@ -519,7 +524,10 @@ class Executor:
         assert job.id is not None
         site = site_of(job)
         with self._lock:
-            if job.id in self.controls or site in self._sites.values():
+            if job.id in self.controls or site in self._sites.values() or site in self._trials.values():
+                return False
+            # A try of a job's listing takes a runner's place too.
+            if self._trials and len(self.controls) + len(self._trials) >= self.runners:
                 return False
             self.controls[job.id] = Control()
             self._sites[job.id] = site
@@ -613,6 +621,14 @@ class Executor:
                 self.store.drop_fetch(fetch["id"])
             with self._lock:
                 self.controls.pop(job_id, None)
+
+    def _site(self, job: Job) -> str:
+        """The site the job fetches from (site_of), for a try of it."""
+        return site_of(job)
+
+    def _kept_session(self, nc: AsyncNextcloudApp, job: Job) -> dict | None:
+        """The job's kept session (load_session), for a try of it."""
+        return self.call(load_session(nc, job))
 
     def _keep_session(self, nc: AsyncNextcloudApp, job: Job, credentials: dict[str, str], source: Source) -> None:
         """Keeps the source's session for the job's next run, also after a failure: cookies set

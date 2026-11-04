@@ -45,6 +45,31 @@ registered by the homelab's `nextcloud` role (`nextcloud_harvester`), as
 `local.homelab/harvester:<version>`. `appinfo/info.xml` describes the app; its routes are also
 in the role's registration.
 
+## Trying a job's listing
+
+`POST /api/try` (`tryout.py`, the form's *Try the address*) lists once what a job would fetch,
+downloading nothing and marking nothing. Its body is `{"job": <the job as POST /api/jobs takes
+it>, "id": <the saved job the form edits, or null>, "account": {<field>: <value as typed>}}`;
+the job is checked as Save checks it (422 with why), a website job is refused (its recorder
+tests the recipe), and so is an on-demand job without an address. One try of a person's at a
+time (409). The executor (`Tries.trial`) runs it in a thread of its own once a runner's place
+and the job's site are free (`tryout.CLAIM_WAIT`, 15 s; a try counts among the runners busy in
+`GET /api/status`, and a job waits for the place it holds), with the source made as a run makes
+it: the guarded client, the proxy, impersonation, the account (the saved job's, a field typed
+instead), the kept session (kept again as a run keeps it, for the saved account only). It stops
+at `tryout.LIMIT` (60 s; a helper program is killed), or after 2000 files. The answer:
+
+- `ok`, `seconds`, `found`, `cut` (`time`, `most` or empty), `running` (the listing had not
+  stopped yet when the answer went);
+- `counts`: how many files a run would fetch (`fetch`), leave to later runs (`later`, Files per
+  run), has in the job's history (`known`), skips by their type or size (`type`, `size`: by the
+  name's extension, by a size the listing gives) or has a problem with (`problem`); `pattern`:
+  how many the job's patterns left out (`base.count_misses`);
+- `items`: the first 20, each `{path, url, tags, state, pending, problem}` (the path in the
+  folder and the tags a run gives it, from the job's templates);
+- `outcome` (or `error` and `hint`) and `notes` (the source's progress lines: a mailbox's
+  messages), each with its template beside it (`outcome_l10n`, …), which the page translates.
+
 ## Translations
 
 Harvester is translated as Nextcloud's PHP apps are, with `l10n/<language>.json` and

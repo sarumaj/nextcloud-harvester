@@ -1174,6 +1174,75 @@ OC.L10N.register(
         "the next page {address} was read already (a loop): its listing ends": "następna strona {address} była już czytana (pętla): jej lista się tu kończy",
         "level {level}: clicking “{element}” failed: {why}": "poziom {level}: kliknięcie „{element}” nie powiodło się: {why}",
         "waiting for {selector} to show, at most {seconds} s": "czekam, aż pojawi się {selector}, najwyżej {seconds} s",
+        "The site refused the account: check its fields (a password, a token, the cookies).": "Strona odrzuciła konto: sprawdź jego pola (hasło, token, ciasteczka).",
+        "The site asks for a person: a job of this type cannot answer that (a website job can).": "Strona prosi o człowieka: zadanie tego typu nie może na to odpowiedzieć (zadanie strony internetowej może).",
+        "The DNS servers block this site (the administrator's filter): ask them to allow it.": "Serwery DNS blokują tę stronę (filtr administratora): poproś go o jej dopuszczenie.",
+        "Harvester opens only public http(s) addresses, not local or private ones.": "Harvester otwiera tylko publiczne adresy http(s), nie lokalne ani prywatne.",
+        "{tool} does not know this site: check the address, or use a website job.": "{tool} nie zna tej strony: sprawdź adres albo użyj zadania strony internetowej.",
+        "The site may want the account: its user name and password, or a signed-in browser's cookies.": "Strona może chcieć konta: nazwy użytkownika i hasła albo ciasteczek zalogowanej przeglądarki.",
+        "The address is a page, not a feed: look for its RSS or Atom link (Browse).": "Adres to strona, a nie kanał: poszukaj jej linku RSS lub Atom (Przeglądaj).",
+        "The site did not answer: check the address, or try again later.": "Strona nie odpowiedziała: sprawdź adres albo spróbuj później.",
+        "_found %n file_::_found %n files_": [
+            "znaleziono %n plik",
+            "znaleziono %n pliki",
+            "znaleziono %n plików",
+            "znaleziono %n pliku"
+        ],
+        "_found %n file in {seconds} s (the try's time limit; there may be more)_::_found %n files in {seconds} s (the try's time limit; there may be more)_": [
+            "znaleziono %n plik w {seconds} s (limit czasu próby; może być ich więcej)",
+            "znaleziono %n pliki w {seconds} s (limit czasu próby; może być ich więcej)",
+            "znaleziono %n plików w {seconds} s (limit czasu próby; może być ich więcej)",
+            "znaleziono %n pliku w {seconds} s (limit czasu próby; może być ich więcej)"
+        ],
+        "_%n would be fetched this run_::_%n would be fetched this run_": [
+            "%n zostałby pobrany w tym przebiegu",
+            "%n zostałyby pobrane w tym przebiegu",
+            "%n zostałoby pobranych w tym przebiegu",
+            "%n zostałoby pobranego w tym przebiegu"
+        ],
+        "_found %n file (a try looks at no more; there may be more)_::_found %n files (a try looks at no more; there may be more)_": [
+            "znaleziono %n plik (próba nie patrzy na więcej; może być ich więcej)",
+            "znaleziono %n pliki (próba nie patrzy na więcej; może być ich więcej)",
+            "znaleziono %n plików (próba nie patrzy na więcej; może być ich więcej)",
+            "znaleziono %n pliku (próba nie patrzy na więcej; może być ich więcej)"
+        ],
+        "_%n in later runs (Files per run: {limit})_::_%n in later runs (Files per run: {limit})_": [
+            "%n w późniejszych przebiegach (Plików na przebieg: {limit})",
+            "%n w późniejszych przebiegach (Plików na przebieg: {limit})",
+            "%n w późniejszych przebiegach (Plików na przebieg: {limit})",
+            "%n w późniejszych przebiegach (Plików na przebieg: {limit})"
+        ],
+        "_%n already in the job's history_::_%n already in the job's history_": [
+            "%n już w historii zadania",
+            "%n już w historii zadania",
+            "%n już w historii zadania",
+            "%n już w historii zadania"
+        ],
+        "_%n skipped: not of the job's file types_::_%n skipped: not of the job's file types_": [
+            "%n pominięty: nie z typów plików zadania",
+            "%n pominięte: nie z typów plików zadania",
+            "%n pominiętych: nie z typów plików zadania",
+            "%n pominiętego: nie z typów plików zadania"
+        ],
+        "_%n skipped: outside the job's sizes_::_%n skipped: outside the job's sizes_": [
+            "%n pominięty: poza rozmiarami zadania",
+            "%n pominięte: poza rozmiarami zadania",
+            "%n pominiętych: poza rozmiarami zadania",
+            "%n pominiętego: poza rozmiarami zadania"
+        ],
+        "_%n left out by the job's patterns_::_%n left out by the job's patterns_": [
+            "%n pominięty przez wzorce zadania",
+            "%n pominięte przez wzorce zadania",
+            "%n pominiętych przez wzorce zadania",
+            "%n pominiętego przez wzorce zadania"
+        ],
+        "_%n with a problem (below)_::_%n with a problem (below)_": [
+            "%n z problemem (poniżej)",
+            "%n z problemem (poniżej)",
+            "%n z problemem (poniżej)",
+            "%n z problemem (poniżej)"
+        ],
+        "No runner is free (all {runners} busy), or the job's site is in use: try again in a few minutes.": "Żaden wykonawca nie jest wolny (wszystkie {runners} zajęte) albo strona zadania jest w użyciu: spróbuj za kilka minut.",
         "_Unpacked %n file of {path} into {folder}_::_Unpacked %n files of {path} into {folder}_": [
             "Rozpakowano %n plik z {path} do {folder}",
             "Rozpakowano %n pliki z {path} do {folder}",
@@ -1203,6 +1272,9 @@ OC.L10N.register(
         "The job's browser has shown nothing to keep yet.": "Przeglądarka zadania nie pokazała jeszcze niczego do zachowania.",
         "The job has no address of its own: fetch one with it.": "Zadanie nie ma własnego adresu: pobierz nim jakiś.",
         "Only a website job with a listing of its own has a recipe to test.": "Tylko zadanie strony internetowej z własną listą ma przepis do przetestowania.",
+        "A website job is tried with Test the recipe in its recorder.": "Zadanie strony internetowej wypróbowuje się przyciskiem „Przetestuj przepis” w jego rejestratorze.",
+        "Type the address to try first.": "Najpierw wpisz adres do wypróbowania.",
+        "A try of yours is still going on: wait for its end.": "Twoja próba wciąż trwa: poczekaj na jej koniec.",
         "The address is being fetched: Stop ends that.": "Adres jest właśnie pobierany: „Zatrzymaj” to kończy.",
         "The address is not waiting (fetched already?).": "Adres nie czeka (już pobrany?).",
         "A code is letters, digits and signs on one line.": "Kod to litery, cyfry i znaki w jednym wierszu.",
