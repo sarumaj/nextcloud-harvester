@@ -2617,6 +2617,20 @@
 		url.focus()
 	}
 
+	// The values a source offers for the job's Tags ({tags}: a list gives a tag per entry), as
+	// buttons that add the value to the field's tags.
+	function tagValues(input, names) {
+		if (!names.length) return ''
+		const add = (name) => {
+			const tags = input.value.split(',').map((tag) => tag.trim()).filter(Boolean)
+			input.value = [...new Set([...tags, `{${name}}`])].join(', ')
+			input.focus()
+		}
+		return el('div', { class: 'harvester-values harvester-suggestions' },
+			el('small', { class: 'harvester-muted', text: `${t('Add:')} ` }),
+			...names.map((name) => el('button', { type: 'button', class: 'harvester-chip', text: `{${name}}`, title: t('A list (a page’s tags) gives a tag per entry, at most 20'), onclick: () => add(name) })))
+	}
+
 	// Values to pick for a field that takes others too, all of them as buttons below it (a value,
 	// or { value, label } shown by its label). Not a datalist: browsers list only its entries
 	// that match what the field holds, so a field filled with one of them offered that one alone.
@@ -3827,6 +3841,7 @@
 		el('label', { class: 'harvester-check harvester-once' }, once,
 			el('span', { text: t('Delete the job after a run that went through (its files stay; one that failed keeps it, to say why)') })),
 		field(t('Tags'), tags, t('Comma-separated; may use the link’s values, e.g. {year}. A tag whose value a file lacks is left out.', { year: '{year}' })),
+		tagValues(tags, chosen.tag_values || []),
 		el('label', { class: 'harvester-check harvester-scheduled' }, enabled, el('span', { text: t('Enabled: runs on its schedule') })),
 		options)
 		// A schedule's fields, or (on demand) whether it goes after its run.

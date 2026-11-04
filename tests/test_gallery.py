@@ -63,9 +63,26 @@ def test_the_galleries_new_files_with_their_names_and_values():
     items = list(source.items(lambda key: key == "pics:1:0"))
     assert [item.key for item in items] == ["pics:2:0"]
     assert items[0].path == "2025/photo2.jpg"
-    assert items[0].values["month"] == 7 and "tags" not in items[0].values
+    assert items[0].values["month"] == 7 and items[0].values["tags"] == ["beach", "sea"]
     command = source.calls[0][0]
     assert command[-1] == PAGE and "--resolve-json" in command
+
+
+def test_lists_of_texts_are_kept_and_dicts_of_them_flattened_for_tags():
+    data = message(3)[2] | {
+        "tags": {"general": ["sky", "sea"], "artist": ["anna"], "count": 3, "odd key!": ["x"]},
+        "tag_string": "sky sea anna",
+        "sizes": [1, 2],
+        "mixed": ["a", 1],
+    }
+    item = gallery(path="{tags_artist}/{filename}.{extension}").item("k", "https://cdn.pics.example/3.jpg", data)
+    assert item.values["tags_general"] == ["sky", "sea"] and item.values["tags_artist"] == ["anna"]
+    # Danbooru's tags in one text stay that text; lists of anything else are left out.
+    assert item.values["tag_string"] == "sky sea anna"
+    assert not {"tags", "sizes", "mixed", "tags_count", "tags_odd key!"} & set(item.values)
+    assert item.path == "anna/photo3.jpg"
+    assert runner.render_tags(["{tags_general}", "{tags_artist}"], item.values) == ["sky", "sea", "anna"]
+    assert "tags_general" in Gallery.tag_values
 
 
 def test_the_download_has_the_gallery_as_referer_and_is_checked():

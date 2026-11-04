@@ -91,6 +91,13 @@ def test_a_channels_new_entries_with_their_names_and_values():
     assert listing_options["extract_flat"] == "in_playlist" and listing_options["playlistend"] == 10
 
 
+def test_yt_dlps_tags_and_categories_are_lists_for_tags():
+    item = media({}).item("Example:v5", video(5, tags=["beach", "summer"], categories=["Travel"], cast=[1]))
+    assert item.values["tags"] == ["beach", "summer"] and item.values["categories"] == ["Travel"]
+    assert "cast" not in item.values and media({}).tag_values == ("tags", "categories")
+    assert "tags" not in media({}).item("Example:v6", video(6, tags=None)).values
+
+
 def test_a_single_video_and_its_download():
     page = video(4)["webpage_url"]
     source = media({page: video(4)}, url=page)

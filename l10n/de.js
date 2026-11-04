@@ -552,6 +552,8 @@ OC.L10N.register(
         "Clear picks": "Auswahl leeren",
         "Leave the recorder without the changes to the recipe?": "Den Rekorder ohne die Änderungen am Rezept verlassen?",
         "Leave": "Verlassen",
+        "Add:": "Hinzufügen:",
+        "A list (a page’s tags) gives a tag per entry, at most 20": "Eine Liste (die Tags einer Seite) ergibt ein Tag je Eintrag, höchstens 20",
         "Pick:": "Auswählen:",
         "a valid pattern": "ein gültiges Muster",
         "an address starting with https://": "eine Adresse, die mit https:// beginnt",

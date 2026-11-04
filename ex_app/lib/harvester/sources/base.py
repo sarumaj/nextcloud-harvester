@@ -351,6 +351,8 @@ class Source(abc.ABC):
     credential_help: ClassVar[dict[str, tuple[str, str]]] = {}
     options: ClassVar[dict[str, Option]] = {}
     # Seconds between two downloads, so as not to hammer the site.
+    # The values the form offers for the job's Tags ({tags}: a tag per entry of a list).
+    tag_values: ClassVar[tuple[str, ...]] = ()
     pause: ClassVar[float] = 0.0
     # The options that change what is listed: a change of one forgets the job's marks of a
     # complete pass (and the source's own, MARK), its other options (file names, files per

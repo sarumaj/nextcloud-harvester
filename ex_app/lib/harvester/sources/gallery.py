@@ -15,6 +15,7 @@ import datetime
 import json
 import os
 import posixpath
+import re
 import subprocess
 import sys
 import tempfile
@@ -43,6 +44,29 @@ def dated(value: Any) -> dict:
     except (TypeError, ValueError):
         return {}
     return {"year": day.year, "month": day.month, "day": day.day}
+
+
+def _texts(value: Any) -> bool:
+    """Whether gallery-dl's value is a list of texts (a post's tags)."""
+    return isinstance(value, list) and all(isinstance(entry, str) for entry in value)
+
+
+def listed(data: dict) -> dict:
+    """gallery-dl's lists of texts as list values (tags: a tag per entry in a job's Tags), and a
+    dict of such lists (e621's tags by kind: {"general": [...], "artist": [...]}) as one per key,
+    named <name>_<key> (tags_general, tags_artist). A site's tags in one text (Danbooru's
+    tag_string, separated by spaces) stay that text."""
+    found: dict = {}
+    for name, value in data.items():
+        if _texts(value):
+            found[name] = list(value)
+        elif isinstance(value, dict):
+            found |= {
+                f"{name}_{key}": list(entries)
+                for key, entries in value.items()
+                if _texts(entries) and re.fullmatch(r"\w{1,30}", f"{name}_{key}")
+            }
+    return found
 
 
 class Gallery(Source):
@@ -83,6 +107,8 @@ class Gallery(Source):
         **download.DOWNLOAD_OPTIONS,
         "impersonate": IMPERSONATE,
     }
+    # Values to offer for the job's Tags: gallery-dl's tags, e621's by kind (sites differ).
+    tag_values = ("tags", "tags_artist", "tags_character", "tags_copyright", "tags_general")
     pause = 1.0
     listing_options = ("url",)
     address_option = "url"
@@ -185,7 +211,7 @@ class Gallery(Source):
     def item(self, key: str, url: str, data: dict) -> Item:
         """The file of a gallery-dl Url message: its name from the template and its values."""
         values = {name: value for name, value in data.items() if isinstance(value, (str, int, float))}
-        values |= dated(data.get("date"))
+        values |= listed(data) | dated(data.get("date"))
         filename = str(data.get("filename") or posixpath.splitext(posixpath.basename(url.split("?")[0]))[0] or "file")
         extension = str(data.get("extension") or posixpath.splitext(url.split("?")[0])[1].lstrip(".") or "")
         values |= {

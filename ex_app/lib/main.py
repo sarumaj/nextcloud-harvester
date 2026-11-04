@@ -98,6 +98,8 @@ def list_sources() -> list[dict]:
             "title": source.title,
             "description": source.description,
             "credentials": list(source.credentials),
+            # The values the form offers for Tags ({tags}).
+            "tag_values": list(source.tag_values),
             # The option a fetch of an on-demand job replaces ("": no on-demand jobs).
             "address": source.address_option,
             "credential_help": {name: list(help_) for name, help_ in source.credential_help.items()},

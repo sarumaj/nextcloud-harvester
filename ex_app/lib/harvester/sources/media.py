@@ -50,6 +50,8 @@ MERGED = "mp4/mkv"
 SKIPPED = {"is_live", "is_upcoming", "post_live"}
 # yt-dlp's warnings a run tells in its log (each once).
 WARNINGS = 10
+# yt-dlp's lists of texts an entry's values keep (a tag per entry in a job's Tags).
+TAG_LISTS = ("tags", "categories")
 # yt-dlp's advice for its command line, as the job's options say it (the FAQ's link with it).
 _FAQ = r"(?:\s*See\s+\S+\s+for how to manually pass cookies\.?)?"
 _CREDENTIALS = r"--username and --password, --netrc-cmd, or --netrc \([^)]*\) to provide account credentials\.?"
@@ -199,6 +201,7 @@ class Media(Source):
         "max_size": download.DOWNLOAD_OPTIONS["max_size"],
         "impersonate": IMPERSONATE,
     }
+    tag_values = TAG_LISTS
     pause = 5.0
     listing_options = ("url", "max_entries")
     address_option = "url"
@@ -322,6 +325,12 @@ class Media(Source):
             "url": info.get("webpage_url") or "",
         } | dated(info.get("upload_date"))
         values |= {"filename": f"{values['title']}.{ext}", "stem": values["title"]}
+        # yt-dlp's tags and categories: lists, a tag per entry in a job's Tags ({tags}).
+        values |= {
+            name: [str(entry) for entry in info[name]]
+            for name in TAG_LISTS
+            if isinstance(info.get(name), list) and all(isinstance(entry, str) for entry in info[name])
+        }
         try:
             path = patterns.render_path(str(self.settings["path"]), values, "the entry's information")
         except (KeyError, ValueError) as error:
