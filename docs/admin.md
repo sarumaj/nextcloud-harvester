@@ -93,9 +93,12 @@ Uploads are streamed from the run's temporary file (never whole in memory), afte
 asked whether it has the content (`POST /api/assets/bulk-upload-check`, its SHA-1). The key needs
 the permissions `user.read`, `asset.upload`, `asset.read`, `album.read`, `album.create`,
 `albumAsset.create`, `tag.read`, `tag.create`, `tag.asset`, `userPreference.read` and
-`userPreference.update` (to turn on Immich's Tags, which a new account hides), and `asset.delete`
-to restore a photo from Immich's trash that a job fetches again. Harvester records, per job, which
-asset each of its files is (`immich_assets` in its database), nothing of their content.
+`userPreference.update` (to turn on Immich's Tags, which a new account hides), `asset.delete`
+to restore a photo from Immich's trash that a job fetches again, and `asset.update` to move a photo
+Immich has already into the locked folder (*Into the locked folder*). Harvester records, per job,
+which asset each of its files is and its content's SHA-1 (`immich_assets` in its database), by
+which it asks Immich whether the file is still there: an API key never sees the locked folder (no
+PIN), but Immich's check by content counts it.
 
 ## Proxy
 

@@ -893,6 +893,9 @@ class Executor(Tries):
         known = self.store.placed(job_id)
         placed = [runner.Placed(key, entry["file"], entry["vals"], entry["tags"]) for key, entry in known.items()]
         changed = runner.retag_placed(job, placed, library, record)
+        note = library.tag_note()
+        if note:
+            report("info", note)
 
         def stopped() -> bool:
             return control.checkpoint(report)

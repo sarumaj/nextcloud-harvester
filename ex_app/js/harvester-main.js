@@ -3810,6 +3810,8 @@
 		const inside = el('input', { value: current('vault_target'), 'data-option': 'vault_target' })
 		const verify = el('input', { type: 'checkbox', 'data-option': 'vault_verify' })
 		verify.checked = Number(current('vault_verify')) === 1
+		const locked = el('input', { type: 'checkbox', 'data-option': 'immich_locked' })
+		locked.checked = Number(current('immich_locked')) === 1
 		const password = el('input', { type: 'password', autocomplete: 'off', 'data-field': 'vault-password' })
 		const keyState = el('p', { class: 'harvester-muted', role: 'status' })
 		inputs.save_to = place
@@ -3818,7 +3820,8 @@
 		inputs.vault_target = inside
 		inputs.immich_album = album
 		inputs.vault_verify = { get value() { return verify.checked ? 1 : 0 } }
-		Object.assign(fields, { save_to: place, tag_as: tagAs, vault, vault_target: inside, vault_verify: verify, immich_album: album })
+		inputs.immich_locked = { get value() { return locked.checked ? 1 : 0 } }
+		Object.assign(fields, { save_to: place, tag_as: tagAs, vault, vault_target: inside, vault_verify: verify, immich_album: album, immich_locked: locked })
 		const tagHelp = el('small', { class: 'harvester-field-help' })
 		const vaultBox = field(t('Vault'), vault, t('The vault’s folder in your files: the folder holding vault.cryptomator.'))
 		const insideBox = field(t('Folder in the vault'), inside, t('Where the vault app puts the inbox’s files (/ is the vault’s top). Its name is stored unencrypted in the inbox’s marker.'))
@@ -3831,6 +3834,11 @@
 			field(t('Vault password'), password, t('Typed once: the server unlocks the vault with it and keeps only the vault’s keys (encrypted in Nextcloud), never the password.')),
 			keyState)
 		const albumBox = field(t('Album'), album, t('The album the photos and videos go into, made if there is none of its name; the file’s values may make it, e.g. Magazines {year}. Empty: none.'))
+		// Immich's locked folder: no album there (Immich takes locked photos out of them); Immich's
+		// tags given before the lock, which no app may change after it.
+		const lockedBox = el('label', { class: 'harvester-check' }, locked,
+			el('span', {}, el('strong', { text: t('Into the locked folder') }), el('br'),
+				el('small', { class: 'harvester-muted', text: t('Immich shows them only after your PIN. Immich lets no app read them there: no album for them, and Harvester tells them apart by their content. A photo Immich has already is moved there.') })))
 		const account = immichAccount()
 		const immichNote = el('p', { class: 'harvester-muted', text: t('Only photos and videos go to Immich; the job skips other files for good.') })
 		const inboxNote = el('p', { class: 'harvester-muted', text: t('When you unlock the vault in Vaults for Cryptomator, it moves the inbox’s files into the vault and deletes the plain copies. Until then they are plain files on the server.') })
@@ -3850,7 +3858,9 @@
 			verifyBox.hidden = where !== 'vault'
 			warning.hidden = where !== 'vault'
 			passwordBox.hidden = where !== 'vault'
-			albumBox.hidden = account.hidden = immichNote.hidden = where !== 'immich'
+			albumBox.hidden = account.hidden = immichNote.hidden = lockedBox.hidden = where !== 'immich'
+			const inLocked = where === 'immich' && locked.checked
+			album.disabled = inLocked
 			const before = (job && job.options) || {}
 			const vaultBefore = ['inbox', 'vault'].includes(before.save_to) ? folderOf(before.vault) : ''
 			refetchBox.hidden = !job || ((before.save_to || 'files') === where
@@ -3870,7 +3880,9 @@
 				option.hidden = where !== owner
 			}
 			if (tagAs.selectedOptions[0] && tagAs.selectedOptions[0].disabled) tagAs.value = ownTags[where] || 'labels'
-			tagHelp.textContent = tagAs.value === 'immich'
+			tagHelp.textContent = inLocked && tagAs.value === 'immich'
+				? t('Each photo is tagged right after its upload and then locked at once: for that moment it is in your timeline, where a device syncing just then may see it. Immich lets no app change the tags of a locked photo later.')
+				: tagAs.value === 'immich'
 				? t('Immich’s tags are yours, in Immich; a/b is the tag b inside a.')
 				: !ownTags[where]
 					? t('No Nextcloud tags outside your files: labels (only in Harvester) or none.')
@@ -3880,7 +3892,7 @@
 			// What this place switches off, with why; the others as they were.
 			const rules = (chosen.save_rules || {})[where] || {}
 			for (const [key, node] of Object.entries(fields)) {
-				if (['save_to', 'tag_as', 'vault', 'vault_target', 'vault_verify', 'immich_album'].includes(key) || !node || node.disabled === undefined) continue
+				if (['save_to', 'tag_as', 'vault', 'vault_target', 'vault_verify', 'immich_album', 'immich_locked'].includes(key) || !node || node.disabled === undefined) continue
 				const off = key in rules
 				node.disabled = off
 				if (off && !reasons[key]) {
@@ -3894,6 +3906,7 @@
 		}
 		place.addEventListener('change', update)
 		tagAs.addEventListener('change', update)
+		locked.addEventListener('change', update)
 		vault.addEventListener('input', update)
 		if (target) target.addEventListener('input', update)
 		if (job && place.value === 'vault') {
@@ -3904,7 +3917,7 @@
 		const section = el('fieldset', { class: 'harvester-save' },
 			el('legend', { text: t('Save to') }),
 			field(t('Save to'), place),
-			vaultBox, insideBox, inboxNote, verifyBox, warning, passwordBox, immichNote, albumBox, account,
+			vaultBox, insideBox, inboxNote, verifyBox, warning, passwordBox, immichNote, lockedBox, albumBox, account,
 			el('div', { class: 'harvester-field-box' }, field(t('Tag as'), tagAs), tagHelp), refetchBox)
 		return {
 			section,

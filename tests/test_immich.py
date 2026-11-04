@@ -2,7 +2,8 @@
 """Save to: Immich, against a fake Immich (httpx's MockTransport answering as Immich 3.3.5's API):
 photos and videos uploaded (other files skipped for good), a content Immich has already adopted
 and still filed, the album made once and reused, Immich's tags, a file gone from Immich uploaded
-again, a refused key asking for the account again, the person's account (tested, its key never
+again, the locked folder (uploads and a content there already moved into it, no album nor
+Immich tags, the files known by their content's SHA-1), a refused key asking for the account again, the person's account (tested, its key never
 sent back), and the upload streamed from the file in pieces."""
 
 # pylint: disable=missing-function-docstring,missing-class-docstring
@@ -59,10 +60,20 @@ class FakeImmich:  # pylint: disable=too-many-instance-attributes
         self.preferences = {"tags": {"enabled": True, "sidebarWeb": False}}
         self.may_prefer = True
 
-    def seed(self, content: bytes, trashed: bool = False) -> str:
+    def seed(self, content: bytes, trashed: bool = False, visibility: str = "timeline") -> str:
         asset = str(uuid.uuid4())
-        self.assets[asset] = {"checksum": sha1(content), "name": "seeded", "trashed": trashed, "created": ""}
+        self.assets[asset] = {
+            "checksum": sha1(content),
+            "name": "seeded",
+            "trashed": trashed,
+            "created": "",
+            "visibility": visibility,
+        }
         return asset
+
+    def locked(self, asset: str) -> bool:
+        """Whether the asset is in the locked folder, which an API key never sees (no PIN)."""
+        return asset in self.assets and self.assets[asset].get("visibility") == "locked"
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path.removeprefix("/api")
@@ -111,8 +122,16 @@ class FakeImmich:  # pylint: disable=too-many-instance-attributes
             return httpx.Response(200, json={"id": same, "status": "duplicate"})
         name = re.search(rb'name="filename"\r\n\r\n([^\r]*)', content).group(1).decode()
         created = re.search(rb'name="fileCreatedAt"\r\n\r\n([^\r]*)', content).group(1).decode()
+        visibility = re.search(rb'name="visibility"\r\n\r\n([^\r]*)', content)
         asset = str(uuid.uuid4())
-        self.assets[asset] = {"checksum": given, "name": name, "trashed": False, "created": created, "body": content}
+        self.assets[asset] = {
+            "checksum": given,
+            "name": name,
+            "trashed": False,
+            "created": created,
+            "body": content,
+            "visibility": visibility.group(1).decode() if visibility else "timeline",
+        }
         return httpx.Response(201, json={"id": asset, "status": "created"})
 
     def on_post_trash_restore_assets(self, _request, body, _ident):
@@ -123,9 +142,21 @@ class FakeImmich:  # pylint: disable=too-many-instance-attributes
         return httpx.Response(200, json={"count": len(body["ids"])})
 
     def on_get_assets_id(self, _request, _body, ident):
-        if ident not in self.assets:
+        if ident not in self.assets or self.locked(ident):
             return httpx.Response(400, json={"message": "Not found or no asset.read access"})
         return httpx.Response(200, json={"id": ident, "isTrashed": self.assets[ident]["trashed"]})
+
+    def on_put_assets(self, _request, body, _ident):
+        # As Immich's updateAll: every asset must be the key's to see (none locked), else 400; a
+        # locked one leaves every album.
+        if any(asset not in self.assets or self.locked(asset) for asset in body["ids"]):
+            return httpx.Response(400, json={"message": "Not found or no asset.update access"})
+        for asset in body["ids"]:
+            self.assets[asset]["visibility"] = body.get("visibility", self.assets[asset].get("visibility"))
+            if body.get("visibility") == "locked":
+                for album in self.albums.values():
+                    album["assets"] = [kept for kept in album["assets"] if kept != asset]
+        return httpx.Response(204)
 
     def on_get_albums(self, request, _body, _ident):
         name = request.url.params.get("name")
@@ -172,12 +203,28 @@ class FakeImmich:  # pylint: disable=too-many-instance-attributes
         return httpx.Response(200, json=[{"id": key, "value": value} for value, key in self.tags.items()])
 
     def on_put_tags_id_assets(self, _request, body, ident):
-        self.tagged.setdefault(ident, set()).update(body["ids"])
-        return httpx.Response(200, json=[{"id": asset, "success": True} for asset in body["ids"]])
+        # As Immich's addAssets: a tag there already is a duplicate; a locked asset no key may tag.
+        have = self.tagged.setdefault(ident, set())
+        results = []
+        for asset in body["ids"]:
+            if asset in have:
+                results.append({"id": asset, "success": False, "error": "duplicate"})
+            elif self.locked(asset):
+                results.append({"id": asset, "success": False, "error": "no_permission"})
+            else:
+                have.add(asset)
+                results.append({"id": asset, "success": True})
+        return httpx.Response(200, json=results)
 
     def on_delete_tags_id_assets(self, _request, body, ident):
-        self.tagged.setdefault(ident, set()).difference_update(body["ids"])
-        return httpx.Response(200, json=[{"id": asset, "success": True} for asset in body["ids"]])
+        # As Immich's removeAssets without tag.delete: a locked asset's tags no key may take off.
+        free = [asset for asset in body["ids"] if not self.locked(asset)]
+        self.tagged.setdefault(ident, set()).difference_update(free)
+        results = [{"id": asset, "success": True} for asset in free]
+        locked = [
+            {"id": asset, "success": False, "error": "no_permission"} for asset in body["ids"] if asset not in free
+        ]
+        return httpx.Response(200, json=results + locked)
 
     def tags_of(self, asset: str) -> set[str]:
         return {value for value, key in self.tags.items() if asset in self.tagged.get(key, set())}
@@ -414,3 +461,79 @@ def test_a_tag_immich_does_not_make_fails_the_file_rather_than_being_left_out(ap
     monkeypatch.setattr(FakeImmich, "on_put_tags", lambda *_: httpx.Response(200, json=[]))
     job = run(app, saved(app))
     assert "Immich made no tag a and Photos/2024" in json.dumps(logged(app, job))
+
+
+def test_photos_go_into_the_locked_folder_without_album_and_are_known_by_content(app):
+    timeline = app.immich.seed(b"a")
+    job = run(app, saved(app, immich_locked=1, tag_as="labels"))
+    assert job.last_status == "ok", job.last_message
+    assets = by_name(app)
+    assert app.immich.assets[assets["b.jpg"]]["visibility"] == "locked", "uploaded into the locked folder"
+    assert app.immich.locked(timeline), "a photo Immich had already is moved there"
+    assert app.immich.calls.count("PUT /assets") == 1, "an upload without Immich's tags goes straight in"
+    assert not app.immich.albums and not app.immich.tags, "no album; labels are Harvester's"
+    lines = logged(app, job)
+    assert "Uploaded into Immich's locked folder: b.jpg (1 B)" in lines
+    assert "Already in Immich, moved into its locked folder: a.jpg" in lines
+    # The next run asks by content (the key sees nothing locked by its id), and knows both.
+    app.immich.calls.clear()
+    job = run(app, app.store.job(job.id or 0))
+    assert job.last_status == "ok", job.last_message
+    assert not [call for call in app.immich.calls if call.startswith("GET /assets/")], "no asset asked by its id"
+    assert "POST /assets" not in app.immich.calls
+    # One deleted in Immich (locked or not, a key cannot tell) is uploaded anew, into the folder.
+    app.immich.assets.pop(assets["b.jpg"])
+    job = run(app, app.store.job(job.id or 0))
+    assert app.immich.calls.count("POST /assets") == 1
+    assert app.immich.assets[by_name(app)["b.jpg"]]["visibility"] == "locked"
+
+
+def test_a_locked_jobs_photos_get_immichs_tags_before_the_lock_and_keep_them_after(app):
+    job = run(app, saved(app, immich_locked=1))
+    assert destinations.tag_as(job.options) == "immich"
+    assert job.last_status == "ok", job.last_message
+    assets = by_name(app)
+    for name, letter in (("a.jpg", "a"), ("b.jpg", "b")):
+        assert app.immich.locked(assets[name]) and app.immich.tags_of(assets[name]) == {letter, "Photos/2024"}
+    calls = [re.sub(r"/[0-9a-f-]{36}", "/{id}", call) for call in app.immich.calls]
+    upload = calls.index("POST /assets")
+    assert calls.index("PUT /tags/{id}/assets", upload) < calls.index("PUT /assets", upload), "tagged, then locked"
+    assert calls.count("PUT /tags/{id}/assets") == 4, "each tag given once, before the lock"
+    # Changed tags later: Immich keeps a locked photo's; the log says so once, the files stay.
+    job = app.store.job(job.id or 0)
+    job.tags = ["{letter}", "Mag"]
+    job = run(app, app.store.save(job))
+    assert job.last_status == "ok", job.last_message
+    assert app.immich.tags_of(assets["a.jpg"]) == {"a", "Photos/2024"} and len(by_name(app)) == 2
+    kept = [line for line in logged(app, job) if "those it had stay" in line]
+    assert len(kept) == 1, kept
+
+
+def test_a_locked_photo_is_locked_even_when_its_tagging_fails(app, monkeypatch):
+    monkeypatch.setattr(FakeImmich, "on_put_tags", lambda *_: httpx.Response(500, json={"message": "boom"}))
+    run(app, saved(app, immich_locked=1))
+    assets = list(by_name(app).values())
+    assert assets and all(app.immich.locked(asset) for asset in assets), "never left in the timeline"
+
+
+def test_a_locked_jobs_already_locked_photo_stays(app):
+    there = app.immich.seed(b"a", visibility="locked")
+    job = run(app, saved(app, immich_locked=1, tag_as="labels"))
+    assert job.last_status == "ok", job.last_message
+    assert "Already in Immich's locked folder: a.jpg" in logged(app, job) and app.immich.locked(there)
+    options = {"save_to": "immich", "immich_locked": 1, "tag_as": "immich"}
+    assert destinations.problem(options, "/P") == "", "Immich's tags are given before the lock"
+    assert not destinations.locked({"save_to": "files", "immich_locked": 1}), "only for Immich"
+
+
+def test_an_assets_table_of_before_gets_its_checksums_column(tmp_path, monkeypatch):
+    monkeypatch.setattr(immich, "STORES", [])
+    store = Store(str(tmp_path / "db"))
+    with store.writing() as db:
+        db.execute(
+            "CREATE TABLE immich_assets (id INTEGER PRIMARY KEY AUTOINCREMENT, user TEXT NOT NULL, job INTEGER"
+            " NOT NULL, path TEXT NOT NULL, asset TEXT NOT NULL, at REAL NOT NULL, UNIQUE (job, path))"
+        )
+        db.execute("INSERT INTO immich_assets (user, job, path, asset, at) VALUES ('anna', 1, '/P/a.jpg', 'x', 0)")
+    immich.prepare(store)
+    assert [row["checksum"] for row in store.rows("SELECT checksum FROM immich_assets")] == [""]

@@ -28,7 +28,8 @@ the app's browser or taken from a template, not by code.
   recovery key; files and folders moved there from Files, and back out to Files), or into a
   **Cryptomator vault**: its inbox, which the vault app empties into the vault, or the vault
   itself, encrypted on the server; or photos and videos into your **Immich** account, into an
-  album; tagged with Nextcloud's or Immich's tags, Harvester's own labels, or not at all.
+  album or the locked folder; tagged with Nextcloud's or Immich's tags, Harvester's own labels,
+  or not at all.
   Another place or folder may have the files saved before downloaded again into it.
 - **Tags from the sites:** a page's tag chips, picked in the recorder beside the links or on
   the page a link opens, and gallery-dl's and yt-dlp's tags become a tag each; every page a job

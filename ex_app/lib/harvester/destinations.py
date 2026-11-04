@@ -34,7 +34,7 @@ from .sources.base import Option
 from .store import Job
 
 SAVE_TO, TAG_AS, VAULT, VAULT_TARGET, VERIFY = "save_to", "tag_as", "vault", "vault_target", "vault_verify"
-ALBUM = "immich_album"
+ALBUM, LOCKED = "immich_album", "immich_locked"
 FILES, LIBRARY, INBOX, DIRECT, IMMICH = "files", "library", "inbox", "vault", "immich"
 # Tag as: Nextcloud's tags, Immich's (its value the place's name), Harvester's labels or none.
 NEXTCLOUD, IMMICH_TAGS, LABELS, NONE = "nextcloud", "immich", "labels", "none"
@@ -85,6 +85,15 @@ OPTIONS = {
         placeholder="Harvester {year}",
         group="save",
     ),
+    LOCKED: Option(
+        "Into the locked folder",
+        0,
+        "For Immich: the photos and videos go into your locked folder, which Immich shows only after your PIN. "
+        "Immich lets no app read them there: no album for them, Immich's tags given before they go in (no "
+        "change of them later), and Harvester tells them apart by their content.",
+        kind="flag",
+        group="save",
+    ),
     VERIFY: Option(
         "Read each file back",
         1,
@@ -94,7 +103,7 @@ OPTIONS = {
     ),
 }
 # The options that say where the files go: as the folder, never in a recipe file.
-WHERE = (SAVE_TO, VAULT, VAULT_TARGET, VERIFY, ALBUM)
+WHERE = (SAVE_TO, VAULT, VAULT_TARGET, VERIFY, ALBUM, LOCKED)
 
 # What each destination switches off, and why (the form shows the reason beside the option).
 RULES: dict[str, dict[str, str]] = {
@@ -134,6 +143,14 @@ def tag_as(options: dict) -> str:
     if value in (LABELS, NONE):
         return value
     return OWN_TAGS.get(where, LABELS)
+
+
+def locked(options: dict) -> bool:
+    """Whether the job's photos and videos go into Immich's locked folder."""
+    try:
+        return save_to(options) == IMMICH and bool(int(options.get(LOCKED) or 0))
+    except (TypeError, ValueError):
+        return False
 
 
 def place_of(options: dict) -> tuple[str, str]:

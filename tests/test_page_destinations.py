@@ -157,11 +157,18 @@ def test_save_to_immich_shows_the_album_and_the_persons_account(page):
     assert page.locator("input[data-field=immich-key]").input_value() == ""
     assert ("PUT", "/immich", {"url": "", "key": "immich secret"}) in CALLS
     page.locator("input[data-option=immich_album]").fill("Magazines {year}")
+    # The locked folder: no album there, nor Immich's tags.
+    locked = page.locator("input[data-option=immich_locked]")
+    locked.check()
+    assert page.locator("input[data-option=immich_album]").is_disabled()
+    assert tag_as.input_value() == "immich", "Immich's tags, given before the lock"
+    assert "for that moment it is in your timeline" in page.locator(".harvester-save").inner_text()
+    locked.uncheck()
     page.get_by_role("button", name="Save", exact=True).click()
     page.wait_for_function("() => !document.querySelector('#harvester-job-form')")
     saved = next(body for method, path, body in CALLS if (method, path) == ("PUT", "/jobs/1"))
     assert saved["options"]["save_to"] == "immich" and saved["options"]["immich_album"] == "Magazines {year}"
-    assert saved["options"]["tag_as"] == "immich"
+    assert saved["options"]["tag_as"] == "immich" and saved["options"]["immich_locked"] == 0
     assert all("immich secret" not in json.dumps(body) for method, path, body in CALLS if path != "/immich")
 
 

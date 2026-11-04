@@ -190,6 +190,21 @@ files with Nextcloud's tags, as it did.
   photos and videos are uploaded and its other files left out, the archive itself never (*Keep the
   ZIP files* is off). A full quota or a file too large for the server fails that file with why.
 
+  **Into the locked folder** puts the job's photos and videos into Immich's locked folder, which
+  Immich shows only after your PIN (*Locked folder* in Immich), and a photo Immich has already
+  (by its content) is moved there, out of its albums, if the key also has `asset.update`
+  (*Already in Immich, moved into its locked folder*). Immich lets no app read the locked folder
+  (an API key cannot unlock it with your PIN, and Harvester never asks for your PIN), so such a
+  job has no album. With *Tag as: Immich's tags* each photo is uploaded, tagged at once and then
+  locked, also when the tagging failed: **for that moment it is in your timeline**, and a device
+  syncing just then may see it (or back it up). Without Immich's tags it is uploaded straight
+  into the locked folder. The tags of a photo in the locked folder cannot be changed later: a job
+  whose tags change keeps those it had there, and its log says so once a run (*those it had
+  stay*); change them in Immich. The job knows its files by their content: a photo you delete in
+  Immich, or take out of the locked folder, Harvester cannot tell apart from one still there by
+  anything but whether Immich has its content, wherever it is. Photos saved before you tick it
+  stay where they are.
+
 **Tag as** (`tag_as`): **Nextcloud tags** (the default in your files; Nextcloud's tags are global:
 everyone on the server sees the tags' names in their lists of tags, not your files), **Immich's
 tags** (the default in Immich: yours, in Immich; `a/b` is the tag `b` inside `a`, as Immich nests

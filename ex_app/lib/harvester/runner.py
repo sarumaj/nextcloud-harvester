@@ -158,6 +158,11 @@ class Library(abc.ABC):
         tags); by default none."""
         return None
 
+    def tag_note(self) -> Said | None:
+        """What the run's log says once of tags the place kept as they were (a photo in Immich's
+        locked folder), after the files' tags were brought up to date; by default nothing."""
+        return None
+
 
 class FileGone(Exception):
     """The file a job saved is not there any more (deleted or moved away by its user)."""

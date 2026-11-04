@@ -4,6 +4,11 @@
 
 ### Added
 
+- Save to Immich **Into the locked folder**: photos and videos uploaded into Immich's locked
+  folder (one Immich has already moved there), without an album, which Immich allows no locked
+  photo; with Immich's tags each is tagged right after its upload and locked at once (a moment
+  in the timeline), its tags kept as they are later; the job knows its files by their content's
+  SHA-1, as an API key never sees the locked folder.
 - The Library browses as Files does: a grid or a list, sorted by name, date or size (kept in
   the browser), **Recent** (the newest files of the whole library), files chosen with a box
   each (Shift for a range, all at once) for **Download** as one ZIP file streamed as it is made,

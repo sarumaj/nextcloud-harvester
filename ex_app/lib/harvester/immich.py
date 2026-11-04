@@ -27,6 +27,20 @@ account), so tags given while it is off are there but nowhere to be seen. A run 
 the feature on, once, where the key may (the log says so), and else says where to turn it on.
 A tag's name is Immich's value of it: "/" at its ends and doubled dropped, as Immich makes it.
 
+Into the locked folder (destinations.LOCKED): a file is uploaded with the visibility "locked",
+and one Immich has already (by its content) is moved there (PUT /api/assets, asset.update). Immich
+shows the locked folder only to a session unlocked with the person's PIN, which an API key never
+is: the key may put photos there (neither an upload nor PUT /api/assets asks for the PIN), and
+then neither read, tag nor file them in an album (Immich takes locked photos out of every album,
+and leaves their tags). So such a job has no album, and with Immich's tags each file is uploaded
+visible, tagged at once and then locked (also when the tagging failed: never left visible): it
+is in the timeline for that moment, which a device syncing just then may see. Its tags cannot be
+changed later (Immich answers no_permission for a locked photo): the log says so once a run, and
+the file stays. It tells its files apart by their content: each asset's SHA-1,
+recorded, asked of POST /api/assets/bulk-upload-check, which answers for every asset of the
+person's (locked or not), in its trash or not. Any job's files recorded with their SHA-1 are
+checked so, in one request; those of before (none recorded) one by one by their ids.
+
 A job knows its files by numbers (runner.Library): each asset it placed is a row of immich_assets
 (the job, the path its file had, the asset's id); one gone from Immich (deleted, or in its trash)
 loses its row, so that Download deleted files again uploads it anew. A file Immich does not keep
@@ -48,7 +62,7 @@ import httpx
 from . import destinations
 from .l10n import Said, said
 from .l10n import listed as listed_words
-from .patterns import render
+from .patterns import render, render_tags
 from .runner import FileGone, Library, NotChecked
 from .sources import AuthError, Refused, SourceError
 from .sources.download import USER_AGENT, guarded_client
@@ -83,9 +97,12 @@ CREATE TABLE IF NOT EXISTS immich_assets (
     path TEXT NOT NULL,
     asset TEXT NOT NULL,
     at REAL NOT NULL,
+    checksum TEXT NOT NULL DEFAULT '',
     UNIQUE (job, path)
 );
 """
+# The most checksums one bulk-upload-check asks for.
+CHECKS = 500
 
 
 class ImmichError(SourceError):
@@ -100,6 +117,10 @@ class ImmichRefused(AuthError):
 def prepare(store: Store) -> None:
     """The store the assets are recorded in, its table made."""
     store.tables(SCHEMA)
+    # A table of before the checksums (0.14.0) gets their column, empty for its rows.
+    if "checksum" not in [row["name"] for row in store.rows("PRAGMA table_info(immich_assets)")]:
+        with store.writing() as db:
+            db.execute("ALTER TABLE immich_assets ADD COLUMN checksum TEXT NOT NULL DEFAULT ''")
     STORES[:] = [store]
 
 
@@ -232,14 +253,26 @@ def taken_at(values: dict) -> str:
 
 class ImmichLibrary(Library):  # pylint: disable=too-many-instance-attributes
     """A job's files in the person's Immich: client is their account's, album the job's template
-    of an album's name ("": none)."""
+    of an album's name ("": none), locked whether they go into the locked folder (no album), tags
+    the job's templates of Immich's tags for one that does (given before the lock: put)."""
 
-    def __init__(self, client: Client, store: Store, job: Job, album: str = ""):
+    def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self, client: Client, store: Store, job: Job, album: str = "", locked: bool = False, tags: tuple = ()
+    ):
         self.client = client
         self.store = store
         self.user = job.user
         self.job = job.id or 0
-        self.album = album.strip()
+        self.locked = locked
+        self.album = "" if locked else album.strip()
+        self.tag_templates = list(tags) if locked else []
+        # Whether the last file Immich had already was moved into the locked folder now; the asset
+        # tagged before its lock and the tags it got (tag() gives the rest).
+        self.moved = False
+        self._pretagged: tuple[str, set[str]] = ("", set())
+        # Whether a locked photo's tags could not be changed (said once a run), and said.
+        self._kept_tags = False
+        self._said_kept = False
         self.values: dict = {}
         self._media: set[str] | None = None
         self._albums: dict[str, str] = {}
@@ -297,32 +330,61 @@ class ImmichLibrary(Library):  # pylint: disable=too-many-instance-attributes
         asset = result.get("assetId") if result.get("reason") == "duplicate" else None
         if asset and result.get("isTrashed"):
             self._restore(str(asset))
+        self.moved = False
+        tags = render_tags(self.tag_templates, self.values) if self.tag_templates else []
         if not asset:
-            asset, there = self._upload(name, content, value)
+            # Locked with tags: uploaded visible, tagged, locked at once (below).
+            asset, there = self._upload(name, content, value, visible=bool(tags))
         else:
             there = True
+        if self.locked and (tags or there):
+            try:
+                if tags:
+                    self._pretag(str(asset), tags)
+            finally:
+                self._lock(str(asset))
         self._file(str(asset))
-        file_id = self._record(path, str(asset))
+        file_id = self._record(path, str(asset), value)
         if there:
             self._found.add(file_id)
         return file_id
 
     def saved(self, path: str, size: str) -> Said:
         name = posixpath.basename(path)
+        if self.locked:
+            return said("Uploaded into Immich's locked folder: {file} ({size})", file=name, size=size)
         if self.filed:
             return said("Uploaded to Immich: {file} ({size}), album “{album}”", file=name, size=size, album=self.filed)
         return said("Uploaded to Immich: {file} ({size})", file=name, size=size)
 
     def there(self, path: str) -> Said:
         name = posixpath.basename(path)
+        if self.moved:
+            return said("Already in Immich, moved into its locked folder: {file}", file=name)
+        if self.locked:
+            return said("Already in Immich's locked folder: {file}", file=name)
         if self.filed:
             return said("Already in Immich: {file}, album “{album}”", file=name, album=self.filed)
         return said("Already in Immich: {file}", file=name)
 
     def known(self, path: str) -> Said:
+        if self.locked:
+            return said("Already in Immich's locked folder: {file}", file=posixpath.basename(path))
         return said("Already in Immich: {file}", file=posixpath.basename(path))
 
+    def tag_note(self) -> Said | None:
+        if not self._kept_tags or self._said_kept:
+            return None
+        self._said_kept = True
+        return said(
+            "Immich lets no app change the tags of a photo in its locked folder: those it had stay (change them in"
+            " Immich)."
+        )
+
     def tagged(self, tags: list[str]) -> Said | None:
+        kept = self.tag_note()
+        if kept is not None:
+            return said("Tagged in Immich: {tags}. {kept}", tags=listed_words(tags), kept=kept)
         note, self._shown_note = self._shown_note, ""
         if note == "on":
             return said(
@@ -370,26 +432,51 @@ class ImmichLibrary(Library):  # pylint: disable=too-many-instance-attributes
                 said("It is in Immich's trash: restore it there (or give the API key asset.delete to let Harvester)")
             ) from error
 
-    def _upload(self, name: str, content: BinaryIO, value: str) -> tuple[str, bool]:
-        """The file uploaded (streamed from its start: httpx reads it in pieces), and whether
-        Immich had its content already."""
+    def _upload(self, name: str, content: BinaryIO, value: str, visible: bool = False) -> tuple[str, bool]:
+        """The file uploaded (streamed from its start: httpx reads it in pieces), into the locked
+        folder for a locked job unless visible (to tag it first), and whether Immich had its
+        content already."""
         content.seek(0)
         when = taken_at(self.values)
+        fields = {"fileCreatedAt": when, "fileModifiedAt": when, "filename": name}
         answer = self.client.json(
             "POST",
             "/assets",
             headers={"x-immich-checksum": value},
-            data={"fileCreatedAt": when, "fileModifiedAt": when, "filename": name},
+            data=fields | ({"visibility": "locked"} if self.locked and not visible else {}),
             files={"assetData": (name, content, mimetypes.guess_type(name)[0] or "application/octet-stream")},
         )
         return str(answer["id"]), answer.get("status") == "duplicate"
 
-    def _record(self, path: str, asset: str) -> int:
+    def _pretag(self, asset: str, tags: list[str]) -> None:
+        """The asset given the tags before it is locked (tag() leaves those to it)."""
+        self.shown_tags()
+        values = self._tag_ids(tags)
+        for tag in values.values():
+            self._given(self.client.json("PUT", f"/tags/{tag}/assets", json={"ids": [asset]}))
+        self._pretagged = (asset, set(values))
+
+    def _given(self, results: Any) -> None:
+        """A bulk answer of tags: for a locked job, a photo whose tags Immich lets no app change
+        (no_permission: in the locked folder) is kept as it is, said once (tagged); else _bulk."""
+        if self.locked and any(result.get("error") == "no_permission" for result in results or []):
+            self._kept_tags = True
+            results = [result for result in results if result.get("error") != "no_permission"]
+        self._bulk(results)
+
+    def _lock(self, asset: str) -> None:
+        """A content Immich has already moved into the locked folder (it leaves its albums there);
+        Immich answering 400 is one locked already, which a key may not see (nor change)."""
+        answer = self.client.request("PUT", "/assets", json={"ids": [asset], "visibility": "locked"}, allow=(400,))
+        self.moved = answer.is_success
+
+    def _record(self, path: str, asset: str, value: str = "") -> int:
         with self.store.writing() as db:
             db.execute(
-                "INSERT INTO immich_assets (user, job, path, asset, at) VALUES (?, ?, ?, ?, ?)"
-                " ON CONFLICT (job, path) DO UPDATE SET asset = excluded.asset, at = excluded.at",
-                (self.user, self.job, path, asset, time.time()),
+                "INSERT INTO immich_assets (user, job, path, asset, at, checksum) VALUES (?, ?, ?, ?, ?, ?)"
+                " ON CONFLICT (job, path) DO UPDATE SET asset = excluded.asset, at = excluded.at,"
+                " checksum = excluded.checksum",
+                (self.user, self.job, path, asset, time.time(), value),
             )
             row = db.execute("SELECT id FROM immich_assets WHERE job = ? AND path = ?", (self.job, path)).fetchone()
         return int(row["id"])
@@ -443,8 +530,10 @@ class ImmichLibrary(Library):  # pylint: disable=too-many-instance-attributes
         if asset is None:
             raise FileGone(file_id)
         self.shown_tags()
-        for tag in self._tag_ids(tags).values():
-            self._bulk(self.client.json("PUT", f"/tags/{tag}/assets", json={"ids": [asset]}))
+        done = self._pretagged[1] if self._pretagged[0] == asset else set()
+        for value, tag in self._tag_ids(tags).items():
+            if value not in done:
+                self._given(self.client.json("PUT", f"/tags/{tag}/assets", json={"ids": [asset]}))
 
     def untag(self, file_id: int, tags: list[str]) -> None:
         asset = self._asset(file_id)
@@ -456,21 +545,49 @@ class ImmichLibrary(Library):  # pylint: disable=too-many-instance-attributes
                 self._tags[str(tag.get("value") or tag.get("name"))] = str(tag["id"])
         for value in values:
             if value in self._tags:
-                self.client.request("DELETE", f"/tags/{self._tags[value]}/assets", json={"ids": [asset]})
+                answer = self.client.request("DELETE", f"/tags/{self._tags[value]}/assets", json={"ids": [asset]})
+                if self.locked:
+                    try:
+                        self._given(answer.json())
+                    except ValueError:
+                        pass
 
     def existing(self, file_ids: list[int]) -> dict[int, str]:
-        # Each asset asked for (Immich answers 400 or 404 for one gone, isTrashed for one in its
-        # trash); a gone one's row forgotten, so that its file is uploaded anew.
+        # The assets recorded with their content's SHA-1 asked for at once (bulk-upload-check: a
+        # duplicate not in the trash is there; it sees the locked folder too), those of before one
+        # by one (Immich answers 400 or 404 for one gone, isTrashed for one in its trash); a gone
+        # one's row forgotten, so that its file is uploaded anew.
         if not file_ids:
             return {}
         marks = ", ".join("?" * len(file_ids))
         rows = self.store.rows(
-            f"SELECT id, path, asset FROM immich_assets WHERE job = ? AND id IN ({marks})", (self.job, *file_ids)
+            f"SELECT id, path, asset, checksum FROM immich_assets WHERE job = ? AND id IN ({marks})",
+            (self.job, *file_ids),
         )
         there: dict[int, str] = {}
         gone: list[int] = []
+        summed = [row for row in rows if row["checksum"]]
         try:
+            for start in range(0, len(summed), CHECKS):
+                batch = summed[start : start + CHECKS]
+                check = self.client.json(
+                    "POST",
+                    "/assets/bulk-upload-check",
+                    json={"assets": [{"id": str(row["id"]), "checksum": row["checksum"]} for row in batch]},
+                )
+                kept = {
+                    str(result.get("id"))
+                    for result in check.get("results") or []
+                    if result.get("reason") == "duplicate" and not result.get("isTrashed")
+                }
+                for row in batch:
+                    if str(row["id"]) in kept:
+                        there[int(row["id"])] = str(row["path"])
+                    else:
+                        gone.append(int(row["id"]))
             for row in rows:
+                if row["checksum"]:
+                    continue
                 answer = self.client.request("GET", f"/assets/{row['asset']}", allow=(400, 404))
                 if answer.is_success and not answer.json().get("isTrashed"):
                     there[int(row["id"])] = str(row["path"])
@@ -500,4 +617,11 @@ def opened(job: Job, nc, call: Call) -> ImmichLibrary:
         )
     if not STORES:
         raise SourceError("Immich is not set up on this server")
-    return ImmichLibrary(Client(url, key), STORES[0], job, str(job.options.get(destinations.ALBUM) or ""))
+    return ImmichLibrary(
+        Client(url, key),
+        STORES[0],
+        job,
+        str(job.options.get(destinations.ALBUM) or ""),
+        locked=destinations.locked(job.options),
+        tags=tuple(job.tags) if destinations.tag_as(job.options) == destinations.IMMICH_TAGS else (),
+    )
