@@ -38,7 +38,8 @@ from harvester.executor import (
 from harvester.presets import PRESETS, make_job
 from harvester.recipe import leaked_passwords
 from harvester.runner import COMMON_OPTIONS
-from harvester.routes import library, rclone, recipes, trying, vault
+from harvester.librarymove import Moves
+from harvester.routes import library, moves, rclone, recipes, trying, vault
 from harvester.routes.common import NC, STATE, JobIn, checked, own_job, store, switched_on
 from harvester.routes.rclone import WIZARDS
 from harvester.sources.download import DOWNLOAD_OPTIONS
@@ -63,6 +64,7 @@ async def lifespan(app: FastAPI):
     places.SHELF[:] = [STATE["shelf"]]
     STATE["executor"] = Executor(STATE["store"])
     STATE["executor"].start()
+    STATE["moves"] = Moves(STATE["shelf"], STATE["executor"].connect, STATE["executor"].call)
     set_handlers(app, enabled_handler)
     yield
     WIZARDS.close()
@@ -70,7 +72,7 @@ async def lifespan(app: FastAPI):
 
 APP = FastAPI(lifespan=lifespan)
 APP.add_middleware(AppAPIAuthMiddleware)
-for _group in (trying, recipes, rclone, library, vault):
+for _group in (trying, recipes, rclone, library, moves, vault):
     APP.include_router(_group.ROUTER)
 
 
@@ -771,10 +773,22 @@ async def enabled_handler(enabled: bool, nc: AsyncNextcloudApp) -> str:
         await nc.ui.settings.register_form(
             settings.dns_form(settings.DEFAULT_DNS, settings.DEFAULT_DNS_FALLBACK, dns.PROXY.status)
         )
+        # Files' action for files and folders alike: AppAPI shows it where a node's type contains
+        # the mime given, and every type ("httpd/unix-directory" too) contains "/".
+        await nc.ui.files_dropdown_menu.register_ex(
+            moves.ACTION,
+            l10n.said("Move to the private library"),
+            "api/library/from-files",
+            mime="/",
+            icon="img/app.svg",
+        )
+        await nc.occ_commands.register(**moves.occ_command())
     else:
         await nc.ui.top_menu.unregister("harvester")
         await nc.ui.settings.unregister_form("harvester_admin")
         await nc.ui.settings.unregister_form("harvester_dns")
+        await nc.ui.files_dropdown_menu.unregister(moves.ACTION)
+        await nc.occ_commands.unregister(moves.RESET)
     return ""
 
 
