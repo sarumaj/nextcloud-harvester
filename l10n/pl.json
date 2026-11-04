@@ -963,7 +963,6 @@
         ],
         "Downloading {file}": "Pobieranie {file}",
         "A web page came instead of a file ({error}): signed in anew": "Zamiast pliku przyszła strona internetowa ({error}): zalogowano ponownie",
-        "Looking for new files": "Szukanie nowych plików",
         "{outcome}; stopped, the rest comes {later}": "{outcome}; zatrzymano, reszta {later}",
         "Already in the folder, tagged: {path}": "Już w folderze, otagowano: {path}",
         "Changed: {path} saved over as its new version ({size})": "Zmieniony: {path} zapisany jako nowa wersja ({size})",
@@ -979,6 +978,14 @@
             "%n pobranych",
             "%n pobranego"
         ],
+        "Looking for new files at {address}": "Szukanie nowych plików na {address}",
+        "Looking for new files": "Szukanie nowych plików",
+        "_%n listed file is known already: not downloaded again_::_%n listed files are known already: not downloaded again_": [
+            "%n wymieniony plik jest już znany: nie jest pobierany ponownie",
+            "%n wymienione pliki są już znane: nie są pobierane ponownie",
+            "%n wymienionych plików jest już znanych: nie są pobierane ponownie",
+            "%n wymienionego pliku jest już znane: nie są pobierane ponownie"
+        ],
         "_%n listing page gave nothing: the run does not count as a complete pass_::_%n listing pages gave nothing: the run does not count as a complete pass_": [
             "%n strona listy nic nie dała: przebieg nie liczy się jako pełny",
             "%n strony listy nic nie dały: przebieg nie liczy się jako pełny",
@@ -989,6 +996,12 @@
         "Saved {path} ({size})": "Zapisano {path} ({size})",
         "Tagged: {path}": "Otagowano: {path}",
         "Signing in anew failed: {error}": "Ponowne logowanie nie powiodło się: {error}",
+        "_%n known_::_%n known_": [
+            "%n znany",
+            "%n znane",
+            "%n znanych",
+            "%n znanego"
+        ],
         "_%n changed (a new version)_::_%n changed (new versions)_": [
             "%n zmieniony (nowa wersja)",
             "%n zmienione (nowe wersje)",

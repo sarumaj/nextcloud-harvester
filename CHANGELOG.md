@@ -29,6 +29,9 @@
 
 ### Changed
 
+- The progress log names the address a run looks at (*Looking for new files at https://…*) and
+  says how many of the listed files the job has already (*37 listed files are known already: not
+  downloaded again*), and the run's outcome counts them (*0 downloaded, 37 known*).
 - A mail job's progress log says what the mailbox search found (*Folder INBOX: 12 new messages,
   3 from the sender and with the subject asked for*, or no new messages and how many were done
   with before) and names each message of the sender and subject, with what the job takes from it

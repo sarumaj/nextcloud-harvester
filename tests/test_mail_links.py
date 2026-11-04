@@ -202,13 +202,15 @@ def test_a_link_that_cannot_be_reached_is_tried_in_three_runs_without_failing_th
         if number == 1:
             assert outcome == "1 downloaded, 1 skipped this time (tried again next run)", "the other link's file"
         elif number == 2:
-            assert outcome == "0 downloaded, 1 skipped this time (tried again next run)", "alone: no failure either"
+            assert (
+                outcome == "0 downloaded, 1 known, 1 skipped this time (tried again next run)"
+            ), "alone: no failure either"
         if number < 3:
             line = next(line for line in log if "Skipped https://down.example/invoice.pdf this time" in line)
             assert "could not be fetched" in line and f"(try {number} of {mail_source.LINK_TRIES})" in line
             assert line.template["text"] == "Skipped {file} this time (tried again {later}): {error}"
             assert key not in run.seen and done not in run.seen, "tried again next run"
-    assert outcome == "0 downloaded, 1 skipped (not of the job's file types, or too large)"
+    assert outcome == "0 downloaded, 1 known, 1 skipped (not of the job's file types, or too large)"
     assert any(f"(given up after {mail_source.LINK_TRIES} runs)" in line for line in log)
     assert key in run.seen and done in run.seen, "given up: the message is done"
 

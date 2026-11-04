@@ -923,7 +923,6 @@
         ],
         "Downloading {file}": "Lade {file} herunter",
         "A web page came instead of a file ({error}): signed in anew": "Statt einer Datei kam eine Webseite ({error}): neu angemeldet",
-        "Looking for new files": "Suche nach neuen Dateien",
         "{outcome}; stopped, the rest comes {later}": "{outcome}; gestoppt, der Rest kommt {later}",
         "Already in the folder, tagged: {path}": "Schon im Ordner, mit Tags versehen: {path}",
         "Changed: {path} saved over as its new version ({size})": "Geändert: {path} als neue Version darüber gespeichert ({size})",
@@ -935,6 +934,12 @@
             "%n heruntergeladen",
             "%n heruntergeladen"
         ],
+        "Looking for new files at {address}": "Suche nach neuen Dateien auf {address}",
+        "Looking for new files": "Suche nach neuen Dateien",
+        "_%n listed file is known already: not downloaded again_::_%n listed files are known already: not downloaded again_": [
+            "%n gelistete Datei ist schon bekannt: nicht erneut heruntergeladen",
+            "%n gelistete Dateien sind schon bekannt: nicht erneut heruntergeladen"
+        ],
         "_%n listing page gave nothing: the run does not count as a complete pass_::_%n listing pages gave nothing: the run does not count as a complete pass_": [
             "%n Übersichtsseite lieferte nichts: Der Durchlauf zählt nicht als vollständig",
             "%n Übersichtsseiten lieferten nichts: Der Durchlauf zählt nicht als vollständig"
@@ -943,6 +948,10 @@
         "Saved {path} ({size})": "{path} gespeichert ({size})",
         "Tagged: {path}": "Mit Tags versehen: {path}",
         "Signing in anew failed: {error}": "Die erneute Anmeldung ist fehlgeschlagen: {error}",
+        "_%n known_::_%n known_": [
+            "%n bekannt",
+            "%n bekannt"
+        ],
         "_%n changed (a new version)_::_%n changed (new versions)_": [
             "%n geändert (eine neue Version)",
             "%n geändert (neue Versionen)"

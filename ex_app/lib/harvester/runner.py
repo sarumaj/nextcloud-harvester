@@ -13,8 +13,10 @@ from . import unpack, versions
 from .l10n import Said, listed, said, said_n
 from .patterns import render_tags, stable_url
 from .sources import download
+from .sources.keep import CAPTURED
 from .sources import (
     FULL_PASS,
+    MARK,
     REFUSED,
     AuthError,
     ChallengeError,
@@ -467,9 +469,11 @@ class Tally:
     """What a run did: files downloaded, found already there, skipped (refused by type or size),
     duplicates of the job's other files, known files saved over as a new version (updated) or
     asked again and found unchanged, put off (Postponed: tried again next run, no failure), and
-    the errors of those that failed (denied: how many of them the site refused, 401 or 403)."""
+    the errors of those that failed (denied: how many of them the site refused, 401 or 403), and
+    the files the listing gave that the job has already (known: not downloaded again)."""
 
     downloaded: int = 0
+    known: int = 0
     adopted: int = 0
     skipped: int = 0
     duplicates: int = 0
@@ -484,6 +488,8 @@ class Tally:
     def sentence(self) -> Said:
         """The run's outcome, as the jobs' list shows it: its figures, each a whole phrase."""
         figures = [said_n("%n downloaded", "%n downloaded", self.downloaded)]
+        if self.known:
+            figures.append(said_n("%n known", "%n known", self.known))
         if self.updated:
             figures.append(said_n("%n changed (a new version)", "%n changed (new versions)", self.updated))
         if self.adopted:
@@ -583,10 +589,27 @@ def run(  # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
     # The files the job saved whose addresses are asked again (Check known files for changes):
     # the listing gives them as if new, place asks whether they changed.
     again = source.contents.due(set(owners.values())) if source.contents is not None and source.rechecks() else set()
-    listed_seen = (lambda key: key not in again and seen(key)) if again else seen
-    report("info", said("Looking for new files"))
+    # The files the listing gave that the job has already (seen() said so), apart from the job's
+    # marks (a complete pass, a message done with; a page whose files were captured counts) and
+    # from those of this run, asked again once placed (to mark their message or page done).
+    known: set[str] = set()
+    taken: set[str] = set()
+
+    def listed_seen(key: str) -> bool:
+        if key in again or not seen(key):
+            return False
+        if not key.startswith(MARK) or key.startswith(CAPTURED):
+            known.add(key)
+        return True
+
+    address = source.address_of(job.options)
+    report(
+        "info",
+        said("Looking for new files at {address}", address=address) if address else said("Looking for new files"),
+    )
     try:
         for item in source.items(listed_seen):
+            taken.add(item.key)
             if stopped():
                 report("info", said("Stopped: the rest comes {later}", later=later))
                 halted = True
@@ -691,6 +714,16 @@ def run(  # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
         report("info", said("Stopped: the rest comes {later}", later=later))
         halted = True
         complete = False
+    tally.known = len(known - taken)
+    if tally.known:
+        report(
+            "info",
+            said_n(
+                "%n listed file is known already: not downloaded again",
+                "%n listed files are known already: not downloaded again",
+                tally.known,
+            ),
+        )
     if tally.failures and not (
         tally.downloaded or tally.adopted or tally.skipped or tally.duplicates or tally.updated or tally.postponed
     ):

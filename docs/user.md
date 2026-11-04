@@ -26,9 +26,10 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   (empty: an essential). Save and the form's other buttons stay at the window's foot; Save says
   *Saving…* until the app answers. A required field's name has a red `*`, and a field's help is
   its description for screen readers. The page says *Loading…* until the app answered. Below
-  the jobs, a **progress log** of what the runs do (searching, each file downloaded, saved or
-  found already there, errors, the outcome), live while one runs, of all jobs or of one; a new
-  run clears its job's last message. The list comes without the jobs' options
+  the jobs, a **progress log** of what the runs do (searching where, each file downloaded, saved
+  or found already there, how many listed files are known already, errors, the outcome, which
+  counts the known files too: *0 downloaded, 37 known*), live while one runs, of all jobs or of
+  one; a new run clears its job's last message. The list comes without the jobs' options
   (`GET /api/jobs?brief=1`, each job's own address instead; without `brief` each job has them,
   for other clients), and a job's form asks for its own (`GET /api/jobs/<id>`); the log's lines
   stay when the list is drawn again, and only newer ones are asked for. On a phone (narrower than

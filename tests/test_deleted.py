@@ -138,12 +138,12 @@ def test_a_deleted_file_is_downloaded_again_and_a_moved_one_is_kept(tmp_path):
     library.delete("/In/a.txt")
     library.move("/In/b.txt", "/Elsewhere/b renamed.txt")
     lines: list = []
-    assert go(store, job, library, lines) == "1 downloaded"
+    assert go(store, job, library, lines) == "1 downloaded, 1 known"
     assert library.files["/In/a.txt"] == b"a" and "/In/b.txt" not in library.files
     assert ("info", "Deleted in Nextcloud, downloaded again: /In/a.txt") in lines
     assert library.asked[-1] == [1, 2], "both looked for in one request"
     assert store.placed(job.id or 0)["a"]["file"] == library.ids["/In/a.txt"], "its new ID recorded"
-    assert go(store, job, library) == "0 downloaded", "there again: skipped"
+    assert go(store, job, library) == "0 downloaded, 2 known", "there again: skipped"
 
 
 def test_without_the_option_nothing_is_looked_for(tmp_path):
@@ -151,7 +151,7 @@ def test_without_the_option_nothing_is_looked_for(tmp_path):
     library = Drive()
     go(store, job, library)
     library.delete("/In/a.txt")
-    assert go(store, job, library) == "0 downloaded"
+    assert go(store, job, library) == "0 downloaded, 2 known"
     assert not library.asked
 
 
@@ -169,7 +169,7 @@ def test_lookups_go_by_hundreds_once_a_run_and_only_for_what_the_listing_gives(t
     store.mark_seen(job.id or 0, "elsewhere")
     store.record_placed(job.id or 0, "elsewhere", 999, {}, [])  # not listed: never looked for
     library.asked.clear()
-    assert go(store, job, library) == "0 downloaded"
+    assert go(store, job, library) == "0 downloaded, 250 known"
     assert [len(ids) for ids in library.asked] == [100, 100, 50]
     assert 999 not in {file_id for ids in library.asked for file_id in ids}
 
@@ -191,7 +191,7 @@ def test_a_lookup_that_fails_downloads_nothing_and_says_so(tmp_path):
     library.delete("/In/a.txt")
     library.broken = True
     lines: list = []
-    assert go(store, job, library, lines) == "0 downloaded"
+    assert go(store, job, library, lines) == "0 downloaded, 2 known"
     assert (
         "info",
         "Could not ask Nextcloud whether 2 files are still there (503 Service Unavailable): not downloaded again",
@@ -207,7 +207,7 @@ def test_a_file_without_an_id_is_looked_for_at_its_recorded_path(tmp_path):
     for key in ("a", "b"):
         store.record_placed(job_id, key, None, {}, [])
     library.delete("/In/b.txt")
-    assert go(store, job, library) == "1 downloaded"
+    assert go(store, job, library) == "1 downloaded, 1 known"
     assert store.placed(job_id)["a"]["file"] == library.ids["/In/a.txt"], "found there: its ID recorded"
     assert library.files["/In/b.txt"] == b"b"
 
@@ -218,7 +218,7 @@ def test_a_file_downloaded_again_is_no_duplicate_of_itself(tmp_path):
     library = Drive()
     assert go(store, job, library) == "1 downloaded, 1 duplicate (not saved again)"
     library.delete("/In/a.txt")
-    assert go(store, job, library) == "1 downloaded"
+    assert go(store, job, library) == "1 downloaded, 1 known"
     assert library.files["/In/a.txt"] == b"same"
     assert store.content(job.id or 0, "b") is None, "the duplicate's record of the gone file goes with it"
 
@@ -246,7 +246,7 @@ def test_an_unpacked_zip_counts_as_kept_while_its_folder_is_there(tmp_path):
     assert go(store, job, library) == "1 downloaded"
     assert "/In/r/one.txt" in library.files
     library.delete("/In/r.zip")
-    assert go(store, job, library) == "0 downloaded", "its files are there"
+    assert go(store, job, library) == "0 downloaded, 1 known", "its files are there"
     library.delete("/In/r/one.txt")
     assert go(store, job, library) == "1 downloaded", "archive and folder gone"
     assert "/In/r.zip" in library.files and "/In/r/one.txt" in library.files
@@ -259,7 +259,7 @@ def test_an_explicit_request_brings_the_file_back_whatever_the_option_or_says_wh
     library.delete("/In/a.txt")
     library.move("/In/b.txt", "/Moved/b.txt")
     lines: list = []
-    assert go(store, job, library, lines, explicit=True) == "1 downloaded"
+    assert go(store, job, library, lines, explicit=True) == "1 downloaded, 1 known"
     assert ("info", "Fetched before, in your files at /Moved/b.txt") in lines
     assert ("info", "Deleted in Nextcloud, downloaded again: /In/a.txt") in lines
 
@@ -281,7 +281,7 @@ def test_a_fetch_of_the_executor_brings_a_deleted_file_back(tmp_path, monkeypatc
     lines = [line["message"] for line in store.log_lines("anna", job_id)]
     assert "Deleted in Nextcloud, downloaded again: /Clips/a.txt" in lines
     assert "Fetched before, in your files at /Clips/b.txt" in lines
-    assert lines[-1] == "https://v.example/1: 1 downloaded"
+    assert lines[-1] == "https://v.example/1: 1 downloaded, 1 known"
 
 
 def test_the_nextcloud_library_asks_for_several_ids_in_one_search():

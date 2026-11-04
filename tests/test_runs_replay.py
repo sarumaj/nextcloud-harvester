@@ -205,7 +205,7 @@ def test_volatile_parts_of_an_address_make_no_new_files():
     first, _, _ = source(site, {"start": f"{SITE}/v", "links": {"selector": "a.file", "pattern": r"\.pdf"}})
     assert run(first, None, seen)[0] == "2 downloaded"
     again, _, _ = source(site, {"start": f"{SITE}/v", "links": {"selector": "a.file", "pattern": r"\.pdf"}})
-    assert run(again, None, seen)[0] == "0 downloaded", "the same files, under new sessions and signatures"
+    assert run(again, None, seen)[0] == "0 downloaded, 2 known", "the same files, under new sessions and signatures"
     assert f"{SITE}/files/1.pdf" in seen
 
 

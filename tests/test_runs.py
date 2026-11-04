@@ -99,7 +99,7 @@ def test_a_file_of_another_type_or_too_large_is_skipped_and_not_tried_again(tmp_
     assert message == "2 downloaded, 1 skipped (not of the job's file types, or too large)"
     assert {"b", REFUSED + "b", FULL_PASS} <= seen
     assert "Skipped b.txt: https://s.example/b is not of the job's file types (image)" in log
-    assert run(source, seen=seen)[0] == "0 downloaded", "not tried again"
+    assert run(source, seen=seen)[0] == "0 downloaded, 3 known", "not tried again"
 
     store = Store(str(tmp_path / "db"))
     job_id = store.save(job()).id or 0
@@ -183,7 +183,7 @@ def test_a_name_taken_by_an_earlier_runs_file_is_numbered_and_one_put_there_by_h
     message = runner.run(
         job(), Twins({}, {}, None), library, seen.__contains__, seen.add, lambda s: None, owners={0: "x1"}
     )
-    assert message == "2 downloaded"
+    assert message == "2 downloaded, 1 known"
     assert library.files["/In/2026/Rechnung (2).pdf"] == b"x2"
 
     by_hand = FakeLibrary({"/In/2026/Rechnung.pdf": b"by hand"})
@@ -325,7 +325,7 @@ def test_run_now_and_a_change_of_tags_meanwhile_do_both(tmp_path, monkeypatch):
     executor.run(saved, wanted=True)
     lines = [line["message"] for line in store.log_lines("u", job_id)]
     assert "Tags brought up to date on 3 files" in lines
-    assert lines[-1] == "0 downloaded, 1 already there", "and then the run"
+    assert lines[-1] == "0 downloaded, 2 known, 1 already there", "and then the run"
     assert store.retag_from(job_id) is None
     assert ((store.job(job_id) or saved).last_run or 0) > (last_run or 0)
 

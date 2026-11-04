@@ -102,7 +102,7 @@ def test_known_files_are_not_asked_again_without_the_option(tmp_path):
     library = FakeLibrary()
     go(store, job, source, library)
     server.files["/a.pdf"] = b"%PDF-1 a, corrected"
-    assert go(store, job, source, library) == "0 downloaded"
+    assert go(store, job, source, library) == "0 downloaded, 2 known"
     assert len(server.requests) == 2
     assert library.files["/In/a.pdf"] == b"%PDF-1 a"
 
@@ -127,7 +127,7 @@ def test_a_known_file_with_an_etag_is_asked_only_if_it_changed(tmp_path):
     assert library.files == {"/In/a.pdf": b"%PDF-1 a, corrected", "/In/b.pdf": b"%PDF-1 b"}, "saved over its own"
     # Not due again within RECHECK_EVERY: nothing is asked.
     before = len(server.requests)
-    assert go(store, job, source, library) == "0 downloaded"
+    assert go(store, job, source, library) == "0 downloaded, 2 known"
     assert len(server.requests) == before
 
 

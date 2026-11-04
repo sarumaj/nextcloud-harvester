@@ -151,7 +151,7 @@ def test_a_level_that_finds_nothing_is_a_changed_site_told_once_until_it_is_back
 
     archive.site = Site()
     back = archive.run()
-    assert back.last_status == "ok" and back.last_message == "0 downloaded"
+    assert back.last_status == "ok" and back.last_message == "0 downloaded, 8 known"
     archive.site = Redesigned()
     archive.run()
     assert len(archive.nc.sent) == 2, "changed again after it was back: told again"

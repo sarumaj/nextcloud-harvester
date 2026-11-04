@@ -7,7 +7,7 @@ from test_runner import FakeLibrary, FakeNextcloud, FakeSource
 
 from harvester import executor as executor_module
 from harvester import runner, store as store_module
-from harvester.sources import Item, SourceError
+from harvester.sources import FULL_PASS, Item, SourceError
 from harvester.store import Job, Store
 
 
@@ -49,6 +49,28 @@ def test_the_runner_says_why_it_stops_early():
     runner.run(job(max_items=1), FakeSource({}, {}, None), FakeLibrary(), seen.__contains__, seen.add,
                report=lambda level, text: lines.append((level, text)))  # fmt: skip
     assert lines[-1] == ("info", "1 file this run (Files per run): the rest comes next run")
+
+
+class Addressed(FakeSource):
+    """A source with an address (its option "url"), whose listing asks seen() about a mark too."""
+
+    address_option = "url"
+
+    def items(self, seen):
+        seen(FULL_PASS)
+        yield from super().items(seen)
+
+
+def test_the_run_names_its_address_and_counts_the_known_files():
+    lines: list[tuple[str, str]] = []
+    seen: set[str] = {"a", "b", FULL_PASS}
+    source = Addressed({}, {}, None)
+    outcome = runner.run(job(url="https://site.example/list"), source, FakeLibrary(), seen.__contains__, seen.add,
+                         lambda s: None, report=lambda level, text: lines.append((level, text)))  # fmt: skip
+    assert lines[0] == ("info", "Looking for new files at https://site.example/list")
+    assert lines[-1] == ("info", "2 listed files are known already: not downloaded again")
+    assert lines[-1][1].template["count"] == 2
+    assert outcome == "1 downloaded, 2 known", "not the mark of a complete pass, nor the file of this run"
 
 
 def test_sizes_read_as_people_say_them():
