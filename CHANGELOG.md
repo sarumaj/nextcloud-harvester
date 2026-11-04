@@ -24,6 +24,17 @@
   trash bin; a file that fails stays, versions and all, and the page says why. Nothing shared
   with the person and nothing in a team folder is moved. `occ harvester:library-reset <user>
   --confirm`: the admin deletes a person's library.
+- **Save to Immich**: a job's photos and videos uploaded into the person's Immich account
+  (Immich's API of version 3), streamed, after Immich was asked for the content's SHA-1 (one
+  there already is adopted, and still filed and tagged); an optional **Album** by a template
+  (`Magazines {year}`), made once and reused; **Immich's tags** as *Tag as* (`a/b` nested); a
+  photo deleted in Immich uploaded again; other files skipped for good with why; an unpacked
+  ZIP's photos and videos alone. **Your Immich account** in the form: the server and the
+  person's API key (a sensitive preference, tested as it is saved, never sent back;
+  `GET`/`PUT`/`DELETE /api/immich`, `POST /api/immich/test`). The admin's **Immich server**
+  (`HARVESTER_IMMICH_URL`) is preset for everyone and reached directly; a server a person types,
+  through the guard's check; `https://` unless **Immich over plain http**
+  (`HARVESTER_IMMICH_HTTP`).
 - **Save to** a Cryptomator vault: **its inbox** (the folder gets the marker of the app *Vaults
   for Cryptomator*, which moves the files into the vault when the person unlocks it; files moved
   out are never fetched again) or **the vault directly** (each file encrypted on the server and
