@@ -1105,6 +1105,9 @@
 		return panel
 	}
 
+	// The help under a pick's pattern (a regular expression): what its named groups give.
+	const PATTERN_HELP = () => t('A regular expression. A part written (?P<name>…) becomes {name} for file names and tags, e.g. (?P<year>20\\d\\d) gives {year}.', { name: '{name}', year: '{year}' })
+
 	// One pick in the recorder's panel (a level of links to follow, the file links, the next
 	// page): its element (a selector, with the alternatives a job tries when it finds nothing) and
 	// its pattern, both editable, what it matches on the page, examples with their values, the
@@ -1149,7 +1152,7 @@
 		}
 		const pattern = el('input', { class: 'harvester-pattern', value: spec.pattern || '', spellcheck: 'false' })
 		pattern.addEventListener('change', () => send({ type: 'pattern', target, level, pattern: pattern.value }))
-		box.append(field(spec.click ? t('Pattern on their texts (named groups become values)') : t('Pattern (named groups become values)'), pattern))
+		box.append(field(spec.click ? t('Text must match') : t('Address must match'), pattern, PATTERN_HELP()))
 		if (!proposal) return box
 		if (proposal.error) box.append(el('p', { class: 'harvester-error', text: proposal.error }))
 		box.append(el('p', { text: n('On this page: {matching} of %n link matches (solid outline; dashed: left out).', 'On this page: {matching} of %n links match (solid outline; dashed: left out).', proposal.found, { matching: proposal.matching }) }))
@@ -1268,7 +1271,7 @@
 			input('items', t('Items (path in the answer, e.g. data.items)')),
 			input('file', t('File’s address (field of an item, e.g. pdf.href)')),
 			input('text', t('Text (field of an item, e.g. title)')),
-			input('pattern', t('Pattern on the file’s address (optional; named groups become values)')),
+			input('pattern', t('File’s address must match (optional)'), PATTERN_HELP()),
 			...request,
 			el('div', { class: 'harvester-toolbar' }, el('span', { text: `${t('Pages: parameter')} ` }), param, el('span', { text: ` ${t('from')} ` }), first, el('span', { text: ` ${t('step')} ` }), step, ...(post ? [' ', pageIn] : [])),
 			el('div', { class: 'harvester-toolbar' }, el('span', { text: `${t('Or a cursor:')} ` }), cursorFrom, ' → ', cursorTo, ' ', cursorMore, ...(post ? [' ', cursorIn] : [])))

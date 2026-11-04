@@ -172,6 +172,7 @@ OC.L10N.register(
         "Set up with rclone: done": "Mit rclone einrichten: fertig",
         "The configuration rclone wrote (passwords obscured, as rclone keeps them). Use it, then save it with the job’s Save (or Save account).": "Die Konfiguration, die rclone geschrieben hat (Passwörter verschleiert, wie rclone sie speichert). Verwende sie und speichere sie dann mit „Speichern“ des Jobs (oder „Konto speichern“).",
         "Use this configuration": "Diese Konfiguration verwenden",
+        "A regular expression. A part written (?P<name>…) becomes {name} for file names and tags, e.g. (?P<year>20\\d\\d) gives {year}.": "Ein regulärer Ausdruck. Ein Teil, geschrieben als (?P<name>…), wird zu {name} für Dateinamen und Schlagworte, z. B. ergibt (?P<year>20\\d\\d) {year}.",
         "Pick again": "Neu auswählen",
         "Pick this on the page again (in its picking mode)": "Dies auf der Seite neu auswählen (in seinem Auswahlmodus)",
         "Remove this level (the levels after it move up)": "Diese Ebene entfernen (die folgenden Ebenen rücken auf)",
@@ -189,8 +190,8 @@ OC.L10N.register(
         "Save the pages as": "Die Seiten speichern als",
         "The job opens the page each of these leads to in the browser and saves the page itself as a file, named after its title ({title}).": "Der Job öffnet die Seite, zu der jeder dieser Links führt, im Browser und speichert die Seite selbst als Datei, benannt nach ihrem Titel ({title}).",
         "The job keeps the files of these types that each page loads: {types}": "Der Job behält die Dateien dieser Typen, die jede Seite lädt: {types}",
-        "Pattern on their texts (named groups become values)": "Muster für ihre Texte (benannte Gruppen werden zu Werten)",
-        "Pattern (named groups become values)": "Muster (benannte Gruppen werden zu Werten)",
+        "Text must match": "Text muss passen",
+        "Address must match": "Adresse muss passen",
         "_On this page: {matching} of %n link matches (solid outline; dashed: left out)._::_On this page: {matching} of %n links match (solid outline; dashed: left out)._": [
             "Auf dieser Seite: {matching} von %n Link passt (durchgezogen umrandet; gestrichelt: ausgelassen).",
             "Auf dieser Seite: {matching} von %n Links passen (durchgezogen umrandet; gestrichelt: ausgelassen)."
@@ -244,7 +245,7 @@ OC.L10N.register(
         "Items (path in the answer, e.g. data.items)": "Einträge (Pfad in der Antwort, z. B. data.items)",
         "File’s address (field of an item, e.g. pdf.href)": "Adresse der Datei (Feld eines Eintrags, z. B. pdf.href)",
         "Text (field of an item, e.g. title)": "Text (Feld eines Eintrags, z. B. title)",
-        "Pattern on the file’s address (optional; named groups become values)": "Muster auf die Adresse der Datei (optional; benannte Gruppen werden zu Werten)",
+        "File’s address must match (optional)": "Adresse der Datei muss passen (optional)",
         "Pages: parameter": "Seiten: Parameter",
         "from": "ab",
         "step": "Schrittweite",

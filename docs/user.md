@@ -702,7 +702,10 @@ place's files only.
   pattern takes any or none of them. It reads `Report%202024.pdf` as `Report%20` and the year
   2024. Links that share a generic name (`download.php?id=N`) are named after their texts
   (`{text}`), or their groups (`{id}`) when the texts are the same, and the recorder offers
-  `{disposition}`, the server's name for the file. Edit a pattern and the outlines follow, as
+  `{disposition}`, the server's name for the file. A pick's pattern is **Address must match**
+  (**Text must match** for buttons and other elements picked by their text, **File's address must
+  match** for a JSON listing's items), with a line under it: a part written `(?P<name>…)`
+  becomes `{name}` for file names and tags. Edit a pattern and the outlines follow, as
   Python reads it: JavaScript's RegExp outlines with Python's syntax translated (`(?P<n>`,
   `(?P=n)`, a leading `(?i)`), and with Python's own matches where it cannot (`(?x)`, `(?i:…)`,
   atomic groups). Passwords are never recorded: the job fills in its account. The **Steps**

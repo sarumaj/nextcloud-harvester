@@ -61,6 +61,10 @@
 
 ### Changed
 
+- The recorder's patterns in plain words: **Address must match**, **Text must match** (a pick
+  by its text) and **File's address must match (optional)** (a JSON listing), each with a line
+  saying that a part written `(?P<name>…)` becomes `{name}` for file names and tags, with an
+  example.
 - A mail job's **Pages to the on-demand job** says what it is for in one sentence.
 - The progress log names the address a run looks at (*Looking for new files at https://…*) and
   says how many of the listed files the job has already (*37 listed files are known already: not
