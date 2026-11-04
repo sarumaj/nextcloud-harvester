@@ -387,19 +387,19 @@ def copy_checked(source: BinaryIO, dest: BinaryIO, settings: dict, content_type:
     the start of source to dest, checked as a download: the job's largest file (before anything is
     copied), its types, its smallest. what names it in the errors (the download)."""
     types, most = file_types(settings), largest(settings)
-    what = what or "the download"
+    what = what or said("the download")
     source.seek(0, 2)
     size = source.tell()
     if size > most:
-        raise Refused(f"{what} is {size // MB} MB, more than the job's largest file")
+        raise Refused(said("{file} is {size} MB, more than the job's largest file", file=what, size=size // MB))
     if size < int(settings.get("min_size", 0) or 0):
-        raise SourceError(f"{what} gave only {size} bytes")
+        raise SourceError(said("{file} gave only {size} bytes", file=what, size=size))
     source.seek(0)
     first = True
     while chunk := source.read(1 << 20):
         check_stop()
         if first and not accepts(types, content_type, chunk):
-            raise Refused(f"{what} is not of the job's file types ({', '.join(types)})")
+            raise Refused(said("{file} is not of the job's file types ({types})", file=what, types=", ".join(types)))
         first = False
         dest.write(chunk)
 
@@ -488,11 +488,13 @@ def _attempt(  # pylint: disable=too-many-arguments,too-many-positional-argument
         # One file refused is that file's trouble (taken away, kept private): the run decides
         # whether all of them are, which is the account's.
         if response.status in (401, 403):
-            raise Denied(f"{url} answered {response.status}: the account may not download it")
+            raise Denied(
+                said("{file} answered {status}: the account may not download it", file=url, status=response.status)
+            )
         if response.status in (404, 410):
-            raise Gone(f"{url} answered {response.status}")
+            raise Gone(said("{file} answered {status}", file=url, status=response.status))
         if response.status >= 400:
-            raise SourceError(f"{url} answered {response.status}")
+            raise SourceError(said("{file} answered {status}", file=url, status=response.status))
         check = _check_of(url)
         if response.status == 304 and check is not None and (check.etag or check.modified):
             raise Unchanged(url)
@@ -502,19 +504,21 @@ def _attempt(  # pylint: disable=too-many-arguments,too-many-positional-argument
         most = largest(settings)
         announced = response.headers.get("content-length", "")
         if announced.isdigit() and int(announced) > most:
-            raise Refused(f"{url} is {int(announced) // MB} MB, more than the job's largest file")
+            raise Refused(
+                said("{file} is {size} MB, more than the job's largest file", file=url, size=int(announced) // MB)
+            )
         size = 0
         for chunk in response.chunks:
             # A stop ends the download at once; what was written is dropped with the run's file.
             check_stop()
             if size == 0 and not accepts(types, content_type, chunk):
-                raise Refused(f"{url} is not of the job's file types ({', '.join(types)})")
+                raise Refused(said("{file} is not of the job's file types ({types})", file=url, types=", ".join(types)))
             size += len(chunk)
             if size > most:
-                raise Refused(f"{url} is larger than the job's largest file")
+                raise Refused(said("{file} is larger than the job's largest file", file=url))
             dest.write(chunk)
         if size < int(settings.get("min_size", 0) or 0):
-            raise SourceError(f"{url} gave only {size} bytes")
+            raise SourceError(said("{file} gave only {size} bytes", file=url, size=size))
         if check is not None:
             check.etag_now = response.headers.get("etag", "")
             check.modified_now = response.headers.get("last-modified", "")

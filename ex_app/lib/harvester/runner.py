@@ -657,7 +657,7 @@ def run(  # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
                 # Not of the job's types or too large: the same next run, so it is not tried again
                 # (until the job's types or sizes change: REFUSED marks it for that).
                 tally.skipped += 1
-                report("info", said("Skipped {file}: {error}", file=item.path or item.url, error=str(error)))
+                report("info", said("Skipped {file}: {error}", file=item.path or item.url, error=error_text(error)))
                 mark_seen(item.key)
                 mark_seen(REFUSED + item.key)
                 continue
@@ -671,7 +671,7 @@ def run(  # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
                         "Skipped {file} this time (tried again {later}): {error}",
                         file=item.url if item.pending else item.path or item.url,
                         later=later,
-                        error=str(error),
+                        error=error_text(error),
                     ),
                 )
                 complete = False
@@ -682,13 +682,15 @@ def run(  # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
                     # it stays as it is, asked again next time; no failure of the run.
                     report(
                         "info",
-                        said("{file} could not be checked for changes: {error}", file=item.path, error=str(error)),
+                        said(
+                            "{file} could not be checked for changes: {error}", file=item.path, error=error_text(error)
+                        ),
                     )
                     continue
                 # One file the site will not give (an error page, a network failure, a name that
                 # cannot be made): the others go on, and it is tried again next run, not marked
                 # as seen.
-                tally.failures.append(str(error))
+                tally.failures.append(error_text(error))
                 tally.denied += isinstance(error, Denied)
                 report("error", said("{file}: {error}", file=item.path or item.url, error=error_text(error)))
                 complete = False
@@ -737,12 +739,13 @@ def run(  # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
     if tally.failures and not (
         tally.downloaded or tally.adopted or tally.skipped or tally.duplicates or tally.updated or tally.postponed
     ):
-        more = f" (and {len(tally.failures) - 1} more)" if len(tally.failures) > 1 else ""
+        first, others = tally.failures[0], len(tally.failures) - 1
+        reason = said_n("{error} (and %n more)", "{error} (and %n more)", others, error=first) if others else first
         # Every file refused (two at least: one alone may be a file taken away): the account's
         # sign-in, not the files.
         if tally.denied == len(tally.failures) >= 2:
-            raise AuthError(tally.failures[0] + more)
-        raise SourceError(tally.failures[0] + more)
+            raise AuthError(reason)
+        raise SourceError(reason)
     if complete and source.gaps:
         # Pages that should have listed files gave none (signed out, an error): those files may
         # be missing, and known files must not end the next runs before they are found.

@@ -163,31 +163,39 @@ def parse_config(text: str) -> tuple[str, dict[str, str]]:
     # its own: a command or a file could hide in a value. Every setting is one line, not indented.
     for number, line in enumerate(text.splitlines(), 1):
         if line[:1] in (" ", "\t") and line.strip():
-            raise SourceError(f"line {number} of the rclone configuration is indented: settings may not be")
+            raise SourceError(
+                said("line {number} of the rclone configuration is indented: settings may not be", number=number)
+            )
     parser = configparser.ConfigParser(interpolation=None)
     try:
         parser.read_string(text)
     except configparser.Error as error:
-        raise SourceError(f"the rclone configuration cannot be read: {error}") from error
+        raise SourceError(said("the rclone configuration cannot be read: {error}", error=str(error))) from error
     sections = parser.sections()
     if len(sections) != 1:
-        raise SourceError(f"the rclone configuration must hold one remote, not {len(sections)}")
+        raise SourceError(said("the rclone configuration must hold one remote, not {count}", count=len(sections)))
     name = sections[0]
     if not re.fullmatch(r"[\w.-]+", name):
-        raise SourceError(f"the remote's name {name} is not allowed")
+        raise SourceError(said("the remote's name {name} is not allowed", name=name))
     settings = dict(parser[name])
     kind = settings.get("type", "")
     if kind not in ALLOWED_TYPES:
-        raise SourceError(f"remotes of type {kind or '(none)'} are not allowed")
+        raise SourceError(said("remotes of type {kind} are not allowed", kind=kind or "(none)"))
     for key, value in settings.items():
         if "\n" in value or "\r" in value:
-            raise SourceError(f"the remote's setting {key} spans several lines")
+            raise SourceError(said("the remote's setting {key} spans several lines", key=key))
         if FORBIDDEN_KEY.search(key):
-            raise SourceError(f"the remote's setting {key} is not allowed (a file or a command of the app)")
+            raise SourceError(
+                said("the remote's setting {key} is not allowed (a file or a command of the app)", key=key)
+            )
         if key in AMBIENT_KEYS and value.strip().lower() not in ("", "false", "0", "no"):
-            raise SourceError(f"the remote's setting {key} is not allowed (credentials from the app's machine)")
+            raise SourceError(
+                said("the remote's setting {key} is not allowed (credentials from the app's machine)", key=key)
+            )
         if key in SERVER_KEYS and value and not reachable_server(value):
-            raise SourceError(f"the remote's {key} {value} may not be reached{dns_refusal(value)}")
+            raise SourceError(
+                said("the remote's {key} {value} may not be reached{why}", key=key, value=value, why=dns_refusal(value))
+            )
     return name, settings
 
 
@@ -280,7 +288,7 @@ class Remote(Source):  # pylint: disable=too-many-instance-attributes
 
     def _command(self, *args: str) -> list[str]:
         if not self.remote:
-            raise SourceError("the job has no rclone configuration: set it as the job's account")
+            raise SourceError(said("the job has no rclone configuration: set it as the job's account"))
         if not self.binary:
             raise SourceError("rclone is not installed")
         return [self.binary, "--config", self._config_path(), "--ask-password=false", *args]

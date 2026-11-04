@@ -102,8 +102,10 @@ recorder that makes them, and what a run does. Installing and the admin's settin
 - **Language:** the page and the notifications are in your language in Nextcloud (*Personal
   settings*), in German or Polish; in another language they are English. So are the schedule in
   words, why a job waits, the progress log's usual lines and a run's outcome, and the recorder's
-  warnings. English stay the reasons a run fails (a site's or a program's errors), the log's
-  lines from before this version, a site's own texts and the recipes.
+  warnings, and the usual reasons a file fails (*… answered 404*, not of the job's file types,
+  larger than its largest file, *(and 3 more)*) and a file store's configuration errors. English
+  stay the other reasons a run fails (a site's or a program's errors), the log's lines from
+  before this version, a site's own texts and the recipes.
 
 ## Sources
 

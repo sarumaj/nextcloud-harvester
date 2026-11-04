@@ -987,6 +987,12 @@
             "%n wymienionych plików jest już znanych: nie są pobierane ponownie",
             "%n wymienionego pliku jest już znane: nie są pobierane ponownie"
         ],
+        "_{error} (and %n more)_::_{error} (and %n more)_": [
+            "{error} (i %n więcej)",
+            "{error} (i %n więcej)",
+            "{error} (i %n więcej)",
+            "{error} (i %n więcej)"
+        ],
         "_%n listing page gave nothing: the run does not count as a complete pass_::_%n listing pages gave nothing: the run does not count as a complete pass_": [
             "%n strona listy nic nie dała: przebieg nie liczy się jako pełny",
             "%n strony listy nic nie dały: przebieg nie liczy się jako pełny",
@@ -1161,8 +1167,15 @@
             "przechodzi przez %n wyboru: {choices}"
         ],
         "the choice “{choice}” failed: {why}": "wybór „{choice}” się nie powiódł: {why}",
+        "the download": "pobrany plik",
+        "{file} is {size} MB, more than the job's largest file": "{file} ma {size} MB, więcej niż największy plik zadania",
+        "{file} gave only {size} bytes": "{file} dał tylko {size} bajtów",
+        "{file} is not of the job's file types ({types})": "{file} nie jest żadnym z typów plików zadania ({types})",
         "{address} asks to wait {seconds} s": "{address} prosi o odczekanie {seconds} s",
+        "{file} answered {status}: the account may not download it": "{file} odpowiedział {status}: konto nie może go pobrać",
+        "{file} answered {status}": "{file} odpowiedział {status}",
         "{address}: the connection failed, trying again in {seconds} s": "{address}: połączenie nie powiodło się, ponowna próba za {seconds} s",
+        "{file} is larger than the job's largest file": "{file} jest większy niż największy plik zadania",
         "_The feed “{title}”: %n entry, {files} file links_::_The feed “{title}”: %n entries, {files} file links_": [
             "Kanał „{title}”: %n wpis, linki do plików: {files}",
             "Kanał „{title}”: %n wpisy, linki do plików: {files}",
@@ -1238,6 +1251,16 @@
             "Przejrzano %n wydań (pominięto szkice lub wydania przedpremierowe: {skipped}), pasujące pliki: {files}",
             "Przejrzano %n wydania (pominięto szkice lub wydania przedpremierowe: {skipped}), pasujące pliki: {files}"
         ],
+        "the rclone configuration must hold one remote, not {count}": "konfiguracja rclone musi zawierać jeden zdalny zasób, nie {count}",
+        "the remote's name {name} is not allowed": "nazwa zdalnego zasobu {name} jest niedozwolona",
+        "remotes of type {kind} are not allowed": "zdalne zasoby typu {kind} są niedozwolone",
+        "line {number} of the rclone configuration is indented: settings may not be": "wiersz {number} konfiguracji rclone jest wcięty: ustawienia nie mogą być wcięte",
+        "the rclone configuration cannot be read: {error}": "nie można odczytać konfiguracji rclone: {error}",
+        "the remote's setting {key} spans several lines": "ustawienie {key} zdalnego zasobu zajmuje kilka wierszy",
+        "the remote's setting {key} is not allowed (a file or a command of the app)": "ustawienie {key} zdalnego zasobu jest niedozwolone (plik lub polecenie aplikacji)",
+        "the remote's setting {key} is not allowed (credentials from the app's machine)": "ustawienie {key} zdalnego zasobu jest niedozwolone (dane logowania z maszyny aplikacji)",
+        "the remote's {key} {value} may not be reached{why}": "{key} {value} zdalnego zasobu nie może być osiągnięty{why}",
+        "the job has no rclone configuration: set it as the job's account": "zadanie nie ma konfiguracji rclone: ustaw ją jako konto zadania",
         "rclone found no file in {target} that Files ({filter}) takes": "rclone nie znalazł w {target} żadnego pliku, który bierze Pliki ({filter})",
         "_rclone listed %n file in {target}_::_rclone listed %n files in {target}_": [
             "rclone wymienił %n plik w {target}",

@@ -74,6 +74,9 @@
   outcome), tried again in the next runs and given up after the third.
 - A file's failure in the progress log (*file: why*) and a selector's repair (*level 1: selector
   repaired (… → …)*) are translated (German, Polish), as their neighbours were.
+- The usual reasons a file fails or is skipped (*… answered 404*, *… is not of the job's file
+  types*, *… is larger than the job's largest file*, *… gave only 12 bytes*), a run's *(and 3
+  more)* and a file store's configuration errors are translated (German, Polish).
 - The run's reasons *the start page has none of the recipe's links* and *… asks for a person*,
   and the log's line of a page that loads none of the types to capture, are translated (German,
   Polish), as their neighbours were.

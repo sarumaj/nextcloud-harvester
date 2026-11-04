@@ -3,11 +3,13 @@
 
 # pylint: disable=missing-function-docstring
 
+import pytest
 from test_runner import FakeLibrary, FakeNextcloud, FakeSource
 from test_selectors import SITE, http_source
 
 from harvester import executor as executor_module
 from harvester import runner, store as store_module
+from harvester.l10n import error_text, said
 from harvester.sources import FULL_PASS, Item, SourceError, walk
 from harvester.store import Job, Store
 
@@ -198,3 +200,26 @@ def test_a_levels_wait_and_pages_limit_are_said_once_a_run():
     assert first.once("wait 1") and not first.once("wait 1")
     assert not then.once("wait 1"), "a choice's walk after the first, in the same run"
     assert then.once("wait 2"), "another level"
+
+
+class Refusing(FakeSource):
+    """Every file answers as download.py says a status: a and b 500, c 404."""
+
+    def fetch(self, item, dest):
+        status = 404 if item.key == "c" else 500
+        raise SourceError(said("{file} answered {status}", file=f"https://site.example/{item.key}", status=status))
+
+
+def test_a_runs_reason_and_its_files_errors_are_translated():
+    lines: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    with pytest.raises(SourceError) as failed:
+        runner.run(job(), Refusing({}, {}, None), FakeLibrary(), seen.__contains__, seen.add, lambda s: None,
+                   report=lambda level, text: lines.append((level, text)))  # fmt: skip
+    reason = error_text(failed.value)
+    assert reason == "https://site.example/a answered 500 (and 2 more)"
+    assert reason.template["text"] == "{error} (and %n more)" and reason.template["count"] == 2
+    assert reason.template["params"]["error"]["text"] == "{file} answered {status}", "the first error's own words"
+    error = lines[2][1]
+    assert error == "a.txt: https://site.example/a answered 500"
+    assert error.template["params"]["error"]["text"] == "{file} answered {status}"

@@ -942,6 +942,10 @@ OC.L10N.register(
             "%n gelistete Datei ist schon bekannt: nicht erneut heruntergeladen",
             "%n gelistete Dateien sind schon bekannt: nicht erneut heruntergeladen"
         ],
+        "_{error} (and %n more)_::_{error} (and %n more)_": [
+            "{error} (und %n weitere)",
+            "{error} (und %n weitere)"
+        ],
         "_%n listing page gave nothing: the run does not count as a complete pass_::_%n listing pages gave nothing: the run does not count as a complete pass_": [
             "%n Übersichtsseite lieferte nichts: Der Durchlauf zählt nicht als vollständig",
             "%n Übersichtsseiten lieferten nichts: Der Durchlauf zählt nicht als vollständig"
@@ -1076,8 +1080,15 @@ OC.L10N.register(
             "geht %n Auswahlen durch: {choices}"
         ],
         "the choice “{choice}” failed: {why}": "die Auswahl „{choice}“ ist fehlgeschlagen: {why}",
+        "the download": "der Download",
+        "{file} is {size} MB, more than the job's largest file": "{file} hat {size} MB, mehr als die größte Datei des Jobs",
+        "{file} gave only {size} bytes": "{file} hat nur {size} Bytes geliefert",
+        "{file} is not of the job's file types ({types})": "{file} ist keiner der Dateitypen des Jobs ({types})",
         "{address} asks to wait {seconds} s": "{address} bittet, {seconds} s zu warten",
+        "{file} answered {status}: the account may not download it": "{file} antwortete {status}: das Konto darf es nicht herunterladen",
+        "{file} answered {status}": "{file} antwortete {status}",
         "{address}: the connection failed, trying again in {seconds} s": "{address}: die Verbindung ist fehlgeschlagen, neuer Versuch in {seconds} s",
+        "{file} is larger than the job's largest file": "{file} ist größer als die größte Datei des Jobs",
         "_The feed “{title}”: %n entry, {files} file links_::_The feed “{title}”: %n entries, {files} file links_": [
             "Der Feed „{title}“: %n Eintrag, {files} Dateilinks",
             "Der Feed „{title}“: %n Einträge, {files} Dateilinks"
@@ -1131,6 +1142,16 @@ OC.L10N.register(
             "%n Release angesehen ({skipped} Entwürfe oder Vorabversionen ausgelassen), {files} Dateien passen",
             "%n Releases angesehen ({skipped} Entwürfe oder Vorabversionen ausgelassen), {files} Dateien passen"
         ],
+        "the rclone configuration must hold one remote, not {count}": "die rclone-Konfiguration muss genau ein Remote enthalten, nicht {count}",
+        "the remote's name {name} is not allowed": "der Name des Remotes {name} ist nicht erlaubt",
+        "remotes of type {kind} are not allowed": "Remotes vom Typ {kind} sind nicht erlaubt",
+        "line {number} of the rclone configuration is indented: settings may not be": "Zeile {number} der rclone-Konfiguration ist eingerückt: Einstellungen dürfen das nicht sein",
+        "the rclone configuration cannot be read: {error}": "die rclone-Konfiguration kann nicht gelesen werden: {error}",
+        "the remote's setting {key} spans several lines": "die Einstellung {key} des Remotes geht über mehrere Zeilen",
+        "the remote's setting {key} is not allowed (a file or a command of the app)": "die Einstellung {key} des Remotes ist nicht erlaubt (eine Datei oder ein Befehl der App)",
+        "the remote's setting {key} is not allowed (credentials from the app's machine)": "die Einstellung {key} des Remotes ist nicht erlaubt (Zugangsdaten vom Rechner der App)",
+        "the remote's {key} {value} may not be reached{why}": "{key} {value} des Remotes darf nicht erreicht werden{why}",
+        "the job has no rclone configuration: set it as the job's account": "der Job hat keine rclone-Konfiguration: hinterlegen Sie sie als Konto des Jobs",
         "rclone found no file in {target} that Files ({filter}) takes": "rclone hat in {target} keine Datei gefunden, die Dateien ({filter}) nimmt",
         "_rclone listed %n file in {target}_::_rclone listed %n files in {target}_": [
             "rclone hat %n Datei in {target} gelistet",
