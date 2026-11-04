@@ -23,7 +23,7 @@ from test_runner import FakeLibrary, FakeNextcloud, library_of
 
 from harvester import deleted as deleted_module
 from harvester import executor as executor_module
-from harvester import runner, versions
+from harvester import places, runner, versions
 from harvester.deleted import Deleted
 from harvester.executor import Executor
 from harvester.sources import Item, Source
@@ -267,7 +267,7 @@ def test_an_explicit_request_brings_the_file_back_whatever_the_option_or_says_wh
 def test_a_fetch_of_the_executor_brings_a_deleted_file_back(tmp_path, monkeypatch):
     library = Drive()
     monkeypatch.setitem(executor_module.SOURCES, "pages", Pages)
-    monkeypatch.setattr(executor_module, "NextcloudLibrary", lambda nc, call: library)
+    monkeypatch.setattr(places, "NextcloudLibrary", lambda nc, call: library)
     store = Store(str(tmp_path / "h.db"))
     nc = FakeNextcloud()
     executor = Executor(store, lambda: nc, runners=1)

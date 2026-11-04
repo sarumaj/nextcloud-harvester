@@ -4,6 +4,16 @@
 
 ### Added
 
+- **Save to** in a job's form: the person's files (as before) or **Harvester's private
+  library**, in the app's own storage per person, which Nextcloud's Files, Photos, search,
+  WebDAV and sync clients never see; **Library** on the page (folders, a grid of pictures, a
+  viewer streaming with seeking, downloads, Delete, a filter by label), an optional password
+  (scrypt) with the library locked again after the person's minutes without use, and the
+  admin's limits per person (10 GB by default) and in all. A file deleted in the library is
+  fetched again as one deleted in Files (*Download deleted files again*).
+- **Tag as** in a job's form: Nextcloud's tags (as before), **Harvester's labels** (in the app's
+  database, shown and filtered in the job's **Files** and the library, never a Nextcloud tag)
+  or none. `GET /api/jobs/<id>/files`: the files a job saved, with their tags or labels.
 - **Browse** beside the address of a gallery, video, feed or release job: the recorder's browser
   alone (nothing recorded), at the field's address, and **Use this address** takes the page it
   shows into the field.

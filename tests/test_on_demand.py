@@ -17,7 +17,7 @@ from fastapi import HTTPException
 from test_runner import FakeLibrary, FakeNextcloud, FakeSource
 
 import main
-from harvester import browser, ondemand
+from harvester import browser, ondemand, places
 from harvester import executor as executor_module
 from harvester.executor import Executor, is_due
 from harvester.sources import Item, Option, SourceError
@@ -85,7 +85,7 @@ def fixture_app(tmp_path, monkeypatch):
     fakes of Nextcloud and its files, and Anna's on-demand job without an address of its own."""
     LISTED.clear()
     monkeypatch.setitem(executor_module.SOURCES, "pages", Pages)
-    monkeypatch.setattr(executor_module, "NextcloudLibrary", lambda nc, call: FakeLibrary())
+    monkeypatch.setattr(places, "NextcloudLibrary", lambda nc, call: FakeLibrary())
     store = Store(str(tmp_path / "h.db"))
     nc = FakeNextcloud()
     executor = Executor(store, lambda: nc, runners=1)

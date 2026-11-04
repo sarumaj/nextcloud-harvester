@@ -39,7 +39,9 @@ JSON names a folder the Nextcloud server can read, `"translations_folder": "/pat
 
 - **Admin settings:** *Administration settings > Additional settings > Harvester* sets the
   numbers of jobs and browsers at once (1 to 8 each), the proxy, and the **Browser network
-  guard** (on by default; see *Safety*), and in a form of its own the
+  guard** (on by default; see *Safety*), the limits of the private library (**Private library
+  per person (GB)**, 10 by default, and **Private libraries in all (GB)**, none by default; 0:
+  no limit; `HARVESTER_LIBRARY_LIMIT`, `HARVESTER_LIBRARY_TOTAL`), and in a form of its own the
   [DNS servers](#dns-servers); the environment's values (`HARVESTER_RUNNERS`,
   `HARVESTER_BROWSERS`, `HARVESTER_PROXY`, `HARVESTER_PROXY_NAME`, `HARVESTER_GUARD`: off with
   `0`, `false` or `off`) are the defaults. The app reads them each minute, so a change needs no
@@ -215,3 +217,17 @@ docker cp nc_app_harvester:/tmp/harvester-backup.sqlite3 .
 ```
 
 To put a copy back, disable the app, replace `harvester.db` with it, and enable the app again.
+
+**The private library** (jobs that save into Harvester's private library rather than into
+people's files) is on the same storage: `library/<user ID, percent-encoded>/<folder>/<file>`
+under `APP_PERSISTENT_STORAGE`, which AppAPI mounts from the Docker volume of the app's
+persistent storage, `nc_app_harvester_data` (on the host under Docker's volumes,
+`/var/lib/docker/volumes/nc_app_harvester_data/_data/library/`, or the rootless daemon's data
+root). Nextcloud's backup does not have these files: back the folder up with the database, in
+the same pass (the database indexes the files, their labels and the people's library
+passwords' hashes). Restored, a file the database does not know is not shown; one the database
+knows that is missing is gone for its job (fetched again with *Download deleted files again*).
+A person's forgotten library password is removed with the database's
+`DELETE FROM library_locks WHERE user = '<user ID>'` (the app disabled, or through its
+`sqlite3` in the container); their library is then unlocked. The files are not encrypted on the
+disk: whoever reads the volume reads them.

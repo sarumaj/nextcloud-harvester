@@ -10,6 +10,7 @@ restart.
 """
 
 import logging
+import math
 import os
 from urllib.parse import urlparse
 
@@ -25,7 +26,9 @@ PROXY_NAME = "proxy_name"
 GUARD = "guard"
 DNS = "dns"
 DNS_FALLBACK = "dns_fallback"
-KEYS = (RUNNERS, BROWSERS, PROXY, PROXY_NAME, GUARD, DNS, DNS_FALLBACK)
+LIBRARY = "library_limit"
+LIBRARY_TOTAL = "library_total"
+KEYS = (RUNNERS, BROWSERS, PROXY, PROXY_NAME, GUARD, DNS, DNS_FALLBACK, LIBRARY, LIBRARY_TOTAL)
 PROXY_SCHEMES = ("http", "https", "socks5", "socks5h")
 _REFUSED: set[str] = set()
 DEFAULT_PROXY = os.environ.get("HARVESTER_PROXY", "").strip()
@@ -39,12 +42,24 @@ DEFAULT_GUARD = os.environ.get("HARVESTER_GUARD", "").strip().lower() not in OFF
 # None (Docker's DNS) unless the deployment names servers; their fallback off unless it says on.
 DEFAULT_DNS = os.environ.get("HARVESTER_DNS", "").strip()
 DEFAULT_DNS_FALLBACK = os.environ.get("HARVESTER_DNS_FALLBACK", "").strip().lower() in ON_WORDS
+# Harvester's private library (library.py): the most a person may keep there, and everyone in
+# all, in GB (0: no limit); HARVESTER_LIBRARY_LIMIT and HARVESTER_LIBRARY_TOTAL are the defaults.
+DEFAULT_LIBRARY = os.environ.get("HARVESTER_LIBRARY_LIMIT", "").strip() or "10"
+DEFAULT_LIBRARY_TOTAL = os.environ.get("HARVESTER_LIBRARY_TOTAL", "").strip() or "0"
 # The choices: each runner is a thread, each browser some 300-600 MB of the server's memory.
 MAX_RUNNERS = 8
 MAX_BROWSERS = 8
 
 
-def form(runners: int, browsers: int, address: str = "", name: str = "the proxy", guard: bool = True) -> SettingsForm:
+def form(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    runners: int,
+    browsers: int,
+    address: str = "",
+    name: str = "the proxy",
+    guard: bool = True,
+    library: str = DEFAULT_LIBRARY,
+    library_total: str = DEFAULT_LIBRARY_TOTAL,
+) -> SettingsForm:
     """The admin's form, with the environment's values as its defaults."""
     return SettingsForm(
         id="harvester_admin",
@@ -110,6 +125,26 @@ def form(runners: int, browsers: int, address: str = "", name: str = "the proxy"
                     "A change applies to browsers started afterwards."
                 ),
             ),
+            SettingsField(
+                id=LIBRARY,
+                title="Private library per person (GB)",
+                type=SettingsFieldType.TEXT,
+                default=library,
+                description=(
+                    "The most each person may keep in Harvester's private library (jobs that save there "
+                    "rather than into their files). A run that would pass it stops and says so. 0: no limit."
+                ),
+            ),
+            SettingsField(
+                id=LIBRARY_TOTAL,
+                title="Private libraries in all (GB)",
+                type=SettingsFieldType.TEXT,
+                default=library_total,
+                description=(
+                    "The most everyone's private libraries may take together on the app's storage (its "
+                    "persistent volume). 0: no limit."
+                ),
+            ),
         ],
     )
 
@@ -166,6 +201,25 @@ def number(value: str | None, default: int, highest: int) -> int:
         return min(max(1, int(str(value))), highest)
     except ValueError:
         return default
+
+
+def gigabytes(value: str | None, default: str) -> int:
+    """A size in GB (a number of at least 0, a fraction allowed) as bytes; the default if unset or
+    not a number."""
+    for text in (value, default):
+        try:
+            size = float(str(text).strip().replace(",", "."))
+        except ValueError:
+            continue
+        if size >= 0 and math.isfinite(size):
+            return int(size * 1000**3)
+    return 0
+
+
+def library_limits(values: dict, limits: dict) -> None:
+    """Puts the admin's limits of the private library (library.LIMITS) into limits, in bytes."""
+    limits["person"] = gigabytes(values.get(LIBRARY), DEFAULT_LIBRARY)
+    limits["total"] = gigabytes(values.get(LIBRARY_TOTAL), DEFAULT_LIBRARY_TOTAL)
 
 
 def switch(value: str | None, default: bool) -> bool:

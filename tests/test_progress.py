@@ -8,7 +8,7 @@ from test_runner import FakeLibrary, FakeNextcloud, FakeSource
 from test_selectors import SITE, http_source
 
 from harvester import executor as executor_module
-from harvester import runner, store as store_module
+from harvester import places, runner, store as store_module
 from harvester.l10n import error_text, said
 from harvester.sources import FULL_PASS, Item, SourceError, walk
 from harvester.store import Job, Store
@@ -147,7 +147,7 @@ def test_a_new_run_clears_the_last_message_and_logs_its_end(tmp_path, monkeypatc
     nc = FakeNextcloud()
     nc.files = None
     executor = executor_module.Executor(store, lambda: nc)
-    monkeypatch.setattr(executor_module, "NextcloudLibrary", lambda nc, call: FakeLibrary())
+    monkeypatch.setattr(places, "NextcloudLibrary", lambda nc, call: FakeLibrary())
     executor.run(store.job(saved.id or 0) or saved)
     assert started == [None], "the old error is gone as soon as the run starts"
     messages = [(line["level"], line["message"]) for line in store.log_lines("u")]

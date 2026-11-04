@@ -22,6 +22,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from .destinations import WHERE
 from .runner import COMMON_OPTIONS
 from .sources import SOURCES
 from .watch import options_of
@@ -71,8 +72,10 @@ class RecipeFile(BaseModel):
 
 def known_options(source: str) -> set[str]:
     """The options a job of the source has (its own, every job's, the watch's), without any of
-    its account's names."""
-    return set(SOURCES[source].options | COMMON_OPTIONS | options_of(source)) - set(SOURCES[source].credentials)
+    its account's names and where its files go."""
+    names = set(SOURCES[source].options | COMMON_OPTIONS | options_of(source))
+    # Where the files go is the person's, as the folder is (destinations.WHERE).
+    return names - set(SOURCES[source].credentials) - set(WHERE)
 
 
 def without_secrets(recipe: str) -> str | dict:

@@ -10,6 +10,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, BinaryIO
 
 from . import unpack, versions
+from .destinations import OPTIONS as DESTINATION_OPTIONS
 from .l10n import Said, error_text, listed, said, said_n
 from .patterns import render_tags, stable_url
 from .sources import download
@@ -95,11 +96,14 @@ COMMON_OPTIONS = {
         kind="flag",
         group="browser",
     ),
+    # Where the files go and how they are tagged (destinations.py): the form's Save to.
+    **DESTINATION_OPTIONS,
 }
 
 
 class Library(abc.ABC):
-    """Where the files go: the user's files in Nextcloud."""
+    """Where the files go: the user's files in Nextcloud (nextcloud.py), Harvester's private
+    library (library.py), a vault (vaultlib.py); by the job's Save to (places.py)."""
 
     @abc.abstractmethod
     def find(self, path: str) -> int | None:

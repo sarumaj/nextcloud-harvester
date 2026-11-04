@@ -1,10 +1,12 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The jobs, what each has downloaded and its runs, in SQLite in the app's persistent storage."""
 
+import contextlib
 import json
 import sqlite3
 import threading
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 
 from .l10n import loaded, stored
@@ -583,6 +585,46 @@ class Store:  # pylint: disable=too-many-public-methods
                     "INSERT OR REPLACE INTO texts (job, key, text, at) VALUES (?, ?, ?, ?)",
                     (job_id, key, text, time.time()),
                 )
+
+    def forget_places(self, job_id: int) -> None:
+        """Forgets where the job's files are and what they hold (placed, contents), not that it
+        fetched them (seen): its files go elsewhere now (another Save to), those saved stay
+        where they are and are not fetched again."""
+        with self._lock, self._db:
+            self._db.execute("DELETE FROM placed WHERE job = ?", (job_id,))
+            self._db.execute("DELETE FROM contents WHERE job = ?", (job_id,))
+
+    def job_files(self, job_id: int, label: str = "", most: int = 1000) -> list[dict]:
+        """The files the job saved (newest first, most at most): their path, ID and tags (or
+        labels), those with the label alone if one is given."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT placed.file, placed.tags, COALESCE(contents.path, '') AS path, COALESCE(contents.at, 0) AS at"
+                " FROM placed LEFT JOIN contents ON contents.job = placed.job AND contents.key = placed.key"
+                " WHERE placed.job = ? AND placed.file IS NOT NULL ORDER BY at DESC",
+                (job_id,),
+            ).fetchall()
+        files = [
+            {"file": row["file"], "path": row["path"], "at": row["at"], "tags": json.loads(row["tags"])} for row in rows
+        ]
+        return [entry for entry in files if not label or label in entry["tags"]][:most]
+
+    @contextlib.contextmanager
+    def writing(self) -> Iterator[sqlite3.Connection]:
+        """The database under the store's lock, in one transaction: for the tables of the app's
+        other parts (library.py), which make their own with tables()."""
+        with self._lock, self._db:
+            yield self._db
+
+    def rows(self, sql: str, params: tuple = ()) -> list[sqlite3.Row]:
+        """The rows of a query of the app's other parts (library.py)."""
+        with self._lock:
+            return self._db.execute(sql, params).fetchall()
+
+    def tables(self, schema: str) -> None:
+        """Makes the tables of the app's other parts (if they are not there)."""
+        with self._lock:
+            self._db.executescript(schema)
 
     def forget(self, job_id: int, key: str) -> None:
         """Forgets one recorded key."""

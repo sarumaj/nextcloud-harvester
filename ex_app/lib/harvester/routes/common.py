@@ -10,7 +10,7 @@ from nc_py_api import AsyncNextcloudApp
 from nc_py_api.ex_app import anc_app
 from pydantic import BaseModel, Field, field_validator
 
-from .. import browser, ondemand, schedule, watch
+from .. import browser, destinations, ondemand, schedule, watch
 from ..runner import COMMON_OPTIONS
 from ..sources import SOURCES, Option, SourceError
 from ..store import Job, Store
@@ -127,7 +127,8 @@ def number_problem(option: Option, text: str) -> str:
 
 def checked(body: JobIn) -> JobIn:
     """The job, if each option has a value of its kind (else the refusal names the option as the
-    form does) and its source accepts them (a recipe that can run, for instance). An on-demand
+    form does), its Save to and Tag as go together, and its source accepts them (a recipe that can
+    run, for instance). An on-demand
     job's source must have an address a fetch replaces; its own may be empty."""
     if not body.schedule and not ondemand.offered(body.source):
         raise HTTPException(422, f"{SOURCES[body.source].title} has no address to send: it runs on a schedule.")
@@ -139,6 +140,10 @@ def checked(body: JobIn) -> JobIn:
         if problem:
             title = f"Through {browser.PROXY_NAME}" if name == "home" else option.title
             raise HTTPException(422, f"{title} {problem}")
+    # Where the files go and how they are tagged (destinations.py).
+    where = destinations.problem(body.options, body.target)
+    if where:
+        raise HTTPException(422, where)
     given = body.options if body.schedule else ondemand.checked_options(body.source, body.options)
     try:
         SOURCES[body.source](given, {}, None).close()

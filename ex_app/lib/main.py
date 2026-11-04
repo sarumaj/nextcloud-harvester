@@ -20,9 +20,10 @@ from nc_py_api import AsyncNextcloudApp
 from nc_py_api.ex_app import AppAPIAuthMiddleware, persistent_storage, run_app, set_handlers
 from pydantic import BaseModel, Field
 
-from harvester import browser, dns, l10n, needs, ondemand, schedule, settings, watch
+from harvester import browser, destinations, dns, l10n, places, needs, ondemand, schedule, settings, watch
 from harvester.rclone_wizard import AUTHORIZE_ORIGIN, Authorization, WizardError
 from harvester.browser.recorder import Recorder
+from harvester.library import Locks, Shelf
 from harvester.executor import (
     RUNNERS,
     Executor,
@@ -35,7 +36,7 @@ from harvester.executor import (
 from harvester.presets import PRESETS, make_job
 from harvester.recipe import leaked_passwords
 from harvester.runner import COMMON_OPTIONS
-from harvester.routes import rclone, recipes, trying
+from harvester.routes import library, rclone, recipes, trying
 from harvester.routes.common import NC, STATE, JobIn, checked, own_job, store, switched_on
 from harvester.routes.rclone import WIZARDS
 from harvester.sources.download import DOWNLOAD_OPTIONS
@@ -55,6 +56,9 @@ async def lifespan(app: FastAPI):
     if not browser.undumpable():
         LOGGER.warning("the app's process stays dumpable: its helpers could read its environment")
     STATE["store"] = Store(os.path.join(persistent_storage(), "harvester.db"))
+    STATE["shelf"] = Shelf(STATE["store"], os.path.join(persistent_storage(), "library"))
+    STATE["locks"] = Locks(STATE["store"])
+    places.SHELF[:] = [STATE["shelf"]]
     STATE["executor"] = Executor(STATE["store"])
     STATE["executor"].start()
     set_handlers(app, enabled_handler)
@@ -64,7 +68,7 @@ async def lifespan(app: FastAPI):
 
 APP = FastAPI(lifespan=lifespan)
 APP.add_middleware(AppAPIAuthMiddleware)
-for _group in (trying, recipes, rclone):
+for _group in (trying, recipes, rclone, library):
     APP.include_router(_group.ROUTER)
 
 
@@ -313,7 +317,7 @@ def forget_changed(job: Job, saved: Job) -> None:
     address, folder or patterns lists other files, so "known files end the run" waits for its
     first complete pass again (and mail's handled messages are read again). Its file names, files
     per run, schedule or tags change nothing there. Other types or sizes try again the files they
-    refused."""
+    refused. Another Save to (or vault) forgets where its files are (not that it fetched them)."""
 
     def changed(names) -> bool:
         return any(saved.options.get(name) != job.options.get(name) for name in names)
@@ -324,6 +328,9 @@ def forget_changed(job: Job, saved: Job) -> None:
         store().forget_summaries(job.id or 0)
     if saved.source != job.source or changed(REFUSING):
         store().forget_refused(job.id or 0)
+    # Its files go elsewhere now: those saved stay where they are, and are not fetched again.
+    if destinations.place_of(saved.options) != destinations.place_of(job.options):
+        store().forget_places(job.id or 0)
 
 
 def weekly_test_from_now(job: Job | None, saved: Job) -> None:

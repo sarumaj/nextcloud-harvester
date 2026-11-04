@@ -109,6 +109,46 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   stay the other reasons a run fails (a site's or a program's errors), the log's lines from
   before this version, a site's own texts and the recipes.
 
+## Where the files go
+
+A job's form has **Save to** beside its folder (`save_to`, an option of every job;
+`destinations.py`), and **Tag as**. A job saved before keeps saving into your files with
+Nextcloud's tags, as it did.
+
+- **Your files** (`files`, the default): the folder is one of your files, as before.
+- **Harvester's private library** (`library`, `library.py`): the files stay in Harvester's own
+  storage, per person, not in Nextcloud at all: Files, Photos, Memories, the search, WebDAV and
+  the sync clients never see them, nor does anyone else. The folder is a folder of the library
+  (`/Magazines`). **Library** on Harvester's page shows them by folder: pictures as a grid,
+  other files as a list, a viewer for pictures, videos, sounds, PDFs and plain text (played in
+  the page as they stream, with seeking), a download, Delete (a folder with everything in it),
+  and a filter by label. A file deleted in the library is gone for its job as one deleted in
+  Files: with *Download deleted files again* the next run that finds it fetches it again. A
+  file saved over (*Check known files for changes*) replaces the one before: the library keeps
+  no versions. The admin sets how much a person may keep there (10 GB by default) and everyone
+  in all: a run that would pass a limit stops, and its log says so (*The library is full: …*).
+  **Lock with a password** (optional, the Library's settings): the library asks for it in each
+  browser, and locks again after the minutes you choose without use (15 by default; also when
+  the app restarts); until then its files are not shown or served. The password is kept as a
+  hash (scrypt); five wrong ones in a row make the next wait a minute. The files are not
+  encrypted on the server: the lock keeps out whoever uses your open Nextcloud, not the server's
+  admin. A forgotten password cannot be reset on the page: the admin can remove it
+  ([administrator's guide](admin.md#backup)).
+
+**Tag as** (`tag_as`): **Nextcloud tags** (the default in your files; Nextcloud's tags are
+global: everyone on the server sees the tags' names in their lists of tags, not your files),
+**Harvester's labels** (kept in Harvester's database with each file, never Nextcloud's tags:
+the job's **Files** and the library show them and filter by them) or **None**. A file in the
+library carries no Nextcloud tag: labels or none there. A job's tags (and their templates,
+`{year}`) are the labels' names as they are the tags'. Changing *Tag as* leaves the tags and
+labels its files have; a job's new tags reach its files as before.
+
+A job's **Files** (beside it in the list, `GET /api/jobs/<id>/files`) lists the newest 1000
+files it saved, with their tags or labels, and filters them by one. Another *Save to* applies
+to the files of the next runs: those saved stay where they are, and the job does not fetch
+them again; *Download deleted files again* and the checks of changes then concern the new
+place's files only.
+
 ## Sources
 
 - **Sources** (`ex_app/lib/harvester/sources/`), one card each on the *New job* page:

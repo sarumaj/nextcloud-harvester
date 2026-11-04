@@ -20,13 +20,13 @@ import httpx
 from croniter import croniter
 from nc_py_api import AsyncNextcloudApp
 
-from . import browser, dns, needs, ondemand, runner, settings, versions
+from . import browser, destinations, dns, needs, ondemand, places, runner, settings, versions
+from .library import LIMITS as LIBRARY_LIMITS
 from .deleted import Deleted
 from .l10n import Said, error_text, said, said_n
 from .schedule import zone
 from .tryout import Tries
 from .watch import Watch, test_due
-from .nextcloud import NextcloudLibrary
 from .sources import MARK, SOURCES, AuthError, ChallengeError, Source, SourceError, Stopped
 from .sources.base import watch_stop
 from .sources import download
@@ -342,6 +342,7 @@ class Executor(Tries):
         browser.SLOTS.limit = browsers
         browser.PROXY, browser.PROXY_NAME = proxy, name
         browser.GUARD = guard
+        settings.library_limits(values, LIBRARY_LIMITS)
         servers = values.get(settings.DNS)
         fallback = settings.switch(values.get(settings.DNS_FALLBACK), settings.DEFAULT_DNS_FALLBACK)
         before = dns.PROXY.status
@@ -551,8 +552,8 @@ class Executor(Tries):
             control = self.controls.setdefault(job_id, Control())
         # The run's thread: while it waits for a browser, the page says so (waits).
         control.thread = threading.get_ident()
-        # A fetch is a run, of its address.
-        job = ondemand.for_fetch(job, fetch["url"]) if fetch else job
+        # A fetch is a run, of its address; what its Save to switches off is off.
+        job = destinations.effective(ondemand.for_fetch(job, fetch["url"]) if fetch else job)
         wanted = wanted or fetch is not None
         self._begin(job_id, control, wanted, previous is not None, fetch)
         nc = self.connect()
@@ -593,7 +594,7 @@ class Executor(Tries):
                 kept = self.call(load_session(nc, job))
                 if kept:
                     source.restore(kept)
-                library = NextcloudLibrary(nc, self.call)
+                library = places.library_for(job, nc, self.call)
                 try:
                     if previous is not None:
                         message = self._retag_turn(job, source, library, control, previous, wanted, nc)
