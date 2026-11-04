@@ -1099,6 +1099,7 @@ OC.L10N.register(
         "The Immich server's address answers with a redirect: enter the address it names": "Adres serwera Immich odpowiada przekierowaniem: wpisz adres, który ono wskazuje",
         "Immich keeps photos and videos only, not {kind} files": "Immich przechowuje tylko zdjęcia i filmy, nie pliki {kind}",
         "Immich could not be reached: {error}": "Nie udało się połączyć z Immich: {error}",
+        "It is in Immich's trash: restore it there (or give the API key asset.delete to let Harvester)": "Jest w koszu Immich: przywróć go tam (albo nadaj kluczowi API uprawnienie asset.delete, aby zrobił to Harvester)",
         "Immich refused: {error}": "Immich odmówił: {error}",
         "{path} is the inbox's marker: a file of that name is not saved": "{path} to znacznik skrzynki: plik o tej nazwie nie jest zapisywany",
         "{folder} is shared with you: an inbox is a folder of your own": "{folder} jest ci udostępniony: skrzynka to twój własny folder",

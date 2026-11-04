@@ -54,6 +54,7 @@ class FakeImmich:  # pylint: disable=too-many-instance-attributes
         self.tagged: dict[str, set[str]] = {}
         self.calls: list[str] = []
         self.status = 0
+        self.restoring = True
 
     def seed(self, content: bytes, trashed: bool = False) -> str:
         asset = str(uuid.uuid4())
@@ -104,13 +105,19 @@ class FakeImmich:  # pylint: disable=too-many-instance-attributes
         given = request.headers["x-immich-checksum"]
         same = next((key for key, asset in self.assets.items() if asset["checksum"] == given), None)
         if same:
-            self.assets[same]["trashed"] = False
             return httpx.Response(200, json={"id": same, "status": "duplicate"})
         name = re.search(rb'name="filename"\r\n\r\n([^\r]*)', content).group(1).decode()
         created = re.search(rb'name="fileCreatedAt"\r\n\r\n([^\r]*)', content).group(1).decode()
         asset = str(uuid.uuid4())
         self.assets[asset] = {"checksum": given, "name": name, "trashed": False, "created": created, "body": content}
         return httpx.Response(201, json={"id": asset, "status": "created"})
+
+    def on_post_trash_restore_assets(self, _request, body, _ident):
+        if self.restoring is False:
+            return httpx.Response(403, json={"message": "Missing required permission: asset.delete"})
+        for asset in body["ids"]:
+            self.assets[asset]["trashed"] = False
+        return httpx.Response(200, json={"count": len(body["ids"])})
 
     def on_get_assets_id(self, _request, _body, ident):
         if ident not in self.assets:
@@ -237,8 +244,12 @@ def test_a_photo_deleted_in_immich_is_uploaded_again(app):
     app.immich.assets[by_name(app)["b.jpg"]]["trashed"] = True
     job = run(app, app.store.job(job.id or 0))
     assert job.last_status == "ok", job.last_message
-    assert app.immich.calls.count("POST /assets") == 4, "a uploaded anew, b's upload restores it"
+    assert app.immich.calls.count("POST /assets") == 3, "a uploaded anew, b restored from the trash"
     assert not any(asset["trashed"] for asset in app.immich.assets.values())
+    app.immich.restoring = False
+    app.immich.assets[by_name(app)["b.jpg"]]["trashed"] = True
+    job = run(app, app.store.job(job.id or 0))
+    assert "1 skipped" in (job.last_message or ""), "without asset.delete: skipped for good, not fetched each run"
 
 
 def test_a_refused_key_or_none_asks_for_the_account_again(app):

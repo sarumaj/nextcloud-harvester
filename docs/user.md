@@ -160,30 +160,30 @@ files with Nextcloud's tags, as it did.
   renamed in the vault is not (its encrypted file keeps its Nextcloud ID). A vault whose keys are
   not kept, or no longer open it (another vault in its place), stops the run as a refused
   account does (*Sign-in refused*): enter the password again. Its files carry no Nextcloud tag.
-- **Immich** (`immich`, `immich.py`): the job's photos and videos go into your Immich account,
-  as the extensions your Immich server keeps (JPEG, PNG, HEIC, RAW, MP4, MOV, …); any other file
-  is skipped for good, its line in the log saying why (*Immich keeps photos and videos only*).
-  The account is yours, not the job's: **Your Immich account** in the *Save to* section (shown
-  for Immich) takes your server's address (empty: the one your admin set, if any) and an API key
-  you make in Immich (*Account settings > API keys*) with the permissions `user.read`,
-  `asset.upload`, `asset.read`, `album.read`, `album.create`, `albumAsset.create`, `tag.read`,
-  `tag.create` and `tag.asset`. **Save and test** asks Immich who you are and shows the
-  account's email; the key is kept as a sensitive setting of yours in Nextcloud (encrypted), never
-  shown again (**Forget** deletes it). Every job of yours that saves to Immich uses it: a key
-  Immich refuses, or none, stops the run as a refused account does (*Sign-in refused*); set it
-  again. The address must be `https://` (plain `http://` only where your admin allows it, or for
-  their own server), and a server you type must be on a public address. **Album** (optional) is
-  the album the files go into, made when there is none of its name; the file's values may make
-  it (`Magazines {year}`), and one naming a value a file lacks puts it in no album. Before each
-  upload Harvester asks Immich whether it has the content (its SHA-1): a photo there already is
-  not uploaded again, counts as *already there*, and still goes into the album and gets the tags.
-  The file's date (`{year}`, `{month}`, `{day}` or `{date}` of its item, else now) is its date in
-  Immich unless the photo carries its own (EXIF). Immich has no folders: the job's folder only
-  tells its files apart. A photo deleted in Immich (or in its trash) is uploaded again with
-  *Download deleted files again*. Immich replaces nothing, so *Check known files for changes* is
-  off; with *Unpack ZIP files* an archive's photos and videos are uploaded and its other files
-  left out, the archive itself never (*Keep the ZIP files* is off). A full quota or a file too
-  large for the server fails that file with why.
+- **Immich** (`immich`, `immich.py`): the job's photos and videos go into your Immich account, as
+  the extensions your Immich server keeps (JPEG, PNG, HEIC, RAW, MP4, MOV, …); any other file is
+  skipped for good, its line in the log saying why (*Immich keeps photos and videos only*). The
+  account is yours, not the job's: **Your Immich account** in the *Save to* section (shown for
+  Immich) takes your server's address (empty: the one your admin set, if any) and an API key you
+  make in Immich (*Account settings > API keys*) with the permissions `user.read`, `asset.upload`,
+  `asset.read`, `album.read`, `album.create`, `albumAsset.create`, `tag.read`, `tag.create` and
+  `tag.asset`. **Save and test** asks Immich who you are and shows the account's email; the key is
+  kept as a sensitive setting of yours in Nextcloud (encrypted), never shown again (**Forget**
+  deletes it). Every job of yours that saves to Immich uses it: a key Immich refuses, or none, stops
+  the run as a refused account does (*Sign-in refused*); set it again. The address must be
+  `https://` (plain `http://` only where your admin allows it, or for their own server), and a
+  server you type must be on a public address. **Album** (optional) is the album the files go into,
+  made when there is none of its name; the file's values may make it (`Magazines {year}`), and one
+  naming a value a file lacks puts it in no album. Before each upload Harvester asks Immich whether
+  it has the content (its SHA-1): a photo there already is not uploaded again, counts as *already
+  there*, and still goes into the album and gets the tags. The file's date (`{year}`, `{month}`,
+  `{day}` or `{date}` of its item, else now) is its date in Immich unless the photo carries its own
+  (EXIF). Immich has no folders: the job's folder only tells its files apart. A photo deleted in
+  Immich is uploaded again with *Download deleted files again*; one in Immich's trash is restored
+  from it if the key also has `asset.delete`, else skipped for good (restore it in Immich). Immich
+  replaces nothing, so *Check known files for changes* is off; with *Unpack ZIP files* an archive's
+  photos and videos are uploaded and its other files left out, the archive itself never (*Keep the
+  ZIP files* is off). A full quota or a file too large for the server fails that file with why.
 
 **Tag as** (`tag_as`): **Nextcloud tags** (the default in your files; Nextcloud's tags are global:
 everyone on the server sees the tags' names in their lists of tags, not your files), **Immich's

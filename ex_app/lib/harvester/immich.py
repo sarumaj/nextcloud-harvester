@@ -17,7 +17,8 @@ again), POST /api/assets (multipart, the file streamed from the run's temporary 
 POST /api/albums and PUT /api/albums/{id}/assets, PUT /api/tags (made by name, "a/b" as b inside
 a), PUT and DELETE /api/tags/{id}/assets, GET /api/assets/{id} (whether it is still there). The
 key needs the permissions user.read, asset.upload, asset.read, album.read, album.create,
-albumAsset.create, tag.read, tag.create and tag.asset.
+albumAsset.create, tag.read, tag.create and tag.asset; asset.delete only to restore a photo from
+Immich's trash (POST /api/trash/restore/assets) that a job fetches again.
 
 A job knows its files by numbers (runner.Library): each asset it placed is a row of immich_assets
 (the job, the path its file had, the asset's id); one gone from Immich (deleted, or in its trash)
@@ -273,7 +274,9 @@ class ImmichLibrary(Library):  # pylint: disable=too-many-instance-attributes
         result = (check.get("results") or [{}])[0]
         if result.get("reason") == "unsupported-format":
             raise Refused(said("Immich keeps photos and videos only, not {kind} files", kind=extension or name))
-        asset = result.get("assetId") if result.get("reason") == "duplicate" and not result.get("isTrashed") else None
+        asset = result.get("assetId") if result.get("reason") == "duplicate" else None
+        if asset and result.get("isTrashed"):
+            self._restore(str(asset))
         if not asset:
             asset, there = self._upload(name, content, value)
         else:
@@ -283,6 +286,19 @@ class ImmichLibrary(Library):  # pylint: disable=too-many-instance-attributes
         if there:
             self._found.add(file_id)
         return file_id
+
+    def _restore(self, asset: str) -> None:
+        """A content in Immich's trash taken out of it (an upload would not: Immich answers it as a
+        duplicate, in the trash still); a key without asset.delete cannot, and the file is skipped
+        for good, rather than fetched each run."""
+        try:
+            self.client.request("POST", "/trash/restore/assets", json={"ids": [asset]})
+        except ImmichError as error:
+            if isinstance(error, ImmichRefused) or "permission" not in str(error):
+                raise
+            raise Refused(
+                said("It is in Immich's trash: restore it there (or give the API key asset.delete to let Harvester)")
+            ) from error
 
     def _upload(self, name: str, content: BinaryIO, value: str) -> tuple[str, bool]:
         """The file uploaded (streamed from its start: httpx reads it in pieces), and whether
