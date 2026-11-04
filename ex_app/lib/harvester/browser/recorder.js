@@ -794,6 +794,21 @@
 		report({ action: 'pick', target: state.mode, selector, alternatives, found: count(selector), matches, numbered })
 	}, true)
 
+	// A double click: the two clicks it began with are recorded, and become one click of count 2
+	// (recipe.steps_from_events). A right click (the context menu): a click with the right button.
+	document.addEventListener('dblclick', (event) => {
+		if (state.mode !== 'record' || document.documentElement.hasAttribute('data-harvester-consent')) return
+		const target = realTarget(event)
+		if (target.matches(TYPING) || target.isContentEditable) return
+		report({ action: 'dblclick', ...locatedAt(link(target)) })
+	}, true)
+	document.addEventListener('contextmenu', (event) => {
+		if (state.mode !== 'record') return
+		const target = realTarget(event)
+		const el = link(target)
+		report({ action: 'click', button: 'right', ...locatedAt(el), text: (el.innerText || el.value || '').trim().slice(0, 80) })
+	}, true)
+
 	// A field's new value: a list's choice (a step "select", by its value and the text it shows),
 	// else the field filled. Checkboxes and radio buttons are their clicks.
 	function changed(event) {

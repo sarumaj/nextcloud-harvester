@@ -575,6 +575,50 @@ is a job like any other; what you upload or move there leaves no name in plain.
   `step 3 (click “Search”): pausing 5 s before it` and `step 3 (click “Search”) failed, trying
   again in 2 s (attempt 2 of 4): <why>`. Recipe files keep both; the recorder's Steps list edits
   them (**pause, retry**).
+- **Kinds of step other recorders have** (`harvester/stepoptions.py`, replayed by
+  `harvester/sources/stepplay.py`), for what a sign-in or the way to the files may need:
+  - **Double and right clicks:** a click with `"count": 2` (a double click) or `"button":
+    "right"` (a context menu; `"middle"` too). recorder.js records them as you do them; the Steps
+    list switches a click between **click**, **double-click** and **right-click**.
+  - **Dialogs:** a click or a key that opens the page's own dialog (*Delete?*, a prompt, *Leave
+    the page?*) answers it with `"dialog": "accept"` (and `"prompt": "text"` for a prompt) or
+    `"dismiss"`. Without, a dialog is cancelled, as before. The recorder answers a dialog OK,
+    says so on the panel and records it on the step before; its Steps list switches it to
+    **Cancel** (or the prompt's text).
+  - **Typing key by key:** a fill with `"typed": true` types its text key by key (40 ms apart)
+    instead of setting the field's value, for a field that ignores a value set at once or a code
+    split into boxes (**type key by key** in the Steps list).
+  - **A key on the page:** a press without an element (`{"action": "press", "key": "Escape"}`)
+    goes to what has the focus: Escape on the site's own dialog.
+  - **Waiting for an element:** `{"action": "wait", "selector": "#result", "text": "results",
+    "timeout": 30}` waits until the element shows (with that text in it, if given), or with
+    `"state": "hidden"` until it is gone (*Please wait*): 30 seconds by default, 300 at most. It
+    fails as a step does when the time is up (an optional one goes on). In the Steps list, **then
+    wait for an element…** after a step picks the element on the page; the list edits its state,
+    text and time.
+  - Left out on purpose: a recipe's own scripts (a shared recipe could take the session with it),
+    drag and drop and uploads (a job has no files to give), variables read from the page into
+    later steps, conditions and loops beyond what optional steps, *each* and **Load more**
+    already do.
+- **Chrome's Recorder** (`harvester/chromerecorder.py`): **Import from Chrome's Recorder** in the
+  form (under the recipe) takes a recording of Chrome DevTools' Recorder panel (*Export as JSON*)
+  and makes its steps the recipe's (the rest of the recipe stays; Save keeps them):
+  navigations, clicks and double clicks (their button), hovers, changes (a field's value, a
+  list's choice), keys (with the modifiers held: `Control+a`), waits for an element (shown, or
+  gone for a count of 0), the window's size, steps in a frame (by its place) and in a popup
+  (*popup* and *opener* steps), and the address a step asserts it led to. Chrome's selectors
+  become Playwright's: CSS as it is (`pierce/` too: Playwright's CSS goes into open shadow
+  roots), `xpath/` as `xpath=`, `text/` as `text=`, `aria/Name[role="button"]` as the role and
+  name, the others the step's alternatives. **A password typed in the recording is never kept:**
+  its step fills in the job's password, the field before it the job's user name. What a recipe
+  has no step for is left out, and the form says so: a scroll to a place, a script's expression,
+  a close, network conditions. **Export for Chrome's Recorder** downloads the recipe's steps as
+  such a recording (`<name>.recording.json`), for Chrome's Recorder to replay or to turn into a
+  Puppeteer, Playwright or Cypress script: Harvester's own steps (a credential, a code from
+  e-mail or the phone, choices, a popup, a person's step, scrolling to load more) are custom
+  steps that Chrome's replay passes over, a credential only by which one it is, never its value.
+  Each step carries Harvester's own beside it, so a recording exported and imported again gives
+  the same steps.
 - **Selectors with alternatives** (`harvester/selectors.py`): recorder.js finds a step's element
   by every selector that matched it alone when it was recorded, ranked as Playwright's codegen
   ranks them: a test id (`data-testid`, `data-test`, `data-qa`, `data-cy`), an id that does not

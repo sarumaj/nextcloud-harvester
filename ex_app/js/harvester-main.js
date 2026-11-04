@@ -275,8 +275,15 @@
 		const selector = step.selector
 		if (step.action === 'goto') return t('Open {address}', { address: step.url })
 		if (step.action === 'scroll') return step.rounds ? t('Scroll to load more (at most {rounds} times)', { rounds: step.rounds }) : t('Scroll to load more')
+		if (step.action === 'click' && step.count === 2) return step.text ? t('Double-click “{text}”', { text: step.text }) : t('Double-click {selector}', { selector })
+		if (step.action === 'click' && step.button === 'right') return step.text ? t('Right-click “{text}”', { text: step.text }) : t('Right-click {selector}', { selector })
 		if (step.action === 'click') return step.text ? t('Click “{text}”', { text: step.text }) : t('Click {selector}', { selector })
-		if (step.action === 'press') return t('Press {key} in {selector}', { key: step.key, selector })
+		if (step.action === 'press') return selector ? t('Press {key} in {selector}', { key: step.key, selector }) : t('Press {key} on the page', { key: step.key })
+		if (step.action === 'wait') {
+			const values = { selector, text: step.text || '', seconds: step.timeout || 30 }
+			if (step.state === 'hidden') return t('Wait up to {seconds} s for {selector} to go', values)
+			return step.text ? t('Wait up to {seconds} s for {selector} with “{text}”', values) : t('Wait up to {seconds} s for {selector} to show', values)
+		}
 		if (step.action === 'select') return t('Choose “{choice}” in {selector}', { choice: step.label || [].concat(step.value).join(', '), selector })
 		if (step.action === 'hover') return t('Hover over {selector}', { selector })
 		if (step.action === 'each') {
@@ -1509,7 +1516,8 @@
 			screen.addEventListener(`mouse${kind}`, (event) => {
 				event.preventDefault()
 				screen.focusKeys()
-				send({ type: 'mouse', event: kind, button: event.button === 2 ? 'right' : 'left', ...point(event) })
+				// event.detail: the click's count (2 for a double click's second), for the page's dblclick.
+				send({ type: 'mouse', event: kind, button: event.button === 2 ? 'right' : 'left', count: Math.min(3, Math.max(1, event.detail || 1)), ...point(event) })
 			})
 		}
 		screen.addEventListener('contextmenu', (event) => event.preventDefault())
@@ -2124,12 +2132,15 @@
 		}
 		// The element an approval or a handover waits for, picked on the page: then back to the
 		// mode before (beforeUntil).
-		const pickUntil = (index) => {
+		// With purpose wait: the element a new step "wait" after the step waits for.
+		const pickUntil = (index, purpose = '') => {
 			beforeUntil = beforeUntil || current
 			for (const radio of Object.values(radios)) radio.checked = false
 			current = 'until'
-			send({ type: 'mode', mode: 'until', step: index })
-			modeHelp.textContent = t('Click the element the page shows once you are through (your accounts, your name): the job waits for it.')
+			send({ type: 'mode', mode: 'until', step: index, ...(purpose ? { purpose } : {}) })
+			modeHelp.textContent = purpose === 'wait'
+				? t('Click the element the job waits for after step {number} (a result, a list): it goes on once it shows.', { number: index + 1 })
+				: t('Click the element the page shows once you are through (your accounts, your name): the job waits for it.')
 			addable(false)
 			screen.focusKeys()
 		}
@@ -2284,6 +2295,7 @@
 				details.push(el('button', { type: 'button', class: 'harvester-tertiary', text: t('Repeat for each option'), title: t('The steps after this one and the listing are gone through once for each option of the list, its text {choice} in file names and tags', { choice: '{choice}' }), onclick: () => send({ type: 'each', step: index }) }))
 			}
 			if (step.action === 'each') details.push(eachEditor(step, index))
+			if (['click', 'press', 'fill', 'wait'].includes(step.action)) details.push(optionsEditor(step, index, edit))
 			if (step.action === 'approve' || step.action === 'handover') details.push(personEditor(step, index))
 			if (step.wait && (step.wait.url || step.wait.selector)) {
 				const address = step.wait.url
@@ -2294,6 +2306,7 @@
 					el('button', { type: 'button', class: 'harvester-tertiary', text: t('wait for the network instead'), onclick: () => edit({ wait: null }) }))
 			}
 			details.push(timing(step, index, edit))
+			details.push(el('button', { type: 'button', class: 'harvester-tertiary', text: t('then wait for an element…'), title: t('A step after this one: the job waits until an element you pick shows (a result, a list)'), onclick: () => pickUntil(index, 'wait') }))
 			const classes = [step.frame && step.frame.length ? 'harvester-framed' : '', mark ? `harvester-step-${mark.state}` : '']
 			// The step the test plays now, or the one it failed at (until the next test or edit):
 			// clicking that one opens its editor.
@@ -2321,6 +2334,55 @@
 				})
 			}
 			return item
+		}
+
+		// A click's kind (click, double-click, right-click); a fill typed key by key; the answer to a
+		// dialog a click or a press opens (OK, with a prompt's text, or Cancel: by default); a wait's
+		// state, text and time.
+		function optionsEditor(step, index, edit) {
+			const number = { number: index + 1 }
+			const parts = []
+			if (step.action === 'click') {
+				const kind = el('select', { 'aria-label': t('How step {number} clicks', number) },
+					el('option', { value: 'click', text: t('click') }), el('option', { value: 'double', text: t('double-click') }), el('option', { value: 'right', text: t('right-click') }))
+				kind.value = step.count === 2 ? 'double' : step.button === 'right' ? 'right' : 'click'
+				kind.addEventListener('change', () => edit({ click: kind.value }))
+				parts.push(kind)
+			}
+			if (step.action === 'fill') {
+				const box = el('input', { type: 'checkbox' })
+				box.checked = Boolean(step.typed)
+				box.addEventListener('change', () => edit({ typed: box.checked }))
+				parts.push(el('label', { title: t('For a field that ignores a value set at once, or a code split into boxes') }, box, ` ${t('type key by key')}`))
+			}
+			if (step.action === 'click' || step.action === 'press') {
+				const answer = el('select', { 'aria-label': t('How step {number} answers a dialog it opens', number) },
+					el('option', { value: '', text: t('a dialog it opens: Cancel') }), el('option', { value: 'accept', text: t('a dialog it opens: OK') }))
+				answer.value = step.dialog === 'accept' ? 'accept' : ''
+				answer.addEventListener('change', () => edit({ dialog: answer.value || null }))
+				parts.push(answer)
+				if (step.dialog === 'accept') {
+					const prompt = el('input', { class: 'harvester-step-value', value: step.prompt || '', placeholder: t('none'), 'aria-label': t('What step {number} types into a prompt', number) })
+					prompt.addEventListener('change', () => edit({ prompt: prompt.value }))
+					parts.push(el('label', {}, `${t('typing')} `, prompt))
+				}
+			}
+			if (step.action === 'wait') {
+				const state = el('select', { 'aria-label': t('What step {number} waits for', number) },
+					el('option', { value: 'visible', text: t('until it shows') }), el('option', { value: 'hidden', text: t('until it is gone') }))
+				state.value = step.state === 'hidden' ? 'hidden' : 'visible'
+				state.addEventListener('change', () => edit({ state: state.value }))
+				const text = el('input', { class: 'harvester-step-value', value: step.text || '', placeholder: t('any'), 'aria-label': t('The text the element of step {number} holds', number) })
+				text.addEventListener('change', () => edit({ text: text.value }))
+				const seconds = el('input', { type: 'number', min: '1', max: '300', step: '1', class: 'harvester-step-number', value: String(step.timeout || 30), 'aria-label': t('How long step {number} waits (seconds)', number) })
+				seconds.addEventListener('change', () => {
+					const value = Math.round(Number(seconds.value))
+					if (value >= 1 && value <= 300) edit({ timeout: value })
+					else seconds.value = String(step.timeout || 30)
+				})
+				parts.push(state, el('label', {}, ` ${t('with the text')} `, text), el('label', {}, ` ${t('at most')} `, seconds, ' s'))
+			}
+			return el('span', { class: 'harvester-step-options' }, ...parts.flatMap((part) => [part, ' ']))
 		}
 
 		// A step that goes through choices: its fixed values (empty: the options the page offers)
@@ -4118,14 +4180,48 @@
 				}
 				textarea.addEventListener('input', checkLeaks)
 				checkLeaks()
+				// The steps from and to Chrome's Recorder (chromerecorder.py): what was left out or
+				// changed, and what the recipe's check finds, beside the buttons.
+				const chromeNotes = el('div', { class: 'harvester-chrome-notes', 'aria-live': 'polite' })
+				const notes = (lines, kind = 'harvester-muted') => lines.map((line) => el('p', { class: kind, text: line }))
+				const chromeFile = el('input', { type: 'file', accept: '.json,application/json', hidden: '', 'aria-label': t('A recording of Chrome’s Recorder') })
+				chromeFile.addEventListener('change', async () => {
+					const chosen = chromeFile.files[0]
+					chromeFile.value = ''
+					if (!chosen) return
+					try {
+						const answer = await api('POST', '/recipes/chrome/import', { text: await chosen.text(), recipe: textarea.value })
+						textarea.value = JSON.stringify(answer.recipe, null, 2)
+						textarea.dispatchEvent(new Event('input'))
+						chromeNotes.replaceChildren(
+							el('p', { text: n('%n step imported from Chrome’s Recorder: they replace the recipe’s steps (Save keeps them).', '%n steps imported from Chrome’s Recorder: they replace the recipe’s steps (Save keeps them).', answer.count) }),
+							...notes(answer.warnings), ...notes(answer.problems, 'harvester-error'))
+					} catch (e) {
+						chromeNotes.replaceChildren(el('p', { class: 'harvester-error', role: 'alert', text: e.message }))
+					}
+				})
+				const exportChrome = async () => {
+					try {
+						const answer = await api('POST', '/recipes/chrome/export', { recipe: textarea.value || '{}', title: (formBody().name || '').trim() })
+						download(`${(answer.recording.title || 'recipe').replace(/[\\/:*?"<>|]+/g, '-').slice(0, 80)}.recording.json`, JSON.stringify(answer.recording, null, 2))
+						chromeNotes.replaceChildren(el('p', { text: t('Exported for Chrome’s Recorder (DevTools, Recorder, Import recording).') }), ...notes(answer.warnings))
+					} catch (e) {
+						chromeNotes.replaceChildren(el('p', { class: 'harvester-error', role: 'alert', text: e.message }))
+					}
+				}
 				holder.append(field(said(option.title), textarea, said(option.description)), leaks,
-					el('button', {
-						type: 'button',
-						text: t('Record in the browser'),
-						onclick: () => openRecorder(root, page, textarea, applySuggestions, () => Object.fromEntries(
-							['path', 'download_url', 'max_pages', 'browser', 'http1', 'file_type', 'min_size', 'max_size', 'wait_pattern']
-								.filter((name) => optionInputs[name]).map((name) => [name, optionInputs[name].value])), () => (current && current.id) || null),
-					}))
+					el('div', { class: 'harvester-header-buttons' },
+						el('button', {
+							type: 'button',
+							text: t('Record in the browser'),
+							onclick: () => openRecorder(root, page, textarea, applySuggestions, () => Object.fromEntries(
+								['path', 'download_url', 'max_pages', 'browser', 'http1', 'file_type', 'min_size', 'max_size', 'wait_pattern']
+									.filter((name) => optionInputs[name]).map((name) => [name, optionInputs[name].value])), () => (current && current.id) || null),
+						}),
+						el('button', { type: 'button', text: t('Import from Chrome’s Recorder'), title: t('The steps of a recording of Chrome’s Recorder (DevTools, Recorder, Export as JSON) replace the recipe’s steps'), onclick: () => chromeFile.click() }),
+						el('button', { type: 'button', text: t('Export for Chrome’s Recorder'), title: t('The recipe’s steps as a recording Chrome’s Recorder imports and replays'), onclick: exportChrome }),
+						chromeFile),
+					chromeNotes)
 			} else {
 				if (option.kind === 'flag') {
 					// On or off, kept as 1 or 0 (as the jobs saved before the checkbox).

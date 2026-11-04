@@ -74,6 +74,8 @@ moves the mouse over an element (a menu that opens under the mouse) before the c
 {"action": "popup"} goes on in the tab or window the step before it opened (a sign-in's popup),
 {"action": "opener"} back in the page that opened it, once the popup closed itself.
 
+Double and right clicks, dialogs answered, typing key by key, keys on the page, waits: stepoptions.
+
 A click or a press that navigated has "wait": {"url": <a pattern of the address it led to>,
 "selector": <the next step's element>}: the replay waits for that address and that element
 instead of for the network to go quiet, then settles a short while. Without it, as recipes
@@ -135,13 +137,13 @@ import re
 import string
 from urllib.parse import urlsplit
 
-from . import choices, jsonrequest, needs, pageinfo, pagewatch, patterns
+from . import choices, jsonrequest, needs, pageinfo, pagewatch, patterns, stepoptions
 from .browser import VIEWPORT_MAX, VIEWPORT_MIN, allowed_url
 from .l10n import Said, listed, said
 from .patterns import token_parameters
 
 ACTIONS = {"goto", "click", "fill", "press", "scroll", "select", "hover", "popup", "opener", "mail-code", "each"}
-ACTIONS |= set(needs.ACTIONS)
+ACTIONS |= {"wait"} | set(needs.ACTIONS)
 # A scroll step's rounds: by default, and at most.
 SCROLL_ROUNDS = 20
 SCROLL_ROUNDS_MAX = 100
@@ -154,9 +156,11 @@ WAIT_FOR_MAX = 1800
 WAIT_FOR_RELOAD = 5
 NEXT_KINDS = ("link", "number", "scroll")
 # The actions that act on an element, and so may do it inside a frame.
-ON_ELEMENTS = ("click", "fill", "press", "mail-code", "select", "hover", "each", "ask-code")
+ON_ELEMENTS = ("click", "fill", "press", "mail-code", "select", "hover", "each", "ask-code", "wait")
+
 # The actions that switch the tab the steps act in, and so have no element.
-SWITCHES = ("popup", "opener")
+SWITCHES = ("popup", "opener")  # The actions that may have no element: a press then goes to the element in focus.
+WITHOUT_SELECTOR = ("goto", "scroll", "each", "press", *SWITCHES, *needs.WITHOUT_ELEMENT)
 # What a fill step may fill in instead of a value of its own: the job's account's.
 CREDENTIALS = ("username", "password", "totp")
 # A fill step's element that looks like a password's field (#pw, [type=password], a name with
@@ -242,8 +246,9 @@ def _action_label(step: dict) -> str:
     labels = {
         "goto": f"open {step.get('url', '')}",
         "scroll": "scroll to load more",
-        "click": f"click “{text}”" if text else f"click {selector}",
-        "press": f"press {step.get('key', 'Enter')} in {selector}",
+        "click": stepoptions.click_label(step, text, selector),
+        "press": f"press {step.get('key', 'Enter')}" + (f" in {selector}" if selector else ""),
+        "wait": stepoptions.wait_label(step, selector),
         "fill": f"fill in {step.get('credential') or 'a value'} ({selector})",
         "select": f"choose “{step.get('label') or step.get('value', '')}” in {selector}",
         "hover": f"hover over {selector}",
@@ -286,7 +291,7 @@ def link_waits(steps: list[dict]) -> None:
             continue
         after = steps[index + 1] if index + 1 < len(steps) else {}
         if after.get("action") in ON_ELEMENTS and after.get("selector") and not after.get("frame"):
-            if not after.get("optional"):
+            if not after.get("optional") and after.get("state") != "hidden":
                 wait["selector"] = after["selector"]
                 continue
         wait.pop("selector", None)
@@ -344,6 +349,8 @@ def _step(event: dict, steps: list[dict]) -> dict | None:
         )
     if action == "click":
         step = {"action": "click", "selector": event["selector"], "text": event.get("text", "")}
+        if event.get("button") in ("right", "middle"):
+            step["button"] = event["button"]
     elif action == "press":
         step = {"action": "press", "selector": event["selector"], "key": event.get("key", "Enter")}
     else:
@@ -368,6 +375,8 @@ def steps_from_events(
     """
     steps: list[dict] = copy.deepcopy(before or [])
     for event in events:
+        if stepoptions.merged(event, steps):
+            continue
         step = _step(event, steps)
         if step is None:
             continue
@@ -647,9 +656,13 @@ def _mail_code_problem(step: dict) -> str:
 
 
 def _action_problem(step: dict) -> str:
-    """What is wrong with a step "mail-code", "each" or of a person in particular, or ""."""
+    """What is wrong with a step's action or options (stepoptions, mail-code, each, needs), or ""."""
+    if problem := stepoptions.options_problem(step):
+        return problem
     if step["action"] == "mail-code":
         return _mail_code_problem(step)
+    if step["action"] == "wait":
+        return stepoptions.wait_step_problem(step)
     if step["action"] in needs.ACTIONS:
         return needs.step_problem(step)
     return choices.step_problem(step) if step["action"] == "each" else ""
@@ -708,9 +721,7 @@ def _check_steps(steps: list) -> list[str]:
             problems.append(f"step {number}: the browser may not open {step.get('url')}")
         elif step["action"] == "scroll" and not _rounds_ok(step.get("rounds", SCROLL_ROUNDS)):
             problems.append(f"step {number}: rounds of scrolling from 1 to {SCROLL_ROUNDS_MAX}")
-        elif step["action"] not in ("goto", "scroll", "each", *SWITCHES, *needs.WITHOUT_ELEMENT) and not step.get(
-            "selector"
-        ):
+        elif step["action"] not in WITHOUT_SELECTOR and not step.get("selector"):
             problems.append(f"step {number}: no element")
         elif step["action"] not in ("mail-code", *needs.ACTIONS) and "wait" in step and not _wait_ok(step["wait"]):
             problems.append(f"step {number}: wait is an address's pattern (url) and an element (selector)")
@@ -970,6 +981,7 @@ def edit_step(step: dict, message: dict) -> None:
             step.pop("label", None)
     if "wait" in message and message["wait"] is None:
         step.pop("wait", None)
+    stepoptions.edit_options(step, message)
     _edit_timing(step, message)
 
 

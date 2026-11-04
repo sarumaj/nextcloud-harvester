@@ -1,10 +1,14 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Recipe files (export, import) and the person's own templates."""
+"""Recipe files (export, import), a recipe's steps as Chrome's Recorder's recordings and back
+(chromerecorder.py), and the person's own templates."""
+
+import json
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, ValidationError
 
-from .. import recipe_file
+from .. import chromerecorder, recipe_file
+from .. import recipe as recipes
 from .common import NC, JobIn, checked, store
 
 ROUTER = APIRouter()
@@ -35,6 +39,55 @@ async def import_recipe(body: RecipeText, _nc: NC) -> dict:
         text = recipe_file.problems(error) if isinstance(error, ValidationError) else str(error)
         raise HTTPException(422, text) from error
     return job
+
+
+class ChromeImport(BaseModel):
+    """A recording of Chrome's Recorder, and the recipe (JSON, as the form holds it) whose steps
+    it replaces."""
+
+    text: str = Field(max_length=chromerecorder.MAX_BYTES)
+    recipe: str = Field("", max_length=recipe_file.MAX_BYTES)
+
+
+def _recipe(text: str) -> dict:
+    """The form's recipe (422 for one that is no JSON object)."""
+    try:
+        recipe = json.loads(text or "{}")
+    except ValueError as error:
+        raise HTTPException(422, f"the recipe is not JSON: {error}") from error
+    if not isinstance(recipe, dict):
+        raise HTTPException(422, "the recipe is not an object")
+    return recipe
+
+
+@ROUTER.post("/api/recipes/chrome/import")
+async def import_chrome(body: ChromeImport, _nc: NC) -> dict:
+    """The recipe with its steps (and window) from the recording, what was left out or changed
+    (warnings) and what the recipe's check finds (problems); nothing is saved."""
+    recipe = _recipe(body.recipe)
+    try:
+        steps, viewport, warnings = chromerecorder.import_text(body.text)
+    except chromerecorder.RecordingError as error:
+        raise HTTPException(422, str(error)) from error
+    recipe["steps"] = steps
+    if viewport is not None:
+        recipe["viewport"] = viewport
+    return {"recipe": recipe, "warnings": warnings, "problems": recipes.check_recipe(recipe), "count": len(steps)}
+
+
+class ChromeExport(BaseModel):
+    """The recipe (JSON, as the form holds it) and the recording's title (the job's name)."""
+
+    recipe: str = Field(max_length=recipe_file.MAX_BYTES)
+    title: str = Field("", max_length=200)
+
+
+@ROUTER.post("/api/recipes/chrome/export")
+async def export_chrome(body: ChromeExport, _nc: NC) -> dict:
+    """The recipe's steps as a recording of Chrome's Recorder, and what Chrome's replay cannot do
+    of them (warnings)."""
+    flow, warnings = chromerecorder.export_flow(_recipe(body.recipe), body.title)
+    return {"recording": flow, "warnings": warnings}
 
 
 @ROUTER.get("/api/templates")

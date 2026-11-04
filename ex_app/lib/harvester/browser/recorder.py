@@ -24,8 +24,9 @@ binary sender, {type: frame, data}.
   target, level}, {type: next-kind, kind (link, number)}, {type: undo} (the last step), {type:
   undo-pick} (the last change of the picks), {type: scroll} (a step: scroll to load more),
   the Steps list's edits (steps.EDITS: optional, step-delete, step-move, step-edit, record-at,
-  mail-code, ask-code, each, person, person-edit: the page's address added), {type: mode, mode:
-  until, step} (an element picked for a step's until: to the page {type: until-picked}), {type:
+  mail-code, ask-code, each, person, person-edit, wait-add: the page's address added), {type: mode, mode:
+  until, step, purpose} (an element picked for a step's until, or with purpose wait for a step
+  "wait" after it: to the page {type: until-picked}), {type:
   test, recipe, settings, as_job, job} (as_job: the app adds the saved job's account, main.py),
   {type: test-stop}, {type: test-code, code} (what a step of the test asks, {type: test-asking},
   trial.py), {type: clear}, {type: screen, visible} (the person's page hidden or shown again: the
@@ -236,6 +237,8 @@ class Recorder(LinkPicks, Popups, Trials):  # pylint: disable=too-many-instance-
         self.page_examples: dict[int, list[dict]] = {}
         # The step whose until an element is picked for (mode until).
         self.until_for: int | None = None
+        # What the element picked is for: the step's until, or a step "wait" after it.
+        self.until_purpose = ""
         # The page's answers in JSON (Network), and the one chosen as the listing: (url, data).
         self.requests: list[dict] = []
         self._json: tuple[str, object] | None = None
@@ -612,11 +615,11 @@ class Recorder(LinkPicks, Popups, Trials):  # pylint: disable=too-many-instance-
         elif action == "pick" and event.get("target") in DATA_PICKS:
             await self._pick_data(event)
         elif action == "pick" and event.get("target") == "until":
-            # The element an approval or a handover waits for (steps.person_edit).
+            # The element an approval or a handover waits for (steps.person_edit), or that a new
+            # step "wait" after the step waits for (steps.wait-add).
             selector = str(event.get("selector") or "")
-            if self.until_for is not None and self.steps.edit(
-                "person-edit", {"step": self.until_for, "selector": selector}
-            ):
+            edit = "wait-add" if self.until_purpose == "wait" else "person-edit"
+            if self.until_for is not None and self.steps.edit(edit, {"step": self.until_for, "selector": selector}):
                 await self._update()
             await self.send({"type": "until-picked", "step": self.until_for})
         elif action == "pick":
@@ -901,9 +904,11 @@ class Recorder(LinkPicks, Popups, Trials):  # pylint: disable=too-many-instance-
 
     async def _set_mode(self, message: dict) -> None:
         """The mode the page chose, with what it picks for: a level's links again (follow), a
-        level's value (value), a step's until (until)."""
+        level's value (value), a step's until or a step "wait" after it (until, purpose wait: step
+        -1 is before the first)."""
         self.mode = message["mode"]
         level, step = message.get("level"), message.get("step")
+        self.until_purpose = "wait" if self.mode == "until" and message.get("purpose") == "wait" else ""
         self.repick = int(level) if self.mode == "follow" and isinstance(level, int) else None
         self.value_for = self._value_target(message) if self.mode in ("value", "tags") else None
         self.until_for = step if self.mode == "until" and isinstance(step, int) else None

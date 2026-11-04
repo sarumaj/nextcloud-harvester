@@ -1,6 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The recorder's tabs: a tab the site opens (a sign-in's popup) is shown, and while recording a
-step "popup"; when it closes, the page that opened it comes back, a step "opener". And
+step "popup"; when it closes, the page that opened it comes back, a step "opener". A dialog a page
+opens (alert, confirm, prompt, "Leave the page?") is answered OK (a prompt with its default), as
+the person most likely meant by the click that opened it, and said on the panel; while recording,
+the click or key before it answers it so too (its "dialog": "accept"), which its Steps list can
+turn to Cancel. Playwright alone would dismiss it, and the person could not go on. And
 recorder.js in each document of the recorder's own pages, which the context's script misses in a
 popup at its opener's origin. The person's mouse on the tab shown, which a click may close.
 """
@@ -40,6 +44,7 @@ class Popups:  # pylint: disable=too-few-public-methods
         """A tab of the recorder's (its first, or one the site opened): shown. One the page shown
         opened (a popup) is a step "popup" while recording; when it closes, its opener is shown
         again (_closed)."""
+        page.on("dialog", lambda dialog: asyncio.ensure_future(self._dialog(dialog)))
         opener = await page.opener()
         if opener is not None:
             self._openers[page] = opener
@@ -51,6 +56,25 @@ class Popups:  # pylint: disable=too-few-public-methods
         await self._show(page)
         # Loaded already, maybe, before _show listened.
         await self._install(page)
+
+    async def _dialog(self, dialog) -> None:
+        """A dialog of a page: answered OK (a prompt with its default), recorded on the step before
+        while recording, said on the panel."""
+        try:
+            await dialog.accept(dialog.default_value if dialog.type == "prompt" else "")
+        except PlaywrightError:
+            return  # answered or closed meanwhile
+        if self.mode == "record":
+            self._record({"action": "dialog", "accept": True})
+            await self._update()
+        text = " ".join(str(dialog.message or "").split())[:200]
+        await self.send(
+            {
+                "type": "error",
+                "message": f"The page asked “{text}”: answered OK. The step before answers it so when the job runs"
+                " (Cancel in its Steps list instead).",
+            }
+        )
 
     async def _closed(self, page: Page) -> None:
         """A popup closed (a sign-in's, once done): the page that opened it is shown again (else the
@@ -82,12 +106,17 @@ class Popups:  # pylint: disable=too-few-public-methods
 
     @staticmethod
     async def _mouse(page: Page, message: dict) -> None:
-        """The person's mouse on the page: a move, a button down or up."""
+        """The person's mouse on the page: a move, a button down or up (its count: 2 for a double
+        click's second, which the page sees as a dblclick)."""
         try:
             await page.mouse.move(float(message["x"]), float(message["y"]))
             if message.get("event") in ("down", "up"):
                 button = message.get("button", "left")
-                await getattr(page.mouse, message["event"])(button=button if button in ("left", "right") else "left")
+                count = message.get("count", 1)
+                count = count if isinstance(count, int) and not isinstance(count, bool) and 1 <= count <= 3 else 1
+                await getattr(page.mouse, message["event"])(
+                    button=button if button in ("left", "right") else "left", click_count=count
+                )
         except PlaywrightError:
             # A click that closed its page (a popup's last button): its opener is shown now.
             if not page.is_closed():

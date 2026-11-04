@@ -32,6 +32,7 @@ EDITS = frozenset(
         "each",
         "person",
         "person-edit",
+        "wait-add",
     }
 )
 # The labels of the person's steps the panel adds without one.
@@ -57,8 +58,11 @@ class StepList:
         return steps_from_events(self.events, self.before, self.after, forms)
 
     def record(self, event: dict) -> None:
-        """A step's event, after the steps so far; a click or press may navigate the page."""
+        """A step's event, after the steps so far; a click or press may navigate the page (a dialog
+        it opened answered meanwhile changes nothing of that)."""
         self.events.append(event)
+        if event.get("action") == "dialog":
+            return
         self.navigating = event if event.get("action") in ("click", "press") else None
         if self.navigating is not None:
             self.navigating["at"] = time.monotonic()
@@ -81,7 +85,7 @@ class StepList:
         self.navigating = None
         return steps
 
-    def edit(self, kind: str, message: dict) -> bool:
+    def edit(self, kind: str, message: dict) -> bool:  # pylint: disable=too-many-return-statements
         """Undo (the last event, else the last step before the new ones), and the Steps list's
         edits: a step removed, moved, changed (optional, what a fill fills in, its value, its wait),
         where new steps go (record-at), a filled code that comes by e-mail (mail-code) or that the
@@ -90,6 +94,8 @@ class StepList:
         changed."""
         if kind in ("undo", "person"):
             return self._undo() if kind == "undo" else self._add_person(message)
+        if kind == "wait-add":
+            return self._add_wait(message)
         steps, point = self._commit(), len(self.before)
         if kind == "record-at":
             after = message.get("after")
@@ -121,6 +127,20 @@ class StepList:
             self.events.pop()
         elif self.before:
             self.before.pop()
+        return True
+
+    def _add_wait(self, message: dict) -> bool:
+        """A step "wait" for the element picked on the page (selector), after the step of the
+        message (-1: before the first)."""
+        selector = str(message.get("selector") or "").strip()
+        steps = self._commit()
+        index = message.get("step")
+        if not selector or not isinstance(index, int) or isinstance(index, bool) or not -1 <= index < len(steps):
+            return False
+        point = len(self.before)
+        steps.insert(index + 1, {"action": "wait", "selector": selector, "state": "visible"})
+        point += 1 if index + 1 <= point else 0
+        self.before, self.after = steps[:point], steps[point:]
         return True
 
     def _add_person(self, message: dict) -> bool:

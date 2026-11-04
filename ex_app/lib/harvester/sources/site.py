@@ -34,7 +34,7 @@ from playwright.sync_api import Error as PlaywrightError, Route, WebSocketRoute
 
 from .. import browser
 from .. import cookies as cookie_jar
-from .. import choices, images, jsonlist, otp, pageinfo, pagination, patterns, selectors
+from .. import choices, images, jsonlist, otp, pageinfo, pagination, patterns, selectors, stepoptions
 from .. import recipe as recipes
 from ..l10n import said
 from ..browser import consent as banners, engine
@@ -45,6 +45,7 @@ from .base import AuthError, ChallengeError, Item, Source, SourceError, Stopped,
 from .base import pattern_search
 from .download import Response
 from .driver import Driver, HttpDriver, accept_language, moved
+from .stepplay import answering, filled_in, typed, waited
 from .survey import SURVEY_FILES, SURVEY_PAGES
 from .walk import StartEmpty, Walk
 from .tabs import (
@@ -616,10 +617,16 @@ def names_in(template: str) -> set[str]:
 
 
 def replay(page, step: dict, secrets: dict[str, str], repaired: Callable[[str, str], None] | None = None) -> None:
-    """Does one recorded step, in its frame if it has one; an optional step waits for its frame
-    and element OPTIONAL_TIMEOUT at most (a required one the page's default, STEP_TIMEOUT). A
-    step with alternative selectors finds its element by the first that does (selectors.resolve,
-    an alternative told to repaired) within the same time."""
+    """Does one recorded step, in its frame if it has one, answering the dialog it opens (answering);
+    an optional step waits for its frame and element OPTIONAL_TIMEOUT at most (a required one
+    STEP_TIMEOUT). A step with alternative selectors finds its element by the first that does
+    (selectors.resolve, an alternative told to repaired) within the same time."""
+    with answering(page, step):
+        _replay_step(page, step, secrets, repaired)
+
+
+def _replay_step(page, step: dict, secrets: dict[str, str], repaired: Callable | None) -> None:
+    # pylint: disable=too-many-branches,too-many-return-statements
     action = step["action"]
     started, began = time.monotonic(), time.time()
     budget = OPTIONAL_TIMEOUT if step.get("optional") else STEP_TIMEOUT
@@ -629,13 +636,16 @@ def replay(page, step: dict, secrets: dict[str, str], repaired: Callable[[str, s
     left = max(1.0, budget - (time.monotonic() - started) * 1000)
     wait = {"timeout": left} if step.get("optional") else {}
     selector = step.get("selector", "")
-    if action in recipes.ON_ELEMENTS and step.get("alternatives"):
+    if action in recipes.ON_ELEMENTS and step.get("alternatives") and step.get("state") != "hidden":
         selector = selectors.resolve(target, step, left, repaired)
         wait = {"timeout": max(1.0, budget - (time.monotonic() - started) * 1000)}
     if action == "goto":
         page.goto(step["url"], wait_until="domcontentloaded")
     elif action == "fill":
-        target.fill(selector, filled(step, secrets), **wait)
+        (typed if step.get("typed") else filled_in)(target, selector, filled(step, secrets), wait)
+        return
+    elif action == "wait":
+        waited(target, step, selector)
         return
     elif action == "select":
         # By its value, else by the text it shows (whichever the list has first).
@@ -645,8 +655,10 @@ def replay(page, step: dict, secrets: dict[str, str], repaired: Callable[[str, s
         target.hover(selector, **wait)
         return
     elif action == "click":
+        how = {"button": step["button"]} if step.get("button") in stepoptions.BUTTONS else {}
+        how |= {"click_count": int(step["count"])} if isinstance(step.get("count"), int) else {}
         try:
-            target.click(selector, **wait)
+            target.click(selector, **how, **wait)
         except PlaywrightError:
             # A click that closes its own window (a sign-in popup's Allow, window.close()) may
             # end before Playwright hears back from the page: done, the next step goes back to
@@ -654,6 +666,8 @@ def replay(page, step: dict, secrets: dict[str, str], repaired: Callable[[str, s
             if not page.is_closed():
                 raise
             return
+    elif action == "press" and not selector:
+        page.keyboard.press(step.get("key", "Enter"))
     elif action == "press":
         target.press(selector, step.get("key", "Enter"), **wait)
     elif action == "mail-code":

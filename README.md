@@ -31,6 +31,9 @@ the app's browser or taken from a template, not by code.
   album or the locked folder; tagged with Nextcloud's or Immich's tags, Harvester's own labels,
   or not at all.
   Another place or folder may have the files saved before downloaded again into it.
+- **Recipes from and for Chrome's Recorder:** a recording of Chrome DevTools' Recorder imported
+  as a recipe's steps (its password never kept), a recipe's steps exported for it; double and
+  right clicks, answers to the page's dialogs, waits for an element, typing key by key.
 - **Tags from the sites:** a page's tag chips, picked in the recorder beside the links or on
   the page a link opens, and gallery-dl's and yt-dlp's tags become a tag each; every page a job
   opens gives its title, site, date and language for file names and tags.

@@ -13,6 +13,15 @@
   (`"next": {"kind": "scroll"}`, the recorder's *Read it as it is scrolled*): a batch at a time,
   each a page, so the job stops scrolling at known files, *Pages* or *Files per run* instead of
   loading the whole listing first, as the step *scroll to load more* does.
+- **Import from Chrome's Recorder** and **Export for Chrome's Recorder** in a website job's
+  form: a recording of Chrome DevTools' Recorder made the recipe's steps (its selectors as
+  Playwright's, a password typed in it never kept, what a recipe has no step for said), and the
+  recipe's steps as such a recording, Harvester's own steps as custom steps; a round trip gives
+  the same steps.
+- Steps of the kinds other recorders have: double and right clicks (recorded too), the answer to
+  a dialog a click or a key opens (OK, a prompt's text, or Cancel; the recorder answers OK and
+  records it), a fill typed key by key, a key pressed on the page, and **then wait for an
+  element…**: a step that waits until an element shows (with a text) or is gone.
 
 ### Fixed
 
