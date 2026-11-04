@@ -4,7 +4,8 @@ warning and password, what a place switches off with why, no Nextcloud tags outs
 a job's Files with their labels, and the Library (set up with its recovery key typed back,
 locked until unlocked, its token sent as a header and never in an address but a ticket's, the
 cookie's addresses where the cookie comes back, thumbnails, the list, the viewer, uploads in
-pieces, a move from Files), in Chromium against a stubbed API."""
+pieces, a move from Files and its states readable in light and dark), the dialogs centred at
+any width, in Chromium against a stubbed API."""
 
 # pylint: disable=missing-function-docstring,unused-import,redefined-outer-name
 
@@ -292,3 +293,113 @@ def test_files_upload_in_pieces_and_a_move_from_files_is_started_on_the_page(pag
     assert ("POST", "/library/uploads", {"folder": "/", "name": "note.txt", "size": 3}) in CALLS
     assert ("PUT", "/library/uploads/u1?offset=0", b"abc") in CALLS
     assert ("POST", "/library/uploads/u1/done", None) in CALLS
+
+
+def centred(page, selector: str) -> None:
+    """The dialog lies inside the window, as far from its left as its right, from its top as
+    its bottom."""
+    box = page.locator(selector).bounding_box()
+    width, height = page.viewport_size["width"], page.viewport_size["height"]
+    assert box["x"] >= 0 and box["y"] >= 0 and box["x"] + box["width"] <= width, (box, width)
+    assert abs(box["x"] - (width - box["x"] - box["width"])) <= 2, (box, width)
+    assert abs(box["y"] - (height - box["y"] - box["height"])) <= 2, (box, height)
+
+
+# Margins as a site's styles may give every element (Nextcloud resets them), which a modal
+# <dialog> needs for centring.
+RESET = "* { margin: 0 }"
+
+
+@needs_chromium
+def test_the_viewer_and_the_questions_are_centred_at_any_width(page):
+    answers = {
+        "GET /library/state": LIBRARY | {"unlocked": True},
+        "GET /library/moves": [],
+        "GET /library": {"folder": "/Mag", "entries": ENTRIES, "labels": ["2024"]},
+        "POST /library/files/4/ticket": {"ticket": "t1ck3t"},
+    }
+    answering(page, answers)
+    page.add_style_tag(content=RESET)
+    page.get_by_role("button", name="Library", exact=True).click()
+    for width, height in ((1280, 800), (1280, 500), (375, 700)):
+        page.set_viewport_size({"width": width, "height": height})
+        page.get_by_role("button", name="issue.pdf").click()
+        page.locator("dialog.harvester-viewer iframe").wait_for()
+        centred(page, "dialog.harvester-viewer")
+        expected = min(1100, width - 32)
+        assert page.locator("dialog.harvester-viewer").bounding_box()["width"] == expected, "the viewer is wide"
+        page.locator("dialog.harvester-viewer").get_by_role("button", name="Delete").click()
+        page.locator("dialog.harvester-dialog:not(.harvester-viewer)").wait_for()
+        centred(page, "dialog.harvester-dialog")
+        page.locator("dialog.harvester-dialog").get_by_role("button", name="Cancel").click()
+        assert not page.locator("dialog").count()
+
+
+# Nextcloud's colours, light and dark (its themes' variables), for the states' contrast.
+THEMES = {
+    "light": {
+        "--color-main-background": "#ffffff",
+        "--color-main-text": "#222222",
+        "--color-background-dark": "#ededed",
+        "--color-primary-element-light": "#e5f0f5",
+        "--color-primary-element-light-text": "#00293f",
+        "--color-success": "#2d7b41",
+        "--color-success-text": "#286c39",
+        "--color-error": "#db0606",
+        "--color-error-text": "#c90000",
+    },
+    "dark": {
+        "--color-main-background": "#171717",
+        "--color-main-text": "#ebebeb",
+        "--color-background-dark": "#2a2a2a",
+        "--color-primary-element-light": "#132b3a",
+        "--color-primary-element-light-text": "#d8eaf5",
+        "--color-success": "#2a7c47",
+        "--color-success-text": "#6cc185",
+        "--color-error": "#e9322d",
+        "--color-error-text": "#ff7b7b",
+    },
+}
+# The contrast of an element's text on its background laid over the page's (WCAG 2), in the
+# browser: its colours as Chromium computes them, rgb() or color(srgb …), with their alpha.
+CONTRAST = """(chip) => {
+  const parse = (text) => {
+    const numbers = text.match(/[\\d.]+/g).map(Number)
+    const srgb = text.startsWith('color(')
+    const [r, g, b] = numbers.slice(0, 3).map((value) => (srgb ? value : value / 255))
+    return [r, g, b, numbers.length > 3 ? numbers[3] : 1]
+  }
+  const over = (top, bottom) => top.slice(0, 3).map((value, i) => value * top[3] + bottom[i] * (1 - top[3]))
+  const page = parse(getComputedStyle(document.body).backgroundColor)
+  const style = getComputedStyle(chip)
+  const back = over(parse(style.backgroundColor), page)
+  const fore = over(parse(style.color), back)
+  const light = (rgb) => rgb.map((v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4))
+    .reduce((sum, v, i) => sum + v * [0.2126, 0.7152, 0.0722][i], 0)
+  const [a, b] = [light(back), light(fore)].sort((x, y) => y - x)
+  return (a + 0.05) / (b + 0.05)
+}"""
+
+
+@needs_chromium
+def test_a_moves_states_are_readable_in_light_and_dark(page):
+    states = ("waiting", "moving", "moved", "failed")
+    items = [
+        {"file_id": n, "path": f"/Docs/{state}.pdf", "size": 3, "target": "/T", "state": state, "message": ""}
+        for n, state in enumerate(states)
+    ]
+    move = {"id": "m1", "selected": [], "folder": "/", "started": 1, "ended": 2, "problem": "", "trash": ""}
+    answers = {
+        "GET /library/state": LIBRARY | {"unlocked": True},
+        "GET /library/moves": [move | {"items": items}],
+        "GET /library": {"folder": "/", "entries": [], "labels": []},
+    }
+    answering(page, answers)
+    page.get_by_role("button", name="Library", exact=True).click()
+    page.wait_for_selector(".harvester-move-failed")
+    for theme, colours in THEMES.items():
+        variables = "; ".join(f"{name}: {value}" for name, value in colours.items())
+        page.add_style_tag(content=f":root {{ {variables} }} body {{ background: var(--color-main-background) }}")
+        for state in states:
+            ratio = page.locator(f".harvester-move-{state}").evaluate(CONTRAST)
+            assert ratio >= 4.5, f"{state} in {theme}: {ratio:.2f}"

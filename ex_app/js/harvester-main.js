@@ -4083,7 +4083,9 @@
 		#harvester .harvester-sent { overflow-wrap: anywhere; }
 		#harvester .harvester-send-kinds { display: flex; flex-wrap: wrap; gap: 8px; }
 		#harvester [hidden] { display: none !important; }
-		#harvester .harvester-dialog { max-width: min(480px, calc(100vw - 32px)); padding: 20px 24px 16px; border: none; border-radius: var(--border-radius-large); background: var(--color-main-background); color: var(--color-main-text); box-shadow: 0 0 40px var(--color-box-shadow); }
+		/* Centred in the window at any width: its size includes its padding, it is never larger
+		   than the window (its content scrolls), whatever margins Nextcloud's styles give. */
+		#harvester .harvester-dialog { position: fixed; inset: 0; margin: auto; box-sizing: border-box; max-height: calc(100dvh - 32px); overflow: auto; max-width: min(480px, calc(100vw - 32px)); padding: 20px 24px 16px; border: none; border-radius: var(--border-radius-large); background: var(--color-main-background); color: var(--color-main-text); box-shadow: 0 0 40px var(--color-box-shadow); }
 		#harvester .harvester-dialog::backdrop { background: rgba(0, 0, 0, 0.5); }
 		#harvester .harvester-dialog p { margin: 0 0 16px; }
 		#harvester .harvester-dialog-buttons { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
@@ -4209,13 +4211,14 @@
 		#harvester .harvester-library.harvester-dropping { outline: 2px dashed var(--color-primary-element); outline-offset: 4px; }
 		#harvester .harvester-recovery-key { display: inline-block; padding: 8px 12px; font-size: 1.2em; letter-spacing: 0.05em; user-select: all; background: var(--color-background-dark); border-radius: var(--border-radius); }
 		#harvester .harvester-moves { margin: 12px 0; }
-		#harvester .harvester-move-moved { background: var(--color-success); color: var(--color-primary-element-text, #fff); }
-		#harvester .harvester-move-failed { background: var(--color-error); color: var(--color-primary-element-text, #fff); }
-		.harvester-viewer { max-width: min(96vw, 1100px); width: 96vw; }
-		.harvester-viewer img, .harvester-viewer video { max-width: 100%; max-height: 70vh; display: block; margin: 0 auto; }
-		.harvester-viewer audio { width: 100%; }
-		.harvester-viewer iframe { width: 100%; height: 70vh; border: 0; }
-		.harvester-viewer .harvester-text-file { max-height: 70vh; overflow: auto; white-space: pre-wrap; }
+		#harvester .harvester-move-moving { background: var(--color-primary-element-light); color: var(--color-primary-element-light-text, var(--color-main-text)); }
+		#harvester .harvester-move-moved { background: color-mix(in srgb, var(--color-success) 15%, transparent); color: var(--color-success-text, var(--color-main-text)); }
+		#harvester .harvester-move-failed { background: color-mix(in srgb, var(--color-error) 15%, transparent); color: var(--color-error-text, var(--color-main-text)); }
+		#harvester .harvester-viewer { width: min(1100px, calc(100vw - 32px)); max-width: none; }
+		#harvester .harvester-viewer img, #harvester .harvester-viewer video { max-width: 100%; max-height: 70vh; display: block; margin: 0 auto; }
+		#harvester .harvester-viewer audio { width: 100%; }
+		#harvester .harvester-viewer iframe { width: 100%; height: 70vh; border: 0; }
+		#harvester .harvester-viewer .harvester-text-file { max-height: 70vh; overflow: auto; white-space: pre-wrap; }
 		#harvester .harvester-value { background: var(--color-primary-element-light); border-radius: 4px; padding: 0 4px; margin-inline-end: 4px; font-family: var(--font-face-monospace, monospace); }
 	`))
 

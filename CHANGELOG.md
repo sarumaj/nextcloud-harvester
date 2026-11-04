@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- The Library's viewer and the page's questions open in the middle of the window, at any width
+  (a phone's too), not at its top left; the viewer is as wide as the window allows.
+- A move's states from Files are readable in light and dark: tinted pills with the theme's
+  success and error text colours, as the jobs' states, not light text on a light green.
 - The progress log names where a file went: *Uploaded to Immich: a.jpg (2.1 MB), album “Trip”*,
   *Already in Immich*, *Tagged in Immich*, *Saved in your library*, *Saved in the vault …*,
   rather than *Saved /folder/a.jpg* as if it were in Files. The size is the file's.
