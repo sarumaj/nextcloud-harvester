@@ -166,7 +166,7 @@ class Walk:  # pylint: disable=too-many-instance-attributes,too-many-public-meth
             address = self.driver.address(page)
             texts = self.driver.targets(page, spec["selector"])
             return [(address, text) for text in texts], {"url": address, "selector": spec["selector"]}
-        what = "file links" if spec is self.recipe["links"] else f"level {level + 1}"
+        what = said("file links") if spec is self.recipe["links"] else said("level {level}", level=level + 1)
         return self.site.listed(self.driver, page, spec, what)
 
     def take(self, spec: dict, link: tuple, values: dict, clicked: bool, index: int) -> tuple | None:

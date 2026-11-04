@@ -1055,6 +1055,7 @@
         "The run's time is up: the rest comes {later}": "Czas przebiegu minął: reszta {later}",
         "Skipped {file}: {error}": "Pominięto {file}: {error}",
         "Skipped {file} this time (tried again {later}): {error}": "Pominięto tym razem {file} (ponowna próba {later}): {error}",
+        "{file}: {error}": "{file}: {error}",
         "{file} could not be checked for changes: {error}": "Nie udało się sprawdzić zmian w {file}: {error}",
         "_%n file in a row failed: the rest comes {later}_::_%n files in a row failed: the rest comes {later}_": [
             "%n plik z rzędu się nie powiódł: reszta {later}",
@@ -1150,6 +1151,7 @@
             "w dniach {days} w miesiącach: {months}, o {times}",
             "w dniach {days} w miesiącach: {months}, o {times}"
         ],
+        "{what}: selector repaired ({old} → {new})": "{what}: selektor naprawiony ({old} → {new})",
         "{url} asks for a person ({kind}): continue in the browser": "{url} pyta, czy jesteś człowiekiem ({kind}): kontynuuj w przeglądarce",
         "_going through %n choice: {choices}_::_going through %n choices: {choices}_": [
             "przechodzi przez %n wybór: {choices}",
@@ -1201,9 +1203,13 @@
         "larger than the largest file, not read": "większa niż największy plik, nieprzeczytana",
         "step {number} ({label}, optional) skipped: {why}": "krok {number} ({label}, opcjonalny) pominięty: {why}",
         "The kept session no longer reaches the listing: signing in anew": "Zachowana sesja nie dociera już do listy: ponowne logowanie",
+        "step {number}": "krok {number}",
         "“{choice}”: the listing has none of the recipe's links": "„{choice}”: lista nie ma żadnego z linków przepisu",
+        "next page": "następna strona",
         "step {number} ({label}): pausing {seconds} s before it": "krok {number} ({label}): pauza {seconds} s przed nim",
         "step {number} ({label}) failed, trying again in {seconds} s (attempt {attempt} of {of}): {why}": "krok {number} ({label}) nie powiódł się, ponowna próba za {seconds} s (próba {attempt} z {of}): {why}",
+        "file links": "linki do plików",
+        "level {level}": "poziom {level}",
         "{url}: none of the files it loads is of the types to capture": "{url}: żaden z plików, które wczytuje, nie jest z typów do przechwycenia",
         "the start page has none of the recipe's links: signed out, or the site changed?": "strona startowa nie ma żadnego z linków przepisu: wylogowano czy strona się zmieniła?",
         "the listing (page {number}, {address}) gave nothing: {why}": "lista (strona {number}, {address}) nic nie dała: {why}",

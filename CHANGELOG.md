@@ -44,6 +44,8 @@
   an error 5xx, a redirect to a private address) no longer fails a mail job's run when nothing
   else came: it is skipped this time with a line in the log (*skipped this time* in the run's
   outcome), tried again in the next runs and given up after the third.
+- A file's failure in the progress log (*file: why*) and a selector's repair (*level 1: selector
+  repaired (… → …)*) are translated (German, Polish), as their neighbours were.
 - The run's reasons *the start page has none of the recipe's links* and *… asks for a person*,
   and the log's line of a page that loads none of the types to capture, are translated (German,
   Polish), as their neighbours were.

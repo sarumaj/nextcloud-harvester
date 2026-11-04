@@ -10,7 +10,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, BinaryIO
 
 from . import unpack, versions
-from .l10n import Said, listed, said, said_n
+from .l10n import Said, error_text, listed, said, said_n
 from .patterns import render_tags, stable_url
 from .sources import download
 from .sources.keep import CAPTURED
@@ -690,7 +690,7 @@ def run(  # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
                 # as seen.
                 tally.failures.append(str(error))
                 tally.denied += isinstance(error, Denied)
-                report("error", f"{item.path or item.url}: {error}")
+                report("error", said("{file}: {error}", file=item.path or item.url, error=error_text(error)))
                 complete = False
                 in_a_row += 1
                 if len(tally.failures) >= MAX_FAILURES and not tally.downloaded:

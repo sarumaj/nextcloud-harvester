@@ -282,7 +282,7 @@ class BrowserDriver(Driver):  # pylint: disable=too-many-instance-attributes,too
             replay(tabs.page, step, secrets, functools.partial(self._repaired, number))
 
     def _repaired(self, number: int, old: str, new: str) -> None:
-        self.repaired.append(selectors.repair_line(f"step {number}", old, new))
+        self.repaired.append(selectors.repair_line(said("step {number}", number=number), old, new))
 
     def _failed(self, number: int, step: dict, error: Exception, page: Any = None) -> None:
         """A required step failed: the page asking for a person (ChallengeError), else SourceError
@@ -901,7 +901,7 @@ class Site(Source):  # pylint: disable=too-many-instance-attributes
         if len(tries) > 1 and not self._finds(driver, page, tries[0]):
             for alternative in tries[1:]:
                 if self._finds(driver, page, alternative):
-                    self._repaired("next page", tries[0], alternative)
+                    self._repaired(said("next page"), tries[0], alternative)
                     return driver.next(page, alternative, awaits)
         return driver.next(page, tries[0], awaits)
 

@@ -27,6 +27,8 @@ import soupsieve
 from bs4 import Tag
 from playwright.sync_api import Error as PlaywrightError
 
+from .l10n import said
+
 # How long the best selector has to find its element before an alternative may stand in (ms):
 # a page still building finds neither, and the best should win once it is there.
 GRACE = 2_000
@@ -54,8 +56,9 @@ def candidates(spec: dict) -> list[str]:
 
 
 def repair_line(what: str, old: str, new: str) -> str:
-    """The progress log's line of an alternative that stood in for a selector."""
-    return f"{what}: selector repaired ({old} → {new})"
+    """The progress log's line of an alternative that stood in for a selector (what: the step,
+    level or links it stood in for, a said() of its own)."""
+    return said("{what}: selector repaired ({old} → {new})", what=what, old=old, new=new)
 
 
 def _count(target: Any, selector: str) -> int:

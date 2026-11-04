@@ -166,6 +166,7 @@ def test_levels_and_the_next_page_are_repaired_over_http():
         "file links: selector repaired (a.gone → li.item a)",
         'next page: selector repaired (a.gone → internal:role=link[name="Next"s])',
     ], "each repair said once, the recipe unchanged"
+    assert log[0].template["params"]["what"] == {"text": "file links"}, "translated, what was repaired too"
     assert recipe["links"]["selector"] == "a.gone"
     # A recipe without alternatives finds what its selector finds, as always.
     plain, log = http_source({"start": f"{SITE}/list?p=1", "links": {"selector": "a.gone", "pattern": ""}})

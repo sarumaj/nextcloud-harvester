@@ -41,6 +41,7 @@ def test_the_runner_reports_each_step():
         ("info", "Downloading /In/c.txt"),
         ("info", "Saved /In/c.txt (1 B)"),
     ]
+    assert lines[3][1].template["text"] == "{file}: {error}", "translated"
 
 
 def test_the_runner_says_why_it_stops_early():

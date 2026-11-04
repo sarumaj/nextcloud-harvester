@@ -990,6 +990,7 @@ OC.L10N.register(
         "The run's time is up: the rest comes {later}": "Die Zeit des Durchlaufs ist um: Der Rest kommt {later}",
         "Skipped {file}: {error}": "{file} übersprungen: {error}",
         "Skipped {file} this time (tried again {later}): {error}": "{file} diesmal übersprungen (wird {later} erneut versucht): {error}",
+        "{file}: {error}": "{file}: {error}",
         "{file} could not be checked for changes: {error}": "{file} ließ sich nicht auf Änderungen prüfen: {error}",
         "_%n file in a row failed: the rest comes {later}_::_%n files in a row failed: the rest comes {later}_": [
             "%n Datei in Folge fehlgeschlagen: Der Rest kommt {later}",
@@ -1067,6 +1068,7 @@ OC.L10N.register(
             "am Tag {days} im {months} um {times}",
             "an den Tagen {days} im {months} um {times}"
         ],
+        "{what}: selector repaired ({old} → {new})": "{what}: Selektor repariert ({old} → {new})",
         "{url} asks for a person ({kind}): continue in the browser": "{url} fragt nach einem Menschen ({kind}): im Browser fortsetzen",
         "_going through %n choice: {choices}_::_going through %n choices: {choices}_": [
             "geht %n Auswahl durch: {choices}",
@@ -1104,9 +1106,13 @@ OC.L10N.register(
         "larger than the largest file, not read": "größer als die größte Datei, nicht gelesen",
         "step {number} ({label}, optional) skipped: {why}": "Schritt {number} ({label}, optional) übersprungen: {why}",
         "The kept session no longer reaches the listing: signing in anew": "Die gespeicherte Sitzung erreicht die Übersicht nicht mehr: neue Anmeldung",
+        "step {number}": "Schritt {number}",
         "“{choice}”: the listing has none of the recipe's links": "„{choice}“: Die Übersicht hat keinen der Links des Rezepts",
+        "next page": "nächste Seite",
         "step {number} ({label}): pausing {seconds} s before it": "Schritt {number} ({label}): {seconds} s Pause davor",
         "step {number} ({label}) failed, trying again in {seconds} s (attempt {attempt} of {of}): {why}": "Schritt {number} ({label}) fehlgeschlagen, neuer Versuch in {seconds} s (Versuch {attempt} von {of}): {why}",
+        "file links": "Dateilinks",
+        "level {level}": "Ebene {level}",
         "{url}: none of the files it loads is of the types to capture": "{url}: keine der Dateien, die sie lädt, ist von den zu erfassenden Typen",
         "the start page has none of the recipe's links: signed out, or the site changed?": "Die Startseite hat keinen der Links des Rezepts: abgemeldet, oder hat sich die Website geändert?",
         "the listing (page {number}, {address}) gave nothing: {why}": "die Übersicht (Seite {number}, {address}) lieferte nichts: {why}",
