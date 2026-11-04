@@ -150,16 +150,19 @@ recorder that makes them, and what a run does. Installing and the admin's settin
     folder, its server) fail a run. *Attachment names* is for attachments only.
   - `feed`: the files of an RSS or Atom feed, newest first: its enclosures (podcast episodes) or
     each entry's link, through the checked download. Values: `{title}`, `{feed}`, `{author}`,
-    `{date}`, `{year}`, `{filename}`, …
+    `{date}`, `{year}`, `{filename}`, … The log says what the feed holds (*The feed “Reports”:
+    20 entries, 18 file links*).
   - `media`: videos and audio from YouTube, Vimeo and the other sites yt-dlp supports (a video,
     or the newest entries of a playlist or channel). A format of separate video and audio streams
     (YouTube's best, from 720p up) is joined with ffmpeg, without re-encoding: into mp4 where the
     codecs fit (H.264, AV1 with AAC), else mkv (VP9 with Opus). ffmpeg runs without the app's
-    environment, as the browser does. Live and upcoming streams are skipped; an entry that
-    cannot be had (private, removed) is skipped with a line in the progress log, and tried again
-    next run. A video larger than the job's largest file is not downloaded (yt-dlp's
-    `max_filesize`). *Impersonate a browser* has yt-dlp present itself as a browser (its own
-    impersonation with `curl_cffi`, for sites behind Cloudflare that answer it with 403);
+    environment, as the browser does. The log says how many entries a playlist or channel listed
+    (*30 entries listed (Entries per run: 30)*). Live and upcoming streams are skipped, counted
+    in the log; an entry that cannot be had (private, removed) is skipped with a line in the
+    progress log, and tried again next run. A video larger than the job's largest file is not
+    downloaded (yt-dlp's `max_filesize`). *Impersonate a browser* has yt-dlp present itself as a
+    browser (its own impersonation with `curl_cffi`, for sites behind Cloudflare that answer it
+    with 403);
     extractors that need it use it anyway. For galleries, the same option is gallery-dl's browser
     emulation (Chrome's headers and TLS ciphers), and Harvester's own downloads of its files
     impersonate a browser as the
@@ -170,7 +173,8 @@ recorder that makes them, and what a run does. Installing and the admin's settin
     fails (a page of many), the files it listed are taken, a warning names its error, and the
     run does not count as a complete pass.
   - `remote`: the files in a folder of a WebDAV, SFTP, FTP or S3 server, a Nextcloud public
-    share, Google Drive, Dropbox, OneDrive and other rclone remotes. The job's account is an
+    share, Google Drive, Dropbox, OneDrive and other rclone remotes. The log says how many files
+    rclone listed in the folder, or that *Files* took none. The job's account is an
     rclone configuration with one remote (OAuth tokens from `rclone authorize` on a computer).
     Only remotes of other machines: every one of rclone's storage services (54 in rclone 1.75,
     from S3, B2 and Azure to pCloud, Mega, Proton Drive, iCloud Drive, Jottacloud, SMB, Storj

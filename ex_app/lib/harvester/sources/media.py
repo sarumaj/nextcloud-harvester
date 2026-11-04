@@ -24,7 +24,7 @@ import yt_dlp
 from yt_dlp.networking.impersonate import ImpersonateTarget
 
 from .. import browser, cookies, patterns
-from ..l10n import said
+from ..l10n import said, said_n
 from ..browser import allowed_url
 from . import download
 from .base import ACCOUNT_HELP, IMPERSONATE, Item, Option, Refused, Source, SourceError, Stopped, stop_requested
@@ -205,6 +205,27 @@ class Media(Source):
         def key_of(entry: dict) -> str:
             return f"{entry.get('ie_key') or entry.get('extractor_key') or listing.get('extractor_key')}:{entry['id']}"
 
+        if entries is not None:
+            most = int(self.settings["max_entries"])
+            self.report(
+                "info",
+                said_n(
+                    "%n entry listed (Entries per run: {max})",
+                    "%n entries listed (Entries per run: {max})",
+                    len(listed),
+                    max=most,
+                ),
+            )
+        live = sum(1 for entry in listed if entry and entry.get("live_status") in SKIPPED)
+        if live:
+            self.report(
+                "info",
+                said_n(
+                    "%n live or upcoming entry skipped (no file yet)",
+                    "%n live or upcoming entries skipped (no file yet)",
+                    live,
+                ),
+            )
         self.ahead([key_of(entry) for entry in listed if entry and entry.get("id")])
         for entry in listed:
             if not entry or not entry.get("id"):

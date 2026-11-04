@@ -1075,6 +1075,10 @@
             "geht %n Auswahlen durch: {choices}"
         ],
         "the choice “{choice}” failed: {why}": "die Auswahl „{choice}“ ist fehlgeschlagen: {why}",
+        "_The feed “{title}”: %n entry, {files} file links_::_The feed “{title}”: %n entries, {files} file links_": [
+            "Der Feed „{title}“: %n Eintrag, {files} Dateilinks",
+            "Der Feed „{title}“: %n Einträge, {files} Dateilinks"
+        ],
         "_gallery-dl listed %n file_::_gallery-dl listed %n files_": [
             "gallery-dl hat %n Datei gelistet",
             "gallery-dl hat %n Dateien gelistet"
@@ -1109,9 +1113,22 @@
             "%n weitere Nachrichten vom gewünschten Absender und mit dem gewünschten Betreff, nicht einzeln aufgeführt"
         ],
         "larger than the largest file, not read": "größer als die größte Datei, nicht gelesen",
+        "_%n entry listed (Entries per run: {max})_::_%n entries listed (Entries per run: {max})_": [
+            "%n Eintrag gelistet (Einträge pro Durchlauf: {max})",
+            "%n Einträge gelistet (Einträge pro Durchlauf: {max})"
+        ],
+        "_%n live or upcoming entry skipped (no file yet)_::_%n live or upcoming entries skipped (no file yet)_": [
+            "%n laufender oder geplanter Eintrag übersprungen (noch keine Datei)",
+            "%n laufende oder geplante Einträge übersprungen (noch keine Datei)"
+        ],
         "_%n release looked at ({skipped} drafts or prereleases left out), {files} files match_::_%n releases looked at ({skipped} drafts or prereleases left out), {files} files match_": [
             "%n Release angesehen ({skipped} Entwürfe oder Vorabversionen ausgelassen), {files} Dateien passen",
             "%n Releases angesehen ({skipped} Entwürfe oder Vorabversionen ausgelassen), {files} Dateien passen"
+        ],
+        "rclone found no file in {target} that Files ({filter}) takes": "rclone hat in {target} keine Datei gefunden, die Dateien ({filter}) nimmt",
+        "_rclone listed %n file in {target}_::_rclone listed %n files in {target}_": [
+            "rclone hat %n Datei in {target} gelistet",
+            "rclone hat %n Dateien in {target} gelistet"
         ],
         "step {number} ({label}, optional) skipped: {why}": "Schritt {number} ({label}, optional) übersprungen: {why}",
         "The kept session no longer reaches the listing: signing in anew": "Die gespeicherte Sitzung erreicht die Übersicht nicht mehr: neue Anmeldung",

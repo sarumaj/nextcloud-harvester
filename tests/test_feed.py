@@ -79,8 +79,11 @@ def test_known_episodes_are_left_out():
 
 def test_atom_entries_links():
     made = Feed({"url": "https://example.org/reports.atom", "take": "links", "path": "{year}/{filename}"}, {}, client())
+    log: list[str] = []
+    made.report = lambda level, text: log.append(text)
     items = list(made.items(lambda key: False))
     assert [item.path for item in items] == ["2025/q3.pdf", "2025/q2.pdf"]
+    assert log == ["The feed “Reports”: 2 entries, 2 file links"]
     assert items[0].key == "feed:urn:q3|https://reports.example.org/q3.pdf"
 
 

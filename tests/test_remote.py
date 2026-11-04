@@ -89,9 +89,12 @@ def test_items_newest_first_with_values():
     made = remote(path="/Reports/", include="*.pdf", path_template="{year}/{filename}")
     fake = FakeRclone()
     made.run, made.popen = fake.run, fake.popen
+    log: list[str] = []
+    made.report = lambda level, text: log.append(text)
     try:
         items = list(made.items(lambda key: key == "share:Reports/2025/report.pdf"))
         assert [item.path for item in items] == ["2026/plan.pdf"]
+        assert log == ["rclone listed 2 files in share:Reports"]
         assert items[0].key == "share:Reports/2026/plan.pdf" and items[0].values["month"] == 10
         command = fake.calls[0]
         assert command[0] == "/usr/bin/rclone" and command[-1] == "share:Reports"
@@ -298,3 +301,15 @@ def test_an_account_set_up_anew_wins_over_the_tokens_kept_from_the_one_before():
     older = remote(DRIVE)
     older.restore({"rclone_config": session["rclone_config"]})
     assert '"access_token":"new"' in older.config, "a session from before 0.8.2: by the remote's name"
+
+
+def test_a_files_filter_that_takes_nothing_is_said():
+    made = remote(path="/Reports/", include="*.odt")
+    made.run = lambda command, **kwargs: subprocess.CompletedProcess(command, 0, "[]", "")
+    log: list[str] = []
+    made.report = lambda level, text: log.append(text)
+    try:
+        assert not list(made.items(lambda key: False))
+    finally:
+        made.close()
+    assert log == ["rclone found no file in share:Reports that Files (*.odt) takes"]

@@ -1161,6 +1161,12 @@
             "przechodzi przez %n wyboru: {choices}"
         ],
         "the choice “{choice}” failed: {why}": "wybór „{choice}” się nie powiódł: {why}",
+        "_The feed “{title}”: %n entry, {files} file links_::_The feed “{title}”: %n entries, {files} file links_": [
+            "Kanał „{title}”: %n wpis, linki do plików: {files}",
+            "Kanał „{title}”: %n wpisy, linki do plików: {files}",
+            "Kanał „{title}”: %n wpisów, linki do plików: {files}",
+            "Kanał „{title}”: %n wpisu, linki do plików: {files}"
+        ],
         "_gallery-dl listed %n file_::_gallery-dl listed %n files_": [
             "gallery-dl wymienił %n plik",
             "gallery-dl wymienił %n pliki",
@@ -1209,11 +1215,30 @@
             "%n kolejnej wiadomości od żądanego nadawcy i z żądanym tematem, niewymienionej osobno"
         ],
         "larger than the largest file, not read": "większa niż największy plik, nieprzeczytana",
+        "_%n entry listed (Entries per run: {max})_::_%n entries listed (Entries per run: {max})_": [
+            "Wymieniono %n wpis (Wpisów na przebieg: {max})",
+            "Wymieniono %n wpisy (Wpisów na przebieg: {max})",
+            "Wymieniono %n wpisów (Wpisów na przebieg: {max})",
+            "Wymieniono %n wpisu (Wpisów na przebieg: {max})"
+        ],
+        "_%n live or upcoming entry skipped (no file yet)_::_%n live or upcoming entries skipped (no file yet)_": [
+            "Pominięto %n wpis na żywo lub zapowiedziany (jeszcze bez pliku)",
+            "Pominięto %n wpisy na żywo lub zapowiedziane (jeszcze bez pliku)",
+            "Pominięto %n wpisów na żywo lub zapowiedzianych (jeszcze bez pliku)",
+            "Pominięto %n wpisu na żywo lub zapowiedzianego (jeszcze bez pliku)"
+        ],
         "_%n release looked at ({skipped} drafts or prereleases left out), {files} files match_::_%n releases looked at ({skipped} drafts or prereleases left out), {files} files match_": [
             "Przejrzano %n wydanie (pominięto szkice lub wydania przedpremierowe: {skipped}), pasujące pliki: {files}",
             "Przejrzano %n wydania (pominięto szkice lub wydania przedpremierowe: {skipped}), pasujące pliki: {files}",
             "Przejrzano %n wydań (pominięto szkice lub wydania przedpremierowe: {skipped}), pasujące pliki: {files}",
             "Przejrzano %n wydania (pominięto szkice lub wydania przedpremierowe: {skipped}), pasujące pliki: {files}"
+        ],
+        "rclone found no file in {target} that Files ({filter}) takes": "rclone nie znalazł w {target} żadnego pliku, który bierze Pliki ({filter})",
+        "_rclone listed %n file in {target}_::_rclone listed %n files in {target}_": [
+            "rclone wymienił %n plik w {target}",
+            "rclone wymienił %n pliki w {target}",
+            "rclone wymienił %n plików w {target}",
+            "rclone wymienił %n pliku w {target}"
         ],
         "step {number} ({label}, optional) skipped: {why}": "krok {number} ({label}, opcjonalny) pominięty: {why}",
         "The kept session no longer reaches the listing: signing in anew": "Zachowana sesja nie dociera już do listy: ponowne logowanie",

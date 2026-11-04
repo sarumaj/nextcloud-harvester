@@ -15,6 +15,7 @@ from urllib.parse import urljoin
 import feedparser
 
 from .. import browser, patterns
+from ..l10n import said_n
 from . import download
 from .base import ACCOUNT_HELP, IMPERSONATE, RECHECK, Item, Option, Source, SourceError, pattern_search
 
@@ -148,6 +149,16 @@ class Feed(Source):
             for entry in entries
             for url in self.files(entry)
         ]
+        self.report(
+            "info",
+            said_n(
+                "The feed “{title}”: %n entry, {files} file links",
+                "The feed “{title}”: %n entries, {files} file links",
+                len(entries),
+                title=feed,
+                files=len(found),
+            ),
+        )
         self.ahead([key for key, _, _ in found])
         for key, url, entry in found:
             if seen(key):

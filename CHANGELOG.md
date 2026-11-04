@@ -37,6 +37,10 @@
   of known files only (*Stop at known files*), or the *Pages* limit with a next page still there
   (*Read 10 pages (Pages): older pages are not read this run*). A level's *waiting for … to show*
   is said once a run, not for each of its listings.
+- Feed, video, file store and release jobs say in the log what their listing found: *The feed
+  “Reports”: 20 entries, 18 file links*, *30 entries listed (Entries per run: 30)* and the live
+  or upcoming ones skipped, *rclone listed 12 files in share:Reports* (or that *Files* took
+  none), *5 releases looked at (2 drafts or prereleases left out), 7 files match*.
 - A mail job's progress log says what the mailbox search found (*Folder INBOX: 12 new messages,
   3 from the sender and with the subject asked for*, or no new messages and how many were done
   with before) and names each message of the sender and subject, with what the job takes from it

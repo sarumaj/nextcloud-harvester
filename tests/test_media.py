@@ -79,7 +79,10 @@ def test_a_channels_new_entries_with_their_names_and_values():
     }
     pages = {CHANNEL: flat} | {video(n)["webpage_url"]: video(n) for n in (1, 2)}
     source = media(pages, max_entries=10)
+    log: list[str] = []
+    source.report = lambda level, text: log.append(text)
     items = list(source.items(lambda key: key == "Example:v1"))
+    assert log == ["3 entries listed (Entries per run: 10)", "1 live or upcoming entry skipped (no file yet)"]
     assert [item.key for item in items] == ["Example:v2"]
     assert items[0].path == "Family/Holiday 2 the beach [v2].mp4"
     assert items[0].values["year"] == 2026 and items[0].values["day"] == 2

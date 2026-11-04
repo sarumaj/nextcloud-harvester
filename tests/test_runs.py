@@ -404,7 +404,10 @@ def test_an_entry_that_cannot_be_had_is_logged_and_a_large_one_refused():
     log: list[str] = []
     made.report = lambda level, text: log.append(text)
     (item,) = made.items(lambda key: False)
-    assert log == ["Skipped https://video.example/watch?v=9: yt-dlp: Unsupported URL: https://video.example/watch?v=9"]
+    assert log == [
+        "2 entries listed (Entries per run: 30)",
+        "Skipped https://video.example/watch?v=9: yt-dlp: Unsupported URL: https://video.example/watch?v=9",
+    ]
     with pytest.raises(Refused, match="5 MB, more than the job's largest file"):
         made.fetch(item, io.BytesIO())
     assert FakeYoutubeDL.calls[-1][1]["max_filesize"] == 4_000_000

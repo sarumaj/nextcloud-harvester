@@ -26,6 +26,7 @@ from collections.abc import Callable, Iterator
 from typing import BinaryIO
 
 from .. import patterns
+from ..l10n import said, said_n
 from ..browser import allowed_host, allowed_url, child_env, dns_refusal
 from .base import Item, Option, Source, SourceError, check_stop, killed_on_stop, stoppable_run
 
@@ -310,6 +311,7 @@ class Remote(Source):  # pylint: disable=too-many-instance-attributes
         # Newest first: a run stopped by max_items has the newest files.
         entries = [entry for entry in entries if not entry.get("IsDir")]
         entries.sort(key=lambda entry: entry.get("ModTime", ""), reverse=True)
+        self.told(len(entries))
         self.ahead([self._target(str(entry["Path"])) for entry in entries])
         for entry in entries:
             path = str(entry["Path"])
@@ -335,6 +337,29 @@ class Remote(Source):  # pylint: disable=too-many-instance-attributes
                 yield Item(key=key, path="", url=key, values=values, problem=SourceError(str(error).strip("'\"")))
                 continue
             yield Item(key=key, path=target, url=key, values=values)
+
+    def told(self, count: int) -> None:
+        """The log's line of what the listing found: its files, or that Files took none."""
+        include = str(self.settings["include"]).strip()
+        if include and not count:
+            self.report(
+                "info",
+                said(
+                    "rclone found no file in {target} that Files ({filter}) takes",
+                    target=self._target(),
+                    filter=include,
+                ),
+            )
+        else:
+            self.report(
+                "info",
+                said_n(
+                    "rclone listed %n file in {target}",
+                    "rclone listed %n files in {target}",
+                    count,
+                    target=self._target(),
+                ),
+            )
 
     def fetch(self, item: Item, dest: BinaryIO) -> None:
         # rclone's messages go to a file: a pipe read only at the end could fill up and stall it.
