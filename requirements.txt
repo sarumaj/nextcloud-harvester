@@ -24,4 +24,6 @@ socksio==1.0.0
 tzdata==2026.5
 # yt-dlp's impersonation (the media source's option Impersonate a browser), at the version yt-dlp pins.
 curl-cffi==0.16.3
-yt-dlp==2026.10.26
+# [pin]: yt-dlp-ejs at the version this yt-dlp was made with, the scripts that solve YouTube's
+# challenges (its n parameter and signatures) in a JavaScript runtime (the Dockerfile's node).
+yt-dlp[pin]==2026.10.26

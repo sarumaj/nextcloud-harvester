@@ -43,6 +43,9 @@ BASE = {
 # Where yt-dlp finds ffmpeg and ffprobe: the image's wrappers, which start them without the app's
 # environment (its secret). Elsewhere (tests, a computer without them) yt-dlp looks in PATH.
 FFMPEG = "/usr/local/lib/harvester-ffmpeg"
+# The JavaScript runtime yt-dlp solves YouTube's challenges in (yt-dlp-ejs): the image's Node.js,
+# through a wrapper without the app's environment. Elsewhere yt-dlp's default (Deno, if any).
+NODE = "/usr/local/lib/harvester-node/node"
 # The joined file's container: mp4 when the streams fit in it (H.264 or AV1 with AAC), else mkv,
 # which takes any (VP9 with Opus, YouTube's usual); never re-encoded.
 MERGED = "mp4/mkv"
@@ -230,6 +233,8 @@ class Media(Source):
         if self.secrets.get("username"):
             account |= {"username": self.secrets["username"], "password": self.secrets.get("password", "")}
         tools = {"ffmpeg_location": FFMPEG} if os.path.isdir(FFMPEG) else {}
+        if os.path.isfile(NODE):
+            tools["js_runtimes"] = {"node": {"path": NODE}}
         quiet = {"logger": self.logger}
         return BASE | quiet | tools | {"merge_output_format": MERGED} | account | self.impersonation()
 

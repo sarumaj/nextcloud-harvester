@@ -119,6 +119,18 @@ RUN mkdir -p /usr/local/lib/harvester-ffmpeg && \
     done && \
     /usr/local/lib/harvester-ffmpeg/ffmpeg -version | head -1
 
+# yt-dlp solves YouTube's challenges with yt-dlp-ejs's scripts in a JavaScript runtime
+# (sources/media.py, NODE): Playwright's Node.js 24, started as ffmpeg is, without the app's
+# environment; yt-dlp runs it with Node's permission model (no files, no other programs). Without
+# it YouTube's formats are missing ("n challenge solving failed").
+RUN SITE=$(python3 -c "import sysconfig; print(sysconfig.get_paths()['purelib'])") && \
+    mkdir -p /usr/local/lib/harvester-node && \
+    printf '#!/bin/sh\nexec env -i PATH=/usr/bin:/bin HOME="$HOME" LANG=C.UTF-8 %s "$@"\n' "$SITE/playwright/driver/node" \
+        > /usr/local/lib/harvester-node/node && \
+    chmod 755 /usr/local/lib/harvester-node/node && \
+    /usr/local/lib/harvester-node/node --version && \
+    python3 -c "import yt_dlp_ejs"
+
 # Chromium for the recorder and the browser source, at Playwright's own version, with the
 # libraries it needs: the full browser, run in its new headless mode (browser.CHANNEL), not
 # the headless shell, which sites' bot protection tells from Chrome. The shell is not installed

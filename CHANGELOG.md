@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- YouTube's formats are all there again: yt-dlp solves YouTube's challenges ("n challenge
+  solving failed: Some formats may be missing") with yt-dlp-ejs's scripts, now in the image, in
+  its Node.js, which runs without the app's environment and with Node's permission model.
+
 ## 0.14.1 - 2026-11-04
 
 ### Added

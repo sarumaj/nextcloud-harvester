@@ -131,6 +131,13 @@ def test_a_format_of_separate_streams_is_joined_by_yt_dlp(monkeypatch, tmp_path)
     assert "ffmpeg_location" not in options, "no wrappers here: yt-dlp looks in PATH"
     monkeypatch.setattr("harvester.sources.media.FFMPEG", str(tmp_path))
     assert source.base()["ffmpeg_location"] == str(tmp_path), "the image's wrappers, without the app's environment"
+    assert "js_runtimes" not in options, "no Node.js wrapper here: yt-dlp's default"
+    node = tmp_path / "node"
+    node.write_text("#!/bin/sh\n")
+    monkeypatch.setattr("harvester.sources.media.NODE", str(node))
+    assert source.base()["js_runtimes"] == {
+        "node": {"path": str(node)}
+    }, "YouTube's challenges solved in the image's Node.js"
 
 
 def test_errors_and_refused_pages():
