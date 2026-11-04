@@ -7,6 +7,13 @@
 - **Browse** beside the address of a gallery, video, feed or release job: the recorder's browser
   alone (nothing recorded), at the field's address, and **Use this address** takes the page it
   shows into the field.
+- **Try the address** in the form of every job but a website's (*Try the mailbox*, *Try the
+  remote*): the listing once as the form holds it, before it is saved, nothing downloaded
+  (`POST /api/try`): what a run would fetch (Files per run), what the job's history has, what
+  its file types, sizes and patterns leave out, the first 20 files with the names and tags they
+  would get, a mailbox's messages with what each gives, or why it failed with a hint. In a
+  runner's place, through the guard, the proxy and the DNS servers, 60 seconds at most, one try
+  of a person's at a time.
 - DNS servers of the admin's choice: **DNS servers** (a form of its own in Harvester's admin
   settings, or `HARVESTER_DNS`) sends every name the container looks up (the app and its guard,
   the browsers, the downloads, yt-dlp, gallery-dl, rclone, the mail servers) to plain addresses,

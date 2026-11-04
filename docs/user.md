@@ -43,6 +43,24 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   disguise, cookie banners), nothing recorded and no picks. **Use this address** takes the page
   it shows into the field and goes back to the form; *Cancel* leaves the field as it was. It
   takes one of the browsers, as the recorder does, and closes when its view is left.
+- **Try the address** (every source but `site`, whose recorder has *Test the recipe*; *Try the
+  mailbox*, *Try the remote*): lists once what the job as the form holds it would fetch, before
+  it is saved, nothing downloaded or marked (`POST /api/try`, `tryout.py`, checked as Save
+  checks the form). It shows one line (*found 12 files, 10 would be fetched this run, 2 in later
+  runs (Files per run: 10), 3 already in the job's history, 1 skipped: not of the job's file
+  types, 4 left out by the job's patterns*), the first 20 files with the path and tags a run
+  gives them (*named when downloaded* where the name comes with the file, a problem such as a
+  file name that cannot be made), and what the listing said: a mailbox's messages with what
+  each gives, an entry yt-dlp skipped. The account's fields as typed are used, the saved job's
+  for those left empty; the history is the saved job's (a new job has none). The file types are
+  judged by the name's extension and the sizes where the listing tells them (a release's or a
+  remote's file, yt-dlp's size): the download's checks still decide. A failure says why, with a
+  hint where one is known (the account, an address that is not allowed or that the DNS servers
+  block, a site gallery-dl or yt-dlp does not know, a page that is no feed). A try takes a
+  runner's place as a run does (it waits up to 15 seconds for one and for the job's site), goes
+  through the guard, the proxy and the DNS servers as a run, one of a person's at a time, for 60
+  seconds at most: what it found by then is shown, cut there. The account's values are never
+  logged nor sent back.
 - **On-demand jobs** (`ex_app/lib/harvester/ondemand.py`): a job of a source with an address
   (`site`: its recipe's listing; `feed`, `media`, `gallery`: their page or feed) may be **On
   demand**: no schedule (it is never due; the list says *On demand*), and it runs when you send it

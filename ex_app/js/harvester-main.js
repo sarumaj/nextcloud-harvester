@@ -832,6 +832,7 @@
 	async function renderCredentials(container, job, source, notice = '') {
 		container.replaceChildren()
 		container.typed = () => false
+		container.account = () => ({})
 		container.save = async () => false
 		if (!source.credentials.length) return
 		const status = el('p', { class: 'harvester-muted', role: 'status', text: notice })
@@ -873,6 +874,8 @@
 		}
 		const typed = () => Object.fromEntries(Object.entries(inputs).filter(([, input]) => input.value).map(([k, input]) => [k, input.value]))
 		container.typed = () => Object.keys(typed()).length > 0
+		// The fields as typed, for Try (empty: the saved job's stay).
+		container.account = typed
 		container.save = async (saved) => {
 			const body = typed()
 			if (!Object.keys(body).length) return false
@@ -2711,6 +2714,83 @@
 
 	// The sources whose address is a web page to find in the browser first (Browse).
 	const BROWSED = ['gallery', 'media', 'feed', 'releases']
+	// What a try says of each file (tryout.py's states).
+	const TRY_STATES = () => ({
+		fetch: t('fetched this run'),
+		later: t('in a later run (Files per run)'),
+		known: t('already in the job’s history'),
+		type: t('skipped: not of the job’s file types'),
+		size: t('skipped: outside the job’s sizes'),
+		problem: t('a problem'),
+	})
+
+	// Try the address (every type but a website, whose recorder tests its recipe): the job's
+	// listing once as the form holds it, nothing downloaded or saved (POST /api/try); body() is
+	// the job as Save sends it, jobId() the saved job's (its history and account), the account's
+	// fields as typed go with it. The outcome in a persistent live region, a failure as an alert.
+	function tryPanel(source, body, jobId, credentials) {
+		if (source.name === 'site') return ''
+		const label = source.name === 'mail' ? t('Try the mailbox') : source.name === 'remote' ? t('Try the remote') : t('Try the address')
+		const result = el('div', { class: 'harvester-try-result', role: 'status' })
+		const failure = el('div', { class: 'harvester-error', role: 'alert' })
+		const button = el('button', {
+			type: 'button',
+			text: label,
+			title: t('List once what the job would fetch, as the form holds it: nothing is downloaded or saved'),
+			onclick: async () => {
+				if (button.disabled) return
+				button.disabled = true
+				button.textContent = t('Trying…')
+				button.setAttribute('aria-busy', 'true')
+				failure.replaceChildren()
+				result.replaceChildren(el('p', { class: 'harvester-muted', text: t('Trying… (at most a minute)') }))
+				try {
+					showTry(await api('POST', '/try', { job: body(), id: jobId(), account: credentials.account() }), result, failure)
+				} catch (e) {
+					result.replaceChildren()
+					failure.replaceChildren(el('p', { text: e.message }))
+				} finally {
+					button.disabled = false
+					button.textContent = label
+					button.removeAttribute('aria-busy')
+				}
+			},
+		})
+		return el('section', { class: 'harvester-try' },
+			el('h3', { text: label }),
+			el('p', { class: 'harvester-muted', text: t('What a run would fetch now, with the file names and tags it would give, before you save: the listing once, with the account typed or saved, nothing downloaded.') }),
+			button, failure, result)
+	}
+
+	// A try's answer: its outcome in one line, the first files with their names, tags and what a
+	// run would do with them, what the source said (a mailbox's messages); or why it failed.
+	function showTry(answer, result, failure) {
+		const notes = answer.notes && answer.notes.length
+			? [el('h4', { text: t('What the listing said') }),
+				el('ul', { class: 'harvester-try-notes' }, ...answer.notes.map((note, index) => el('li', { text: shown(note, (answer.notes_l10n || [])[index]) })))]
+			: []
+		if (!answer.ok) {
+			result.replaceChildren(...notes)
+			failure.replaceChildren(
+				el('p', { class: 'harvester-test-summary harvester-test-failed' }, glyph('✗'), t('The try failed: {error}', { error: shown(answer.error, answer.error_l10n) })),
+				...(answer.hint ? [el('p', { text: shown(answer.hint, answer.hint_l10n) })] : []))
+			return
+		}
+		const states = TRY_STATES()
+		const files = answer.items.map((item) => el('li', {},
+			el('code', { text: item.path || item.url }),
+			el('span', { class: `harvester-try-state harvester-try-${item.state}`, text: states[item.state] || item.state }),
+			item.pending ? el('small', { class: 'harvester-muted', text: t('named when downloaded: the name shown stands in') }) : '',
+			item.tags.length ? el('small', { text: t('Tags: {tags}', { tags: item.tags.join(', ') }) }) : '',
+			item.problem ? el('small', { class: 'harvester-error', text: shown(item.problem, item.problem_l10n) }) : ''))
+		result.replaceChildren(
+			el('p', { class: `harvester-test-summary ${answer.found ? 'harvester-test-ok' : 'harvester-test-empty'}` },
+				glyph(answer.found ? '✓' : '–'), t('Tried in {seconds} s: {outcome}', { seconds: answer.seconds, outcome: shown(answer.outcome, answer.outcome_l10n) })),
+			files.length ? el('ul', { class: 'harvester-try-items' }, ...files) : '',
+			answer.more ? el('p', { class: 'harvester-muted', text: n('and %n more file', 'and %n more files', answer.more) }) : '',
+			answer.running ? el('p', { class: 'harvester-muted', text: t('The listing goes on in the background until it stops; you can try again once it has.') }) : '',
+			...notes)
+	}
 
 	// The job's form; with sent (an address from ?fetch=), the new job fetches it once saved.
 	function renderForm(root, job, prefill, sent) {
@@ -3059,7 +3139,8 @@
 				}
 			},
 		})
-		page = el('div', {}, form, credentials, el('div', { class: 'harvester-form-actions' }, error, save, back, exportButton, templateButton, notice))
+		page = el('div', {}, form, credentials, tryPanel(chosen, () => ({ ...formBody(), name: name.value || said(chosen.title), target: target.value || '/' }), () => (current ? current.id : null), credentials),
+			el('div', { class: 'harvester-form-actions' }, error, save, back, exportButton, templateButton, notice))
 		root.replaceChildren(page)
 		name.focus()
 		renderCredentials(credentials, job, chosen)
@@ -3270,6 +3351,14 @@
 		#harvester .harvester-tertiary { min-height: 0; margin: 0 0 0 4px; padding: 2px 8px; border: none; border-radius: var(--border-radius); background: none; color: var(--color-primary-element); font-weight: bold; cursor: pointer; }
 		#harvester .harvester-tertiary:hover:not(:disabled) { background: var(--color-background-hover); }
 		#harvester .harvester-browse-button { margin: -4px 0 12px; }
+		#harvester .harvester-try { margin-top: 24px; max-width: 760px; }
+		#harvester .harvester-try-items, #harvester .harvester-try-notes { margin: 4px 0; padding: 0; list-style: none; overflow-wrap: anywhere; }
+		#harvester .harvester-try-items li { display: flex; flex-wrap: wrap; gap: 2px 8px; align-items: baseline; padding: 4px 0; border-bottom: 1px solid var(--color-border); }
+		#harvester .harvester-try-items small { flex-basis: 100%; }
+		#harvester .harvester-try-notes li { padding: 2px 0; }
+		#harvester .harvester-try-state { font-size: 90%; padding: 0 6px; border-radius: var(--border-radius); background: var(--color-background-dark); }
+		#harvester .harvester-try-fetch { background: color-mix(in srgb, var(--color-success) 15%, transparent); }
+		#harvester .harvester-try-problem { background: color-mix(in srgb, var(--color-error) 15%, transparent); }
 		/* A narrow window: the recorder's screen above its steps, at the full width. */
 		@media (max-width: 800px) {
 			#harvester .harvester-stage { flex-direction: column; align-items: stretch; }

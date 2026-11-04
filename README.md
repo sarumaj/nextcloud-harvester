@@ -36,8 +36,10 @@ the app's browser or taken from a template, not by code.
   for as JSON, also with POST and GraphQL), and the app proposes their patterns, the files' names
   and tags; it adds the steps of yours (a code from the phone, an approval in an app, a
   handover); *Test the recipe* shows what a run would find.
-- **Browse:** the form of a gallery, video, feed or release job finds its page in the app's
-  browser (*Browse*, *Use this address*).
+- **Browse and try:** the form of a gallery, video, feed or release job finds its page in the
+  app's browser (*Browse*, *Use this address*); every other source's form tries its listing
+  once before it is saved (*Try the address*): what a run would fetch, with the files' names and
+  tags, what is known or left out, a mailbox's messages, or why it failed.
 - **Templates** for known sites (heise's magazines, podcasts, channels, galleries, releases, a
   page saved on demand), and recipes to export and import as files.
 - **Sign-ins:** passwords, one-time codes, codes by e-mail, cookies, OAuth2 for mail; kept
