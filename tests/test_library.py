@@ -480,7 +480,7 @@ def test_uploads_come_in_pieces_and_writes_need_no_unlock(app):
     assert large.value.status_code == 413
 
 
-def test_an_unencrypted_library_of_an_earlier_build_is_set_aside(tmp_path):
+def test_an_unencrypted_library_of_an_earlier_build_is_set_aside_and_broken_writes_go(tmp_path):
     store = Store(str(tmp_path / "db"))
     with store.writing() as db:
         db.execute("CREATE TABLE library (id INTEGER PRIMARY KEY, user TEXT, path TEXT)")
@@ -489,8 +489,12 @@ def test_an_unencrypted_library_of_an_earlier_build_is_set_aside(tmp_path):
     (tmp_path / "library" / "anna" / "old.pdf").write_bytes(b"old")
     Shelf(store, tmp_path / "library")
     assert (tmp_path / "library-unencrypted" / "anna" / "old.pdf").read_bytes() == b"old"
+    left = tmp_path / "library" / "anna" / "ab" / ".abcd.part"
+    left.parent.mkdir(parents=True)
+    left.write_bytes(b"broken off")
     assert not store.rows("SELECT name FROM sqlite_master WHERE name IN ('library', 'library_locks')")
     Shelf(store, tmp_path / "library")
+    assert not left.exists(), "what a write broke off by a restart left is removed"
 
 
 def test_the_jobs_files_with_their_labels(app):

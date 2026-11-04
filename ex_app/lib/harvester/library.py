@@ -225,6 +225,9 @@ class Shelf:  # pylint: disable=too-many-public-methods
         self._retire_unencrypted()
         store.tables(SCHEMA)
         self._writing = threading.Lock()
+        # What a write broke off by a restart left (an upload, a move, a run): encrypted, unused.
+        for partial in self.root.glob("*/*/.*.part"):
+            partial.unlink(missing_ok=True)
 
     def _retire_unencrypted(self) -> None:
         """A development build's unencrypted library (its table `library` with paths) is not
