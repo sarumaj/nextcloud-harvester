@@ -44,6 +44,10 @@ the app's browser or taken from a template, not by code.
 - **Languages:** English, German and Polish: the page (also the progress log and the schedule
   in words), the admin's settings and the notifications follow each person's language in
   Nextcloud (others are English).
+- **On a phone, by keyboard and with a screen reader:** the jobs as cards on a phone and the
+  recorder's screen above its steps; a job's form with the source's essentials, the other options
+  folded into groups; Escape twice takes the keyboard out of a browser's screen; questions in a
+  dialog of the page, errors and a run's outcomes told to screen readers once.
 - **Careful with sites and with the server:** one job per site at a time, the pauses a site asks
   for, files fetched once, a browser that skips images, fonts and videos while it walks a site;
   the browsers and downloads reach only public addresses.
