@@ -64,18 +64,87 @@ Nextcloud's tags or it keeps Harvester's labels itself, and the person's secrets
 (deleted with the job or when its place changes). `files` is `nextcloud.py`, `library` `library.py`
 (with its routes, `routes/library.py`), `inbox` `inbox.py`, `vault` `vaultlib.py` over
 `davstorage.py` (vault.py's storage on WebDAV; its keys set by `routes/vault.py`). The library's
-routes: `GET /api/library/state` (whether it has a password and is open to this browser, its
-minutes, usage and limit), `POST /api/library/unlock` (`{password}`: a token, sent back as the
-header `X-Harvester-Library`, or `?unlock=` in a file's address for `<img>` and `<video>`), `POST
-/api/library/lock`, `PUT /api/library/password` (`{current, password, minutes}`), `GET
-/api/library?folder=&label=`, `GET /api/library/files/<id>` (`Range`; `?download=1`) and `DELETE
-/api/library/files/<id>`; locked, they answer 403. A job's `options` carry its place (`save_to`,
-`vault`, `vault_target`, `vault_verify`) and `tag_as`; a job without them saves into the person's
-files with Nextcloud's tags, so API clients that send a job's options back as they got them (Talk
-AI) keep its place. Another destination is one more `Destination` with its `Library`, its form's
-options in `destinations.OPTIONS` (group `save`) and what it switches off in `destinations.RULES`.
+routes are in [The private library's routes](#the-private-librarys-routes). A job's `options`
+carry its place (`save_to`, `vault`, `vault_target`, `vault_verify`) and `tag_as`; a job without
+them saves into the person's files with Nextcloud's tags, so API clients that send a job's
+options back as they got them (Talk AI) keep its place. Another destination is one more
+`Destination` with its `Library`, its form's options in `destinations.OPTIONS` (group `save`)
+and what it switches off in `destinations.RULES`.
 Its tests run against fakes of Nextcloud whose files are a folder (`tests/test_destinations.py`),
 and the vault's files are read by the sister app's code where it is there (`tests/vault_js.mjs`).
+
+## The private library's format
+
+Each person's library (`library.py`, `librarycrypt.py`, `librarykeys.py`) is encrypted with keys
+of its own:
+
+- **Key pair.** X25519, made at setup. The public key is stored plain (`library_keys.public`):
+  writing (a job, an upload, a move) needs only it, so it works while the library is locked.
+  The private key is stored twice, wrapped with AES-256-GCM (its associated data: the person's
+  ID and the public key): `by_password`, with a key from the password (scrypt, `n=2^15, r=8,
+  p=1`, a random salt, the costs stored beside it), and `by_recovery`, with a key from the
+  recovery key (160 random bits, shown once as base32 in groups of four; HKDF-SHA256 with a
+  random salt). Unlocked, the private key is kept in memory only (`librarykeys.Session`, by a
+  random token), dropped at lock, after the person's minutes without use, and at a restart.
+- **Lookup key.** 32 random bytes per person, stored plain: a row's `lookup` is
+  HMAC-SHA256(lookup key, `"path\0" + path`), by which a job finds the file it saved while the
+  library is locked. It lets whoever has the database test a guessed path, not read one.
+- **Per file and folder.** A random 32-byte secret, sealed to the public key (ECIES: an
+  ephemeral X25519 key, HKDF-SHA256 over the shared secret with the two public keys as salt,
+  AES-256-GCM; associated data `"secret|" + blob ID`). Its subkeys (HKDF-SHA256, info
+  `harvester library content|meta|thumb`) encrypt the content, the metadata (JSON: name,
+  folder's row, size, type; AES-256-GCM, a random nonce, associated data `"meta|" + blob ID`)
+  and the thumbnail (`"thumb|" + blob ID`). A label given or taken off is a row of
+  `library_labels`, sealed to the public key (`["+" or "-", label]`, associated data the
+  person's ID and the file's row), so that a job labels while the library is locked; they apply
+  in order.
+- **A blob** on the disk, `library/<person>/<xx>/<blob ID>` (the ID 16 random bytes, in hex):
+  `HVL1`, the blob ID, then chunks of 64 KiB each encrypted with AES-256-GCM and its 16-byte tag,
+  the nonce the chunk's index (each content key encrypts one blob once), the associated data
+  `HVL1`, the blob ID, the index (8 bytes) and whether the chunk is the last. The last chunk is
+  padded to 64 KiB: the blob's length gives only the number of chunks; the exact size is in the
+  metadata. A range is read by decrypting its chunks alone; a chunk changed, swapped, moved,
+  dropped or cut off does not open (`Tampered`), and a blob of another length than its size
+  gives is refused. A thumbnail (a JPEG of 320 pixels at most, made with Pillow from a picture of
+  32 MB at most when it is written; none for videos) is `<blob ID>.thumb`.
+- **Checked when read:** a row whose sealed secret or metadata does not open, whose metadata
+  names another folder than its row, or whose lookup is not its path's is left out (logged by
+  its row's ID).
+
+### The private library's routes
+
+`routes/library.py`: `GET /api/library/state` (`setup`, `unlocked`, `cookie`: whether the
+cookie alone opens it, `minutes`, `usage`, `limit`), `POST /api/library/setup/start` (a recovery
+key, kept 30 minutes), `POST /api/library/setup` (`{password, recovery, minutes}`: the key typed
+back), `POST /api/library/unlock` (`{password}`), `POST /api/library/recover` (`{recovery,
+password}`), `PUT /api/library/password` (`{current, password, minutes}`), `POST
+/api/library/lock`. Those that open a session answer its token and set the cookie
+`harvester_library` (HttpOnly, SameSite=Strict, Secure unless the page is on http, its path the
+proxy's path the page sends as `X-Harvester-Base`); the page keeps the token in memory and sends
+it as `X-Harvester-Library` too. AppAPI's proxy (`ExAppProxyController`) passes the browser's
+cookies to the app and the answer's headers back, `Range` and `206` included: so read from its
+code, not yet seen through a real proxy or HaRP. The page asks the state whether the cookie came
+back: if so, an `<img>`, `<video>` or `<iframe>` uses the file's own address; if not, it fetches
+pictures and thumbnails with the header into `blob:` addresses, and gets a ticket (`POST
+/api/library/files/<id>/ticket`: `?ticket=`, that one file, while the session lasts, an hour at
+most) for a video, sound, PDF or download. Unlocked: `GET /api/library?folder=&label=&q=`, `POST
+/api/library/folders` (`{path}`), `GET /api/library/files/<id>` (`Range`; `?download=1`), `GET
+/api/library/files/<id>/thumbnail`, `PUT /api/library/files/<id>` (`{name, folder}`: rename,
+move), `DELETE /api/library/files/<id>`; locked, they answer 403. Set up, locked or not: `POST
+/api/library/uploads` (`{folder, name, size}`), `PUT /api/library/uploads/<id>?offset=` (a piece,
+16 MB at most, in order), `POST /api/library/uploads/<id>/done`, `DELETE
+/api/library/uploads/<id>`.
+
+`routes/moves.py`: the Files action (`nc.ui.files_dropdown_menu.register_ex`, AppAPI's version
+2 of file actions, `mime="/"` so that every file and folder has it) posts the selected nodes to
+`POST /api/library/from-files`, which proposes a move (`librarymove.py`) and answers
+`{"redirect_handler": "harvester"}`: the browser opens the page with `?fileIds=`. `GET
+/api/library/moves`, `POST /api/library/moves/<id>/start` (`{folder}`). The admin's reset is
+the occ command `harvester:library-reset` (`nc.occ_commands.register`), whose handler `POST
+/occ/library-reset` is outside `/api`: no proxy route reaches it, and it refuses a request with a
+person. Their tests: `tests/test_library.py`, `test_library_crypto.py` (the format, tampering,
+50 MB in bounded memory), `test_library_move.py` (a fake WebDAV with a trash bin and versions)
+and the page's in `test_page_destinations.py`.
 
 ## Trying a job's listing
 

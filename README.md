@@ -21,8 +21,9 @@ the app's browser or taken from a template, not by code.
   file) or Markdown (the main text), such as receipts and articles, also a page you send it; the
   PDFs and pictures a page only shows (a viewer, an `<embed>`, a `blob:`); pictures at their
   full size.
-- **Where the files go:** into your files, into **Harvester's private library**, which no other
-  Nextcloud app sees (a gallery and viewer on Harvester's page, an optional password), or into a
+- **Where the files go:** into your files, into **Harvester's private library**, a hidden space
+  encrypted on the server that no other Nextcloud app sees (thumbnails, a viewer, uploads, a
+  password and a recovery key; files and folders moved there from Files), or into a
   **Cryptomator vault**: its inbox, which the vault app empties into the vault, or the vault
   itself, encrypted on the server;
   tagged with Nextcloud's tags, Harvester's own labels, or not at all.

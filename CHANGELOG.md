@@ -6,11 +6,23 @@
 
 - **Save to** in a job's form: the person's files (as before) or **Harvester's private
   library**, in the app's own storage per person, which Nextcloud's Files, Photos, search,
-  WebDAV and sync clients never see; **Library** on the page (folders, a grid of pictures, a
-  viewer streaming with seeking, downloads, Delete, a filter by label), an optional password
-  (scrypt) with the library locked again after the person's minutes without use, and the
-  admin's limits per person (10 GB by default) and in all. A file deleted in the library is
-  fetched again as one deleted in Files (*Download deleted files again*).
+  WebDAV and sync clients never see, with the admin's limits per person (10 GB by default) and
+  in all. A file deleted in the library is fetched again as one deleted in Files (*Download
+  deleted files again*).
+- **The private library is encrypted**, a hidden space for any file: an X25519 key pair per
+  person, its private key wrapped with the library password (scrypt) and a recovery key shown
+  once at setup (typed back to confirm); each file's content in 64 KiB chunks of AES-256-GCM
+  (ranges decrypt their chunks alone; a chunk changed, swapped or cut off is found), its key
+  sealed to the public key, its name, folder, size, type, labels and thumbnail encrypted too.
+  Jobs, uploads and moves write while it is locked; reading needs it unlocked, the private key
+  in the server's memory only, dropped at lock, after the person's minutes and at a restart.
+  **Library** on the page: setup, unlock, recovery, folders, thumbnails (Pillow), a viewer,
+  search by name and label, uploads in pieces (drag and drop), Rename, Move, Delete, and a
+  cookie (HttpOnly, SameSite=Strict) or per-file tickets instead of a token in addresses.
+- **Move to the private library** in Files' actions menu, for files and folders: each streamed
+  into the library, checked, its versions and the original deleted and purged from the trash
+  bin; a file that fails stays, the page says why. `occ harvester:library-reset <user>
+  --confirm`: the admin deletes a person's library.
 - **Save to** a Cryptomator vault: **its inbox** (the folder gets the marker of the app *Vaults
   for Cryptomator*, which moves the files into the vault when the person unlocks it; files moved
   out are never fetched again) or **the vault directly** (each file encrypted on the server and

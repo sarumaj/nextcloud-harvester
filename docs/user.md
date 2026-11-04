@@ -120,24 +120,15 @@ options a place cannot use are switched off with why. A job saved before keeps s
 files with Nextcloud's tags, as it did.
 
 - **Your files** (`files`, the default): the folder is one of your files, as before.
-- **Harvester's private library** (`library`, `library.py`): the files stay in Harvester's own
-  storage, per person, not in Nextcloud at all: Files, Photos, Memories, the search, WebDAV and
-  the sync clients never see them, nor does anyone else. The folder is a folder of the library
-  (`/Magazines`). **Library** on Harvester's page shows them by folder: pictures as a grid,
-  other files as a list, a viewer for pictures, videos, sounds, PDFs and plain text (played in
-  the page as they stream, with seeking), a download, Delete (a folder with everything in it),
-  and a filter by label. A file deleted in the library is gone for its job as one deleted in
-  Files: with *Download deleted files again* the next run that finds it fetches it again. A
-  file saved over (*Check known files for changes*) replaces the one before: the library keeps
-  no versions. The admin sets how much a person may keep there (10 GB by default) and everyone
-  in all: a run that would pass a limit stops, and its log says so (*The library is full: …*).
-  **Lock with a password** (optional, the Library's settings): the library asks for it in each
-  browser, and locks again after the minutes you choose without use (15 by default; also when
-  the app restarts); until then its files are not shown or served. The password is kept as a
-  hash (scrypt); five wrong ones in a row make the next wait a minute. The files are not
-  encrypted on the server: the lock keeps out whoever uses your open Nextcloud, not the server's
-  admin. A forgotten password cannot be reset on the page: the admin can remove it
-  ([administrator's guide](admin.md#backup)).
+- **Harvester's private library** (`library`, `library.py`): your hidden, encrypted space in
+  Harvester's own storage, not in Nextcloud at all: Files, Photos, Memories, the search, WebDAV
+  and the sync clients never see it, nor does anyone else. The folder is a folder of the library
+  (`/Magazines`). A run writes into it while it is locked; before you set the library up, a run
+  that saves there fails with *Set up your library … first*. A file deleted in the library is
+  gone for its job as one deleted in Files: with *Download deleted files again* the next run
+  that finds it fetches it again. A file saved over (*Check known files for changes*) replaces
+  the one before: the library keeps no versions. A run that would pass the admin's limit stops,
+  and its log says so (*The library is full: …*). See [The private library](#the-private-library).
 
 - **A Cryptomator vault's inbox** (`inbox`, `inbox.py`): the folder (in your files) becomes an
   inbox of a vault (**Vault**: the vault's folder, the one holding `vault.cryptomator`; **Folder
@@ -182,6 +173,59 @@ files it saved, with their tags or labels, and filters them by one. Another *Sav
 to the files of the next runs: those saved stay where they are, and the job does not fetch
 them again; *Download deleted files again* and the checks of changes then concern the new
 place's files only.
+
+## The private library
+
+**Library** on Harvester's page is your hidden space for any kind of file: what jobs save there,
+what you upload from your computer, and what you move there from Files. Everything in it is
+encrypted on the server: the contents, the names, the folders, the labels and the thumbnails.
+The server's database holds only random IDs, the files' sizes rounded up to 64 KB, their times
+and which job saved them.
+
+**Setting it up.** The first time, Library asks for a password (8 characters at least; not your
+Nextcloud password) and then shows your **recovery key** once: 32 letters and digits in groups of
+four. Write it down or save it (*Copy*, *Save as a file*) somewhere outside this Nextcloud, tick
+*I saved my recovery key* and type it again: only then is the library made. Its key pair is made
+then too; a job that saves into the library waits for it (its runs fail, saying so, until then).
+
+**Locked and unlocked.** Writing needs no password: jobs, uploads and moves from Files work while
+the library is locked. Seeing it does: Library asks for the password in each browser, and the
+library locks again after the minutes you choose without use (15 by default), with **Lock now**,
+and whenever the app restarts. Unlocked, the key that opens your files is in the server's memory
+only, for that browser, never on its disk. Five wrong passwords in a row make the next try wait a
+minute.
+
+**Using it.** Folders (**New folder**), pictures as a grid of thumbnails and other files as a list,
+a viewer for pictures, videos and sounds (played as they stream, with seeking), PDFs and plain
+text (any other kind is downloaded, never shown), **Download**, **Rename**, **Move** (into
+another folder; `/` is the top), **Delete** (a folder with everything in it), a filter by label
+and **Search in this folder** (names and labels, any case, in the folder and below it).
+**Upload** (or drop files onto the library) sends files from your computer in pieces of 8 MB,
+each encrypted as it comes; a name that is taken is written over.
+
+**Moving from Files.** In Files, select files or folders and choose **Move to the private
+library** in their actions menu. Harvester's page opens with them: choose the library folder
+(*From Files* by default; the files keep their folders below it) and **Move**. Each file is
+streamed into the library, encrypted, checked (decrypted again and compared), then its versions
+and the original are deleted, and once all are done the originals are removed from the trash
+bin too. A file whose name is taken in the library gets " (2)". A file that fails stays where it
+was, and the page says why, per file; a file shared with you is not yours to move. Nextcloud may
+still have the file in places Harvester cannot reach: a share you made of it (a recipient's
+copy), a sync client's copy on your devices, a backup of the server.
+
+**Forgot the password?** Under the unlock form, *Forgot the password?* takes the recovery key and
+a new password. Changing the password (the Library's *Library password*, the current one given)
+signs out your other browsers; the recovery key stays the same.
+
+**What the admin can and cannot do.** The admin sets how much each person may keep (10 GB by
+default, counted as stored, encrypted) and can delete a person's library entirely
+(`occ harvester:library-reset`), for instance after both the password and the recovery key are
+lost. The admin cannot open it: without your password or recovery key nobody can read your files,
+their names or labels, not even from a backup. What the admin of the server could still do is
+change the app itself, or read the memory of the running app while your library is unlocked: the
+encryption keeps your files safe at rest and in backups, not from the server while you use it.
+A job's own settings and log (its folder, the names of the files it saved) are not hidden: a job
+is a job like any other; what you upload or move there leaves no name in plain.
 
 ## Sources
 

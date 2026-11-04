@@ -218,16 +218,32 @@ docker cp nc_app_harvester:/tmp/harvester-backup.sqlite3 .
 
 To put a copy back, disable the app, replace `harvester.db` with it, and enable the app again.
 
-**The private library** (jobs that save into Harvester's private library rather than into
-people's files) is on the same storage: `library/<user ID, percent-encoded>/<folder>/<file>`
+**The private library** (each person's hidden, encrypted space: what jobs save there, uploads,
+files moved from Files) is on the same storage: `library/<user ID, percent-encoded>/<xx>/<blob>`
 under `APP_PERSISTENT_STORAGE`, which AppAPI mounts from the Docker volume of the app's
 persistent storage, `nc_app_harvester_data` (on the host under Docker's volumes,
 `/var/lib/docker/volumes/nc_app_harvester_data/_data/library/`, or the rootless daemon's data
 root). Nextcloud's backup does not have these files: back the folder up with the database, in
-the same pass (the database indexes the files, their labels and the people's library
-passwords' hashes). Restored, a file the database does not know is not shown; one the database
-knows that is missing is gone for its job (fetched again with *Download deleted files again*).
-A person's forgotten library password is removed with the database's
-`DELETE FROM library_locks WHERE user = '<user ID>'` (the app disabled, or through its
-`sqlite3` in the container); their library is then unlocked. The files are not encrypted on the
-disk: whoever reads the volume reads them.
+the same pass (the database indexes the files and holds the people's keys). Both are encrypted
+(see [the format](developer.md#the-private-librarys-format)): the blobs, the names, folders,
+labels and thumbnails, and each person's private key, wrapped with their password and their
+recovery key. A backup is safe to keep anywhere: without a person's password or recovery key it
+opens nothing. It shows only how many files a person has, their sizes rounded up to 64 KB and
+their times, and whoever has the database can test whether a guessed path exists (the paths'
+lookup values). Restored, a file the database does not know is not shown; one the database knows
+that is missing is gone for its job (fetched again with *Download deleted files again*).
+
+**Resetting a person's library.** A forgotten password is the person's to recover with their
+recovery key. When both are lost, nothing can open the library: the admin can only delete it,
+entirely, so that the person can set it up anew:
+
+```bash
+sudo -u www-data php occ harvester:library-reset <user ID>            # says what it would delete
+sudo -u www-data php occ harvester:library-reset <user ID> --confirm  # deletes it
+```
+
+The command is the app's (AppAPI's occ commands, registered when the app is enabled); it deletes
+the person's files, folders, labels and keys, which cannot be recovered by anyone. An
+unencrypted library of a development build is not carried over: at its first start the app drops
+its tables and sets its folder aside as `library-unencrypted` beside `library` (delete it once
+its files are saved elsewhere).
