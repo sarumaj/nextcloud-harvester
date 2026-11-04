@@ -1053,7 +1053,7 @@ OC.L10N.register(
         "yt-dlp's format: the best video (up to a height) joined with the best audio, into mp4 where the codecs allow, mkv otherwise.": "Format yt-dlp: najlepszy obraz (do danej wysokości) połączony z najlepszym dźwiękiem, w mp4, gdzie kodeki na to pozwalają, w przeciwnym razie mkv.",
         "Audio only": "Tylko dźwięk",
         "Harvester": "Harvester",
-        "Changes take effect within a minute; running jobs and open browsers finish first.": "Zmiany zaczynają działać w ciągu minuty; uruchomione zadania i otwarte przeglądarki najpierw kończą pracę.",
+        "Each change is saved as you make it (there is no Save button) and takes effect within a minute; running jobs and open browsers finish first.": "Każda zmiana zapisuje się od razu (nie ma przycisku Zapisz) i zaczyna działać w ciągu minuty; uruchomione zadania i otwarte przeglądarki najpierw kończą pracę.",
         "Jobs at once": "Zadań jednocześnie",
         "How many jobs run side by side (never one twice, one per site at a time).": "Ile zadań działa równolegle (nigdy jedno dwa razy, jedno na stronę naraz).",
         "Browsers at once": "Przeglądarek jednocześnie",

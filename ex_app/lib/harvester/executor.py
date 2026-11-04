@@ -313,7 +313,10 @@ class Executor(Tries):
         if self._settings_client is None:
             self._settings_client = self.connect()
         nc = self._settings_client
-        values = {record.key: record.value for record in self.call(nc.appconfig_ex.get_values(list(settings.KEYS)))}
+        values = {
+            record.key: settings.unquoted(record.value)
+            for record in self.call(nc.appconfig_ex.get_values(list(settings.KEYS)))
+        }
         runners = settings.number(values.get(settings.RUNNERS), RUNNERS, settings.MAX_RUNNERS)
         browsers = settings.number(values.get(settings.BROWSERS), browser.BROWSERS, settings.MAX_BROWSERS)
         proxy = settings.proxy(values.get(settings.PROXY), settings.DEFAULT_PROXY)

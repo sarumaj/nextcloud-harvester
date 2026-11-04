@@ -196,7 +196,7 @@ def test_a_wrong_entry_or_a_file_not_the_apps_leaves_dockers_dns(tmp_path, looke
 
 def test_the_status_is_the_dns_forms_description():
     form = settings.dns_form("tls://dns.example", True, dns.WORKS)
-    assert form.id == "harvester_dns" and form.description == dns.WORKS
+    assert form.id == "dns" and form.description == dns.WORKS
     assert [field.id for field in form.fields] == [settings.DNS, settings.DNS_FALLBACK]
     assert form.fields[0].default == "tls://dns.example" and form.fields[1].default == settings.ON
 

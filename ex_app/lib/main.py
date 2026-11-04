@@ -769,6 +769,8 @@ async def enabled_handler(enabled: bool, nc: AsyncNextcloudApp) -> str:
     if enabled:
         await nc.ui.resources.set_script("top_menu", "harvester", "js/harvester-main")
         await nc.ui.top_menu.register("harvester", "Harvester", "img/app.svg")
+        for legacy in settings.LEGACY_FORMS:
+            await nc.ui.settings.unregister_form(legacy)
         await nc.ui.settings.register_form(
             settings.form(
                 RUNNERS, browser.BROWSERS, settings.DEFAULT_PROXY, settings.DEFAULT_PROXY_NAME, settings.DEFAULT_GUARD
@@ -789,8 +791,8 @@ async def enabled_handler(enabled: bool, nc: AsyncNextcloudApp) -> str:
         await nc.occ_commands.register(**moves.occ_command())
     else:
         await nc.ui.top_menu.unregister("harvester")
-        await nc.ui.settings.unregister_form("harvester_admin")
-        await nc.ui.settings.unregister_form("harvester_dns")
+        for form_id in (settings.ADMIN_FORM, settings.DNS_FORM, *settings.LEGACY_FORMS):
+            await nc.ui.settings.unregister_form(form_id)
         await nc.ui.files_dropdown_menu.unregister(moves.ACTION)
         await nc.occ_commands.unregister(moves.RESET)
     return ""

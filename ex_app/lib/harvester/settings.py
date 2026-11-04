@@ -8,8 +8,13 @@ HARVESTER_PROXY_NAME, HARVESTER_GUARD, HARVESTER_DNS, HARVESTER_DNS_FALLBACK,
 HARVESTER_IMMICH_URL, HARVESTER_IMMICH_HTTP, which the deployment may set); a value the admin chooses
 wins (an emptied proxy: none), and the executor reads them each minute, so a change needs no
 restart.
+
+The form's numbers go to Nextcloud as numbers: AppAPI shows a field's default through
+json_encode() when it looks like a number, which writes a number given as text with its quotes
+("0"), and a form saved as shown kept them. A value saved so is read as the text inside them.
 """
 
+import json
 import logging
 import math
 import os
@@ -31,6 +36,12 @@ LIBRARY = "library_limit"
 LIBRARY_TOTAL = "library_total"
 IMMICH_URL = "immich_url"
 IMMICH_HTTP = "immich_http"
+# The forms' IDs: none begins with the app's ID and "_", which Nextcloud's settings page takes off
+# a form's ID before it saves a value ("harvester_admin" saved as "admin": AppAPI found no such
+# form and dropped every value, answering OK). LEGACY_FORMS are the IDs before, unregistered.
+ADMIN_FORM = "admin"
+DNS_FORM = "dns"
+LEGACY_FORMS = ("harvester_admin", "harvester_dns")
 KEYS = (RUNNERS, BROWSERS, PROXY, PROXY_NAME, GUARD, DNS, DNS_FALLBACK, LIBRARY, LIBRARY_TOTAL, IMMICH_URL, IMMICH_HTTP)
 PROXY_SCHEMES = ("http", "https", "socks5", "socks5h")
 _REFUSED: set[str] = set()
@@ -65,17 +76,17 @@ def form(  # pylint: disable=too-many-arguments,too-many-positional-arguments
 ) -> SettingsForm:
     """The admin's form, with the environment's values as its defaults."""
     return SettingsForm(
-        id="harvester_admin",
+        id=ADMIN_FORM,
         section_type="admin",
         section_id="additional",
         title="Harvester",
-        description="Changes take effect within a minute; running jobs and open browsers finish first.",
+        description="Each change is saved as you make it (there is no Save button) and takes effect within a minute; running jobs and open browsers finish first.",
         fields=[
             SettingsField(
                 id=RUNNERS,
                 title="Jobs at once",
                 type=SettingsFieldType.SELECT,
-                default=str(runners),
+                default=runners,
                 options=choices(MAX_RUNNERS),
                 description="How many jobs run side by side (never one twice, one per site at a time).",
             ),
@@ -83,7 +94,7 @@ def form(  # pylint: disable=too-many-arguments,too-many-positional-arguments
                 id=BROWSERS,
                 title="Browsers at once",
                 type=SettingsFieldType.SELECT,
-                default=str(browsers),
+                default=browsers,
                 options=choices(MAX_BROWSERS),
                 description=(
                     "How many browsers may be open: the website jobs and the recordings share them. "
@@ -132,7 +143,7 @@ def form(  # pylint: disable=too-many-arguments,too-many-positional-arguments
                 id=LIBRARY,
                 title="Private library per person (GB)",
                 type=SettingsFieldType.TEXT,
-                default=library,
+                default=as_number(library),
                 description=(
                     "The most each person may keep in Harvester's private library (jobs that save there "
                     "rather than into their files). A run that would pass it stops and says so. 0: no limit."
@@ -142,7 +153,7 @@ def form(  # pylint: disable=too-many-arguments,too-many-positional-arguments
                 id=LIBRARY_TOTAL,
                 title="Private libraries in all (GB)",
                 type=SettingsFieldType.TEXT,
-                default=library_total,
+                default=as_number(library_total),
                 description=(
                     "The most everyone's private libraries may take together on the app's storage (its "
                     "persistent volume). 0: no limit."
@@ -180,7 +191,7 @@ def dns_form(servers: str = "", fallback: bool = False, status: str = dns.UNSET)
     """The DNS servers' form, its description the status (dns.STATUSES): registered again when
     the status changes."""
     return SettingsForm(
-        id="harvester_dns",
+        id=DNS_FORM,
         section_type="admin",
         section_id="additional",
         title="Harvester: DNS servers",
@@ -220,6 +231,29 @@ def choices(highest: int) -> list[str]:
     """A select's options: Nextcloud's select takes plain strings (nc_py_api makes a dict into
     {name, value} objects, which only radio buttons and checkboxes show)."""
     return [str(n) for n in range(1, highest + 1)]
+
+
+def as_number(text: str) -> int | float | str:
+    """A default that is a number as one (10, 0.5) for the form; any other text as it is."""
+    try:
+        value = float(text.strip().replace(",", "."))
+    except ValueError:
+        return text
+    if not math.isfinite(value):
+        return text
+    return int(value) if value.is_integer() else value
+
+
+def unquoted(value: str | None) -> str | None:
+    """A saved value as the admin meant it: one AppAPI's form kept in JSON's quotes ("0", from a
+    default it showed so) as the text inside them."""
+    if value and len(value) >= 2 and value[0] == value[-1] == '"':
+        try:
+            inner = json.loads(value)
+        except ValueError:
+            return value
+        return inner if isinstance(inner, str) else value
+    return value
 
 
 def number(value: str | None, default: int, highest: int) -> int:

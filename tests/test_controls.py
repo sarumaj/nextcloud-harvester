@@ -298,10 +298,20 @@ def test_a_runner_beyond_the_setting_waits(tmp_path, monkeypatch):
 def test_the_admins_form_offers_the_environments_values():
     from harvester import settings  # pylint: disable=import-outside-toplevel
 
-    fields = {field["id"]: field for field in settings.form(2, 3).to_dict()["fields"]}
-    assert fields[settings.RUNNERS]["default"] == "2" and fields[settings.BROWSERS]["default"] == "3"
+    fields = {field["id"]: field for field in settings.form(2, 3, library="0.5", library_total="0").to_dict()["fields"]}
+    # Numbers as numbers: AppAPI shows a number given as text through json_encode(), in quotes.
+    assert fields[settings.RUNNERS]["default"] == 2 and fields[settings.BROWSERS]["default"] == 3
+    assert fields[settings.LIBRARY]["default"] == 0.5 and fields[settings.LIBRARY_TOTAL]["default"] == 0
+    assert settings.as_number("10") == 10 and settings.as_number("1,5") == 1.5 and settings.as_number("x") == "x"
+    # A value saved as the form showed it, in quotes, is the text inside them.
+    assert settings.unquoted('"0"') == "0" and settings.unquoted('"On"') == "On"
+    assert settings.unquoted("2") == "2" and settings.unquoted(None) is None and settings.unquoted('"') == '"'
+    assert settings.gigabytes(settings.unquoted('"0.5"'), "10") == 500_000_000
     assert fields[settings.RUNNERS]["options"] == [str(n) for n in range(1, settings.MAX_RUNNERS + 1)], "plain strings"
     assert settings.form(2, 3).section_type == "admin"
+    # Nextcloud's settings page saves a value with the form's ID less "harvester_" at its start.
+    for form_id in (settings.form(2, 3).id, settings.dns_form().id):
+        assert form_id.replace("harvester_", "", 1) == form_id
     assert settings.number(None, 2, 8) == 2 and settings.number("0", 2, 8) == 1
 
 

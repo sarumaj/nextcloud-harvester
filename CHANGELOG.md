@@ -17,6 +17,13 @@
 
 ### Fixed
 
+- The admin's settings are saved: Nextcloud's settings page took "harvester_" off the forms' IDs
+  as it saved a value, so AppAPI found no such form and dropped every change (while answering
+  OK). The forms have IDs of their own now; the form says that each change saves itself (there
+  is no Save button).
+- The admin's numbers show without quotes (`0`, not `"0"`): AppAPI showed a number given as text
+  in JSON's quotes, and a form saved as shown kept them, which Harvester read as no value. Such
+  a value is now read as the number inside the quotes.
 - The Library's viewer and the page's questions open in the middle of the window, at any width
   (a phone's too), not at its top left; the viewer is as wide as the window allows.
 - A move's states from Files are readable in light and dark: tinted pills with the theme's

@@ -1016,7 +1016,7 @@
         "yt-dlp's format: the best video (up to a height) joined with the best audio, into mp4 where the codecs allow, mkv otherwise.": "Format von yt-dlp: das beste Video (bis zu einer Höhe) mit dem besten Audio vereint, zu mp4, wo die Codecs es erlauben, sonst mkv.",
         "Audio only": "Nur Audio",
         "Harvester": "Harvester",
-        "Changes take effect within a minute; running jobs and open browsers finish first.": "Änderungen wirken innerhalb einer Minute; laufende Jobs und offene Browser laufen erst zu Ende.",
+        "Each change is saved as you make it (there is no Save button) and takes effect within a minute; running jobs and open browsers finish first.": "Jede Änderung wird gespeichert, sobald Sie sie machen (es gibt keinen Speichern-Knopf), und wirkt innerhalb einer Minute; laufende Jobs und offene Browser laufen erst zu Ende.",
         "Jobs at once": "Jobs gleichzeitig",
         "How many jobs run side by side (never one twice, one per site at a time).": "Wie viele Jobs nebeneinander laufen (nie einer doppelt, pro Website einer zur Zeit).",
         "Browsers at once": "Browser gleichzeitig",
