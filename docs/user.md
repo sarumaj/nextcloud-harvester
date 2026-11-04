@@ -139,9 +139,12 @@ files with Nextcloud's tags, as it did.
   browser, and deletes the plain copies. Harvester writes the inbox's marker
   (`.cryptomator-inbox.json`: the vault, the folder in it, *from* `Harvester job "<name>"`, the
   job's ID) before its first file, only into a folder of your own (not one shared with you), and
-  never over a marker that is there: one of the same vault is left as it is, one of another vault
-  stops the run with why. Nothing else goes there but the job's files, each whole (one PUT, or a
-  chunked upload that appears only at its end). The folder must not be the vault's folder, in it
+  never over another vault's marker, which stops the run with why. A marker of the same vault keeps
+  what it holds but the folder in the vault, which follows the job's **Folder in the vault** when
+  a file goes in: always for the job's own marker, and for one made in the vault app when the job
+  names a folder (not `/`). Files the vault app moved before stay where they went. Nothing else
+  goes there but the job's files, each whole (one PUT, or a chunked upload that appears only at
+  its end). The folder must not be the vault's folder, in it
   or above it. Until they are moved, the files are plain files on the server. A file moved into
   the vault counts as fetched: *Download deleted files again* and *Check known files for
   changes* are off for an inbox (the form says why), and its files carry no Nextcloud tag.

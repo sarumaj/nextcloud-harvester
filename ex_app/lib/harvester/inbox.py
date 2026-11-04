@@ -7,9 +7,11 @@ of the marker's contract).
 Harvester writes the marker, `.cryptomator-inbox.json`, into the folder before its first file:
 {"version": 1, "vault": the vault's folder, "target": the folder in the vault, "from": "Harvester
 job "<name>""} (and the job's ID, a key of its own). It writes it only into a folder of the
-person's own (not one shared with them), and never over one that is there: a marker of the same
-vault is left as it is (the person may have changed its target in the vault app), one of
-another vault (or one it cannot read) ends the run with why. Nothing else is written there but
+person's own (not one shared with them), and never over another vault's: a marker of the same
+vault keeps all it holds but its target, which becomes the job's Folder in the vault where the
+two differ and the marker is the job's own or the job names a folder (not the vault's top): a
+marker the vault app made, of a job that left the field at /, keeps its target. One of another
+vault (or one it cannot read) ends the run with why. Nothing else is written there but
 the job's files, each in one piece (one PUT, or a chunked upload that appears at its MOVE:
 nextcloud.NextcloudLibrary), never a file named as the marker at the inbox's top.
 
@@ -70,8 +72,8 @@ class InboxLibrary(NextcloudLibrary):
         return said("Saved in the inbox of the vault {vault}: {path} ({size})", vault=vault, path=path, size=size)
 
     def mark(self) -> None:
-        """Writes the inbox's marker unless there is one of the same vault (SourceError for one
-        of another vault, one it cannot read, a folder shared with the person)."""
+        """Writes the inbox's marker, or the job's target into one of the same vault (SourceError
+        for one of another vault, one it cannot read, a folder shared with the person)."""
         self._make(self.inbox)
         node = self.call(self.nc.files.by_path(self.inbox))
         if node is not None and node.is_shared:
@@ -82,9 +84,7 @@ class InboxLibrary(NextcloudLibrary):
         except NextcloudException as error:
             if error.status_code != 404:
                 raise
-            text = json.dumps(marker(self.job), ensure_ascii=False, indent=2) + "\n"
-            self.call(self.nc.files.upload(place, text.encode()))
-            self._marked = True
+            self._write(place, marker(self.job))
             return
         try:
             there = json.loads(found[:MAX_MARKER]) if len(found) <= MAX_MARKER else None
@@ -101,4 +101,18 @@ class InboxLibrary(NextcloudLibrary):
                     vault=vault,
                 )
             )
+        # A target changed in the job's form after its first run reaches the marker (else the vault
+        # app would go on moving the files where the marker said first).
+        wanted = marker(self.job)["target"]
+        if destinations.folder(str(there.get("target") or "/")) != wanted and (
+            there.get("harvester_job") == self.job.id or wanted != "/"
+        ):
+            self._write(place, there | {"target": wanted})
+            return
+        self._marked = True
+
+    def _write(self, place: str, data: dict) -> None:
+        """Writes the marker (data) to its place."""
+        text = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+        self.call(self.nc.files.upload(place, text.encode()))
         self._marked = True

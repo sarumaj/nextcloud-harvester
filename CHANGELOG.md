@@ -13,6 +13,10 @@
   rather than *Saved /folder/a.jpg* as if it were in Files. The size is the file's.
 - A file name from a value ending in a dot before the extension's (a title "We tried." in
   `{title}.{ext}`, yt-dlp's `{filename}`) has one dot, not `We tried..mp3`.
+- A vault's inbox follows the job's *Folder in the vault*: a change after the job's first file
+  reaches the inbox's marker with the next file, rather than the vault app moving the files on
+  into the folder the marker named first (the vault's top). A marker made in the vault app keeps
+  its folder while the job's is `/`.
 - *Move to the private library* in Files opens the Library with the move it proposed although
   AppAPI's redirect comes without `?fileIds=`, and so does a reload in the next 15 minutes, until
   the move starts.

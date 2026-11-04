@@ -216,6 +216,40 @@ def test_an_inbox_is_never_written_over_another_vaults_or_in_a_shared_folder(app
     assert not (app.root / "Shared" / MARKER).exists()
 
 
+def test_an_inbox_marker_follows_the_jobs_folder_in_the_vault(app):
+    # The job's marker of its first run, before its Folder in the vault was set; and back to /.
+    for folder, wanted in (("One", "/Elite"), ("Two", "/")):
+        job = saved(app, save_to="inbox", vault="/Vaults/V", vault_target=wanted, target=f"/{folder}")
+        (app.root / folder).mkdir()
+        old = {
+            "version": 1,
+            "vault": "/Vaults/V",
+            "target": "/x",
+            "from": 'Harvester job "Mag"',
+            "harvester_job": job.id,
+        }
+        (app.root / folder / MARKER).write_text(json.dumps(old), encoding="utf-8")
+        assert run(app, job).last_status == "ok"
+        marker = json.loads((app.root / folder / MARKER).read_text(encoding="utf-8"))
+        assert marker == old | {"target": wanted}, "the job's own marker follows it"
+    (app.root / "Made").mkdir()
+    (app.root / "Made" / MARKER).write_text(
+        '{"version": 1, "vault": "/Vaults/V", "target": "/", "from": "me", "mine": 1}', encoding="utf-8"
+    )
+    assert (
+        run(app, saved(app, save_to="inbox", vault="/Vaults/V", vault_target="Elite", target="/Made")).last_status
+        == "ok"
+    )
+    made = json.loads((app.root / "Made" / MARKER).read_text(encoding="utf-8"))
+    assert made == {
+        "version": 1,
+        "vault": "/Vaults/V",
+        "target": "/Elite",
+        "from": "me",
+        "mine": 1,
+    }, "a folder named wins"
+
+
 def test_the_form_checks_an_inbox_and_a_vault():
     def form(**options):
         return main.JobIn(
