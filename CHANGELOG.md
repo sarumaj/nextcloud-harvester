@@ -20,8 +20,8 @@
   search by name and label, uploads in pieces (drag and drop), Rename, Move, Delete, and a
   cookie (HttpOnly, SameSite=Strict) or per-file tickets instead of a token in addresses.
 - **Move to the private library** in Files' actions menu, for files and folders: each streamed
-  into the library, checked, its versions and the original deleted and purged from the trash
-  bin; a file that fails stays, the page says why. `occ harvester:library-reset <user>
+  into the library, checked, the original deleted (its versions with it) and purged from the
+  trash bin; a file that fails stays, versions and all, and the page says why. `occ harvester:library-reset <user>
   --confirm`: the admin deletes a person's library.
 - **Save to** a Cryptomator vault: **its inbox** (the folder gets the marker of the app *Vaults
   for Cryptomator*, which moves the files into the vault when the person unlocks it; files moved

@@ -10,7 +10,8 @@ only: nothing shared with them, which is not theirs to delete). Each file:
 1. is streamed from WebDAV into the library, encrypted as it comes (Incoming: never whole in
    memory, never in plain on the disk), at a free name (" (2)" where one is taken);
 2. is checked: its size, and the blob decrypted again to the SHA-256 of what came;
-3. loses its versions (versions DAV: DELETE of each), then the original is deleted (WebDAV);
+3. the original is deleted (WebDAV): Nextcloud moves its versions into the trash bin with it
+   (or, without a trash bin, deletes them with it), so they stay while the delete fails;
 4. once all are done, the originals (and the folders the move emptied) are purged from the trash
    bin (trashbin DAV), each by its original place.
 
@@ -26,7 +27,6 @@ import threading
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
-from urllib.parse import quote
 
 from nc_py_api import NextcloudException
 
@@ -232,8 +232,9 @@ class Mover:  # pylint: disable=too-few-public-methods
         return path
 
     def _one(self, item: Item, node) -> None:
-        """Moves one file: into the library, checked, its versions and its original deleted;
-        else it stays and the item says why."""
+        """Moves one file: into the library, checked, its original deleted (its versions go into
+        the trash bin with it, purged at the end); else it stays, versions and all, and the item
+        says why."""
         item.state = MOVING
         file_id = None
         try:
@@ -250,7 +251,6 @@ class Mover:  # pylint: disable=too-few-public-methods
             file_id = incoming.commit()
             if not incoming.verify():
                 raise ValueError(said("The library's copy does not match: nothing was deleted."))
-            self._delete_versions(node)
             self.call(self.nc.files.delete(node.user_path))
         except (NextcloudException, OSError, ValueError, BadPath, LibraryFull, NotSetUp) as error:
             if file_id is not None:
@@ -260,29 +260,6 @@ class Mover:  # pylint: disable=too-few-public-methods
             return
         self.deleted.append(item.path)
         item.state = MOVED
-
-    def _delete_versions(self, node) -> None:
-        """Deletes the file's earlier versions (versions DAV); none where versioning is off."""
-        try:
-            versions = self.call(self.nc.files.get_versions(node))
-        except NextcloudException as error:
-            if error.status_code == 404:
-                return
-            raise
-        except Exception as error:  # pylint: disable=broad-exception-caught
-            # nc_py_api raises NextcloudMissingCapabilities where versioning is off: no versions.
-            if type(error).__name__ == "NextcloudMissingCapabilities":
-                return
-            raise
-        for version in versions:
-            path = version.full_path.rstrip("/")
-            if path.rsplit("/", 1)[-1] == str(node.info.fileid):
-                continue  # the versions' folder itself
-            # nc_py_api has no call for it: its WebDAV adapter, as its restore_version uses it.
-            dav = self.nc._session.adapter_dav  # pylint: disable=protected-access
-            answer = self.call(dav.delete(quote("/" + path)))
-            if answer.status_code not in (200, 204, 404):
-                raise NextcloudException(answer.status_code, reason="a version was not deleted")
 
     def _empty_folders(self, folder) -> None:
         """Deletes the folder and those below it that the move emptied (deepest first)."""

@@ -43,8 +43,9 @@ def node(path: str, file_id: int, size: int, is_dir: bool, shared: bool = False)
 
 class Dav:  # pylint: disable=too-many-instance-attributes
     """The person's files on the disk, with a trash bin and versions: by_id (SEARCH), listdir
-    (PROPFIND), download2stream (GET, in pieces), delete (into the trash bin), get_versions and
-    the versions' DELETE, trashbin_list and trashbin_delete. fail names what fails."""
+    (PROPFIND), download2stream (GET, in pieces), delete (into the trash bin), and
+    trashbin_list and trashbin_delete; a file's versions go into the trash bin with it, as in
+    Nextcloud. fail names what fails."""
 
     def __init__(self, root: Path):
         self.root = root
@@ -53,8 +54,7 @@ class Dav:  # pylint: disable=too-many-instance-attributes
         self.trash: list[SimpleNamespace] = []
         self.versions: dict[int, list[str]] = {}
         self.fail: dict[str, str] = {}
-        self.deleted_versions: list[str] = []
-        self._session = SimpleNamespace(adapter_dav=SimpleNamespace(delete=self._delete_version))
+        self._session = SimpleNamespace()
 
     def id_of(self, path: str) -> int:
         return self.ids.setdefault("/" + path.strip("/"), len(self.ids) + 1)
@@ -87,24 +87,12 @@ class Dav:  # pylint: disable=too-many-instance-attributes
             raise NextcloudException(423, "Locked")
         place = self.root / path.strip("/")
         info = SimpleNamespace(trashbin_original_location=path.strip("/"), trashbin_deletion_time=10**10)
-        self.trash.append(SimpleNamespace(user_path=f"{place.name}.d1", info=info))
+        versions = self.versions.pop(self.id_of(path), [])
+        self.trash.append(SimpleNamespace(user_path=f"{place.name}.d1", info=info, versions=versions))
         if place.is_dir():
             shutil.rmtree(place)
         else:
             place.unlink()
-
-    async def get_versions(self, file_object):
-        file_id = file_object.info.fileid
-        folder = f"versions/anna/versions/{file_id}"
-        return [SimpleNamespace(full_path=folder)] + [
-            SimpleNamespace(full_path=f"{folder}/{version}") for version in self.versions.get(file_id, [])
-        ]
-
-    async def _delete_version(self, path):
-        if self.fail.get("VERSIONS"):
-            return SimpleNamespace(status_code=500)
-        self.deleted_versions.append(path)
-        return SimpleNamespace(status_code=204)
 
     async def trashbin_list(self):
         return list(self.trash)
@@ -181,11 +169,7 @@ def test_files_and_folders_move_with_their_folders_and_leave_no_trace(app):
     }
     assert not any(app.files.iterdir()), "the originals and the folders the move emptied are gone"
     assert app.dav.trash == [], "and purged from the trash bin"
-    notes = app.dav.ids["/Docs/notes.txt"]
-    assert sorted(app.dav.deleted_versions) == [
-        f"/versions/anna/versions/{notes}/1700000000",
-        f"/versions/anna/versions/{notes}/1700000100",
-    ], "each version deleted, not the versions' folder"
+    assert app.dav.versions == {}, "the versions went into the trash bin with it, and were purged"
 
 
 def test_a_name_taken_in_the_library_is_numbered(app):
@@ -194,17 +178,18 @@ def test_a_name_taken_in_the_library_is_numbered(app):
     assert library_files(app) == {"/In/photo.jpg": b"kept", "/In/photo (2).jpg": b"jpeg"}
 
 
-@pytest.mark.parametrize("failing", ["GET", "DELETE", "VERSIONS"])
+@pytest.mark.parametrize("failing", ["GET", "DELETE"])
 def test_a_file_that_fails_stays_where_it_was(app, failing):
-    app.dav.fail[failing] = "Docs/notes.txt" if failing != "VERSIONS" else "yes"
-    app.dav.versions[app.dav.ids["/Docs/notes.txt"]] = ["1700000000"]
+    app.dav.fail[failing] = "Docs/notes.txt"
+    notes_id = app.dav.ids["/Docs/notes.txt"]
+    app.dav.versions[notes_id] = ["1700000000"]
     done = move(app, "/Docs/notes.txt", "/photo.jpg")
     notes, photo = done.items
     assert notes.state == FAILED and notes.message
     assert (app.files / "Docs" / "notes.txt").read_bytes() == b"notes", "the original stays"
+    assert app.dav.versions[notes_id] == ["1700000000"], "and its versions"
     assert "/From Files/notes.txt" not in library_files(app), "the library's copy removed again"
-    if failing != "VERSIONS":
-        assert photo.state == MOVED and not (app.files / "photo.jpg").exists()
+    assert photo.state == MOVED and not (app.files / "photo.jpg").exists()
     assert not list(app.shelf.root.rglob("*.part")), "nothing half-written left"
 
 

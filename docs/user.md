@@ -206,10 +206,11 @@ each encrypted as it comes; a name that is taken is written over.
 **Moving from Files.** In Files, select files or folders and choose **Move to the private
 library** in their actions menu. Harvester's page opens with them: choose the library folder
 (*From Files* by default; the files keep their folders below it) and **Move**. Each file is
-streamed into the library, encrypted, checked (decrypted again and compared), then its versions
-and the original are deleted, and once all are done the originals are removed from the trash
-bin too. A file whose name is taken in the library gets " (2)". A file that fails stays where it
-was, and the page says why, per file; a file shared with you is not yours to move. Nextcloud may
+streamed into the library, encrypted, checked (decrypted again and compared), then the original
+is deleted (its versions go into the trash bin with it), and once all are done the originals and
+their versions are removed from the trash bin too. A file whose name is taken in the library
+gets " (2)". A file that fails stays where it was, and the page says why, per file; a file shared
+with you is not yours to move. Nextcloud may
 still have the file in places Harvester cannot reach: a share you made of it (a recipient's
 copy), a sync client's copy on your devices, a backup of the server.
 
