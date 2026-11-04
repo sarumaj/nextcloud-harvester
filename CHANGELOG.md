@@ -43,6 +43,10 @@
   none), *5 releases looked at (2 drafts or prereleases left out), 7 files match*.
 - A download's waits and retries are lines in the log: *… asks to wait 60 s* (429, 503, a
   wait pattern) and *…: the connection failed, trying again in 10 s*, not a silent pause.
+- A video job's log has yt-dlp's warnings (ten a run, each once), and yt-dlp's advice for its
+  command line is said as the job's options: *Use --cookies-from-browser or --cookies* reads
+  *Set the job's account: Cookies*, likewise its user name and password, its formats and
+  impersonation.
 - A mail job's progress log says what the mailbox search found (*Folder INBOX: 12 new messages,
   3 from the sender and with the subject asked for*, or no new messages and how many were done
   with before) and names each message of the sender and subject, with what the job takes from it
@@ -51,6 +55,9 @@
 
 ### Fixed
 
+- A video larger than the job's largest file that yt-dlp finds so only as it downloads is skipped
+  for good as one known to be too large (*yt-dlp saved no file for …: larger than the job's
+  largest file*), not failed as *yt-dlp left 0 files* in every run.
 - A release job whose forge answers with an error or cannot be reached fails with its host,
   answer and what was asked (*github.com answered 502 for the releases of o/r*), or the address
   it could not reach, not with httpx's text; the log says how many releases were looked at and

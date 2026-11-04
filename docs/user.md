@@ -160,7 +160,11 @@ recorder that makes them, and what a run does. Installing and the admin's settin
     (*30 entries listed (Entries per run: 30)*). Live and upcoming streams are skipped, counted
     in the log; an entry that cannot be had (private, removed) is skipped with a line in the
     progress log, and tried again next run. A video larger than the job's largest file is not
-    downloaded (yt-dlp's `max_filesize`). *Impersonate a browser* has yt-dlp present itself as a
+    downloaded (yt-dlp's `max_filesize`; one whose size yt-dlp learns only as it downloads is
+    skipped for good too). yt-dlp's warnings are lines in the log (ten a run, each once), and its
+    advice for its command line is said as the job's options (*--cookies* as *Set the job's
+    account: Cookies*, *--username* as its User name and Password, *--list-formats* as another
+    Format). *Impersonate a browser* has yt-dlp present itself as a
     browser (its own impersonation with `curl_cffi`, for sites behind Cloudflare that answer it
     with 403);
     extractors that need it use it anyway. For galleries, the same option is gallery-dl's browser

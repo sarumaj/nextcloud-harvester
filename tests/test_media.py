@@ -9,7 +9,8 @@ import pathlib
 import pytest
 import yt_dlp
 
-from harvester.sources import SourceError
+from harvester.sources import Refused, SourceError
+from harvester.sources import media as media_module
 from harvester.sources.media import Media
 
 CHANNEL = "https://video.example/@family/videos"
@@ -143,3 +144,75 @@ def test_impersonation_is_yt_dlps_own_for_the_job_that_asks():
     )
     assert "Impersonate a browser" in explained(error, {})
     assert "Impersonate a browser" not in explained(error, {"impersonate": 1}), "already on: no hint"
+
+
+def test_yt_dlps_advice_is_said_as_the_jobs_options():
+    from harvester.sources.media import explained  # pylint: disable=import-outside-toplevel
+
+    faq = "See  https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp  for how to manually pass "
+    faq += "cookies"
+    bot = Exception(
+        "ERROR: [youtube] v1: Sign in to confirm you’re not a bot. Use --cookies-from-browser or --cookies for the "
+        f"authentication. {faq}. Also see  https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies"
+        "  for tips on effectively exporting YouTube cookies"
+    )
+    assert explained(bot, {}) == (
+        "yt-dlp: [youtube] v1: Sign in to confirm you’re not a bot. "
+        "Set the job's account: Cookies (a signed-in browser's cookies.txt export)."
+    )
+    login = Exception(
+        "ERROR: [vimeo] 1: This video is only available for registered users. Use --cookies, --cookies-from-browser, "
+        f"--username and --password, --netrc-cmd, or --netrc (vimeo) to provide account credentials. {faq}"
+    )
+    assert explained(login, {}).endswith("registered users. Set the job's account: Cookies, or User name and Password.")
+    formats = Exception(
+        "ERROR: [example] v1: Requested format is not available. Use --list-formats for a list of available formats"
+    )
+    assert explained(formats, {}).endswith("not available. Choose another Format for the job.")
+    generic = Exception('ERROR: [generic] Got HTTP Error 403; try again with  --extractor-args "generic:impersonate"')
+    assert (
+        explained(generic, {}) == "yt-dlp: [generic] Got HTTP Error 403; turn on the job's option Impersonate a browser"
+    )
+
+
+def test_yt_dlps_warnings_are_info_lines_each_once(monkeypatch):
+    monkeypatch.setattr(media_module, "WARNINGS", 2)
+    page = video(1)["webpage_url"]
+    source = media({page: video(1)}, url=page)
+    log: list[tuple[str, str]] = []
+    source.report = lambda level, text: log.append((level, text))
+    logger = source.base()["logger"]
+    for message in ("[youtube] v1: nsig extraction failed", "[youtube] v1: nsig extraction failed", "other", "third"):
+        logger.warning(message)
+    logger.debug("[download] Destination: x.mp4")
+    logger.error("ERROR: raised as DownloadError too")
+    assert log == [("info", "yt-dlp: [youtube] v1: nsig extraction failed"), ("info", "yt-dlp: other")]
+    assert log[0][1].template["text"] == "yt-dlp: {warning}"
+
+
+class Large(FakeYoutubeDL):
+    """yt-dlp ending a download larger than max_filesize (it says so on its screen, no error)."""
+
+    def process_info(self, info: dict) -> None:
+        self.options["logger"].debug("[download] File is larger than max-filesize (2000 bytes > 1000 bytes). Aborting.")
+
+
+class Nothing(FakeYoutubeDL):
+    """yt-dlp leaving no file without saying why."""
+
+    def process_info(self, info: dict) -> None:
+        pass
+
+
+def test_no_file_from_yt_dlp_says_why():
+    page = video(1)["webpage_url"]
+    source = media({page: video(1)}, url=page)
+    (item,) = list(source.items(lambda key: False))
+    source.downloader = Large
+    with pytest.raises(Refused, match="larger than the job's largest file$"):
+        source.fetch(item, io.BytesIO())
+    source.downloader = Nothing
+    with pytest.raises(SourceError) as failed:
+        source.fetch(item, io.BytesIO())
+    assert str(failed.value) == f"yt-dlp saved no file for {page} (larger than the job's largest file?)"
+    assert not isinstance(failed.value, Refused), "tried again next run"

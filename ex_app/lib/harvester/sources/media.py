@@ -48,6 +48,23 @@ FFMPEG = "/usr/local/lib/harvester-ffmpeg"
 MERGED = "mp4/mkv"
 # Entries that are not (yet) a file to keep.
 SKIPPED = {"is_live", "is_upcoming", "post_live"}
+# yt-dlp's warnings a run tells in its log (each once).
+WARNINGS = 10
+# yt-dlp's advice for its command line, as the job's options say it (the FAQ's link with it).
+_FAQ = r"(?:\s*See\s+\S+\s+for how to manually pass cookies\.?)?"
+_CREDENTIALS = r"--username and --password, --netrc-cmd, or --netrc \([^)]*\) to provide account credentials\.?"
+ADVICE = (
+    (re.compile(r"Use --cookies(?:-from-browser)?(?: or --cookies(?:-from-browser)?)? for the authentication"
+                r"(?: \(--cookies-from-browser might not work\))?\.?" + _FAQ),
+     "Set the job's account: Cookies (a signed-in browser's cookies.txt export)."),
+    (re.compile(r"Use --cookies, --cookies-from-browser, " + _CREDENTIALS + _FAQ),
+     "Set the job's account: Cookies, or User name and Password."),
+    (re.compile(r"Use " + _CREDENTIALS), "Set the job's account: User name and Password."),
+    (re.compile(r"Use --list-formats for a list of available formats\.?"), "Choose another Format for the job."),
+    (re.compile(r"\s*Also see\s+\S+\s+for tips on effectively exporting YouTube cookies\.?"), ""),
+    (re.compile(r"try again with\s+--extractor-args \"?generic:impersonate\"?"),
+     "turn on the job's option Impersonate a browser"),
+)  # fmt: skip
 
 
 def safe(text: str) -> str:
@@ -64,13 +81,52 @@ def dated(value: str | None) -> dict:
     return {"year": day.year, "month": day.month, "day": day.day}
 
 
+def advised(text: str) -> str:
+    """yt-dlp's text with its advice for its command line (--cookies, --username, ...) said as
+    the job's options."""
+    for pattern, advice in ADVICE:
+        text = pattern.sub(advice, text)
+    return text
+
+
 def explained(error: Exception, settings: dict) -> str:
-    """yt-dlp's error for the page, and where it asks for impersonation (a site behind
-    Cloudflare's bot check), the job's option that does it."""
-    text = "yt-dlp: " + str(error).removeprefix("ERROR: ")
-    if "impersonat" in text.lower() and not int(settings.get("impersonate", 0) or 0):
+    """yt-dlp's error for the page, its advice as the job's options, and where it asks for
+    impersonation (a site behind Cloudflare's bot check), the job's option that does it."""
+    text = "yt-dlp: " + advised(str(error).removeprefix("ERROR: "))
+    on = int(settings.get("impersonate", 0) or 0)
+    if "impersonat" in text.lower() and not on and "Impersonate a browser" not in text:
         text += " (the job's option Impersonate a browser does what yt-dlp asks for here)"
     return text
+
+
+class Logger:
+    """yt-dlp's logger: its warnings become info lines of the source's run's log (WARNINGS,
+    each once), its messages are left out but for a download it ended as larger than
+    max_filesize (too_large); its errors come as exceptions."""
+
+    def __init__(self, source: Source):
+        self.source = source
+        self.told: set[str] = set()
+        self.too_large = False
+
+    def debug(self, message: str) -> None:
+        """yt-dlp's screen messages."""
+        if "larger than max-filesize" in message:
+            self.too_large = True
+
+    def info(self, message: str) -> None:
+        """Left out, as debug's."""
+        self.debug(message)
+
+    def warning(self, message: str) -> None:
+        """A warning, told once."""
+        text = advised(str(message).removeprefix("WARNING: ").strip())
+        if text and text not in self.told and len(self.told) < WARNINGS:
+            self.told.add(text)
+            self.source.report("info", said("yt-dlp: {warning}", warning=text))
+
+    def error(self, message: str) -> None:
+        """Left out: the error is raised (DownloadError) and told as the file's or run's."""
 
 
 def cancel_when_stopped(_progress: dict) -> None:
@@ -157,6 +213,8 @@ class Media(Source):
         # The class used, so that tests can stand in for yt-dlp.
         self.downloader: Callable[[dict], Any] = yt_dlp.YoutubeDL
         self.cookie_file: str | None = None
+        # The run's log, as the runner sets it (source.report) when it starts.
+        self.logger = Logger(self)
 
     def base(self) -> dict:
         """BASE with the account: its cookies' file (written once per run), user name, password."""
@@ -169,7 +227,8 @@ class Media(Source):
         if self.secrets.get("username"):
             account |= {"username": self.secrets["username"], "password": self.secrets.get("password", "")}
         tools = {"ffmpeg_location": FFMPEG} if os.path.isdir(FFMPEG) else {}
-        return BASE | tools | {"merge_output_format": MERGED} | account | self.impersonation()
+        quiet = {"logger": self.logger}
+        return BASE | quiet | tools | {"merge_output_format": MERGED} | account | self.impersonation()
 
     def impersonation(self) -> dict:
         """yt-dlp's impersonation when the job asks for it: any browser target its curl_cffi offers,
@@ -277,6 +336,7 @@ class Media(Source):
     def fetch(self, item: Item, dest: BinaryIO) -> None:
         if not allowed_url(item.url):
             raise SourceError(f"{item.url} may not be opened{browser.dns_refusal(item.url)}")
+        self.logger.too_large = False
         with tempfile.TemporaryDirectory(prefix="harvester-media-") as directory:
             options = self.base() | {
                 "format": str(self.settings["format"]),
@@ -299,6 +359,15 @@ class Media(Source):
                     raise Stopped("stopped") from error
                 raise SourceError(explained(error, self.settings)) from error
             files = [path for path in pathlib.Path(directory).iterdir() if path.is_file()]
+            if not files and self.logger.too_large:
+                # yt-dlp ends a download larger than max_filesize without an error.
+                raise Refused(
+                    said("yt-dlp saved no file for {address}: larger than the job's largest file", address=item.url)
+                )
+            if not files:
+                raise SourceError(
+                    said("yt-dlp saved no file for {address} (larger than the job's largest file?)", address=item.url)
+                )
             if len(files) != 1:
                 raise SourceError(f"yt-dlp left {len(files)} files for {item.url}")
             with files[0].open("rb") as produced:

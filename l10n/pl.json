@@ -1217,6 +1217,7 @@
             "%n kolejnej wiadomości od żądanego nadawcy i z żądanym tematem, niewymienionej osobno"
         ],
         "larger than the largest file, not read": "większa niż największy plik, nieprzeczytana",
+        "yt-dlp: {warning}": "yt-dlp: {warning}",
         "_%n entry listed (Entries per run: {max})_::_%n entries listed (Entries per run: {max})_": [
             "Wymieniono %n wpis (Wpisów na przebieg: {max})",
             "Wymieniono %n wpisy (Wpisów na przebieg: {max})",
@@ -1229,6 +1230,8 @@
             "Pominięto %n wpisów na żywo lub zapowiedzianych (jeszcze bez pliku)",
             "Pominięto %n wpisu na żywo lub zapowiedzianego (jeszcze bez pliku)"
         ],
+        "yt-dlp saved no file for {address}: larger than the job's largest file": "yt-dlp nie zapisał pliku dla {address}: większy niż największy plik zadania",
+        "yt-dlp saved no file for {address} (larger than the job's largest file?)": "yt-dlp nie zapisał pliku dla {address} (większy niż największy plik zadania?)",
         "_%n release looked at ({skipped} drafts or prereleases left out), {files} files match_::_%n releases looked at ({skipped} drafts or prereleases left out), {files} files match_": [
             "Przejrzano %n wydanie (pominięto szkice lub wydania przedpremierowe: {skipped}), pasujące pliki: {files}",
             "Przejrzano %n wydania (pominięto szkice lub wydania przedpremierowe: {skipped}), pasujące pliki: {files}",

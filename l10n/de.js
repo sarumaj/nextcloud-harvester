@@ -1116,6 +1116,7 @@ OC.L10N.register(
             "%n weitere Nachrichten vom gewünschten Absender und mit dem gewünschten Betreff, nicht einzeln aufgeführt"
         ],
         "larger than the largest file, not read": "größer als die größte Datei, nicht gelesen",
+        "yt-dlp: {warning}": "yt-dlp: {warning}",
         "_%n entry listed (Entries per run: {max})_::_%n entries listed (Entries per run: {max})_": [
             "%n Eintrag gelistet (Einträge pro Durchlauf: {max})",
             "%n Einträge gelistet (Einträge pro Durchlauf: {max})"
@@ -1124,6 +1125,8 @@ OC.L10N.register(
             "%n laufender oder geplanter Eintrag übersprungen (noch keine Datei)",
             "%n laufende oder geplante Einträge übersprungen (noch keine Datei)"
         ],
+        "yt-dlp saved no file for {address}: larger than the job's largest file": "yt-dlp hat keine Datei für {address} gespeichert: größer als die größte Datei des Jobs",
+        "yt-dlp saved no file for {address} (larger than the job's largest file?)": "yt-dlp hat keine Datei für {address} gespeichert (größer als die größte Datei des Jobs?)",
         "_%n release looked at ({skipped} drafts or prereleases left out), {files} files match_::_%n releases looked at ({skipped} drafts or prereleases left out), {files} files match_": [
             "%n Release angesehen ({skipped} Entwürfe oder Vorabversionen ausgelassen), {files} Dateien passen",
             "%n Releases angesehen ({skipped} Entwürfe oder Vorabversionen ausgelassen), {files} Dateien passen"
