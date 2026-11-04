@@ -15,10 +15,17 @@ GET /api/users/me (the account's test), GET /api/server/media-types (what it kee
 POST /api/assets/bulk-upload-check (a content there already, by its SHA-1: adopted, not uploaded
 again), POST /api/assets (multipart, the file streamed from the run's temporary file), GET and
 POST /api/albums and PUT /api/albums/{id}/assets, PUT /api/tags (made by name, "a/b" as b inside
-a), PUT and DELETE /api/tags/{id}/assets, GET /api/assets/{id} (whether it is still there). The
-key needs the permissions user.read, asset.upload, asset.read, album.read, album.create,
-albumAsset.create, tag.read, tag.create and tag.asset; asset.delete only to restore a photo from
-Immich's trash (POST /api/trash/restore/assets) that a job fetches again.
+a), PUT and DELETE /api/tags/{id}/assets, GET /api/assets/{id} (whether it is still there), GET
+and PUT /api/users/me/preferences (Tags shown). The key needs the permissions user.read,
+asset.upload, asset.read, album.read, album.create, albumAsset.create, tag.read, tag.create and
+tag.asset; asset.delete only to restore a photo from Immich's trash (POST
+/api/trash/restore/assets) that a job fetches again; userPreference.read and
+userPreference.update to turn Tags on.
+
+Immich hides tags until the person turns them on (Account Settings, Features, Tags: off for a new
+account), so tags given while it is off are there but nowhere to be seen. A run that tags turns
+the feature on, once, where the key may (the log says so), and else says where to turn it on.
+A tag's name is Immich's value of it: "/" at its ends and doubled dropped, as Immich makes it.
 
 A job knows its files by numbers (runner.Library): each asset it placed is a row of immich_assets
 (the job, the path its file had, the asset's id); one gone from Immich (deleted, or in its trash)
@@ -204,6 +211,12 @@ def checksum(content: BinaryIO) -> str:
     return base64.b64encode(digest.digest()).decode("ascii")
 
 
+def tag_value(name: str) -> str:
+    """A tag's value as Immich makes it of a name (its upsert): the parts between "/" that are
+    not empty ("/a//b/" is a/b; "" for none)."""
+    return "/".join(part for part in name.split("/") if part)
+
+
 def taken_at(values: dict) -> str:
     """When the file was made, as Immich takes it (fileCreatedAt): its item's date ({date}, or
     {year}, {month} and {day}), at noon UTC; else now. Immich prefers the photo's own (EXIF)."""
@@ -234,6 +247,10 @@ class ImmichLibrary(Library):  # pylint: disable=too-many-instance-attributes
         self._found: set[int] = set()
         # The album the last file was put into ("": none), which the progress log names.
         self.filed = ""
+        # Whether the person's Immich shows tags was asked (shown_tags), and what the log says of
+        # it with the run's first tags ("": nothing).
+        self._asked_shown = False
+        self._shown_note = ""
 
     def item(self, values: dict) -> None:
         self.values = values
@@ -306,7 +323,39 @@ class ImmichLibrary(Library):  # pylint: disable=too-many-instance-attributes
         return said("Already in Immich: {file}", file=posixpath.basename(path))
 
     def tagged(self, tags: list[str]) -> Said | None:
+        note, self._shown_note = self._shown_note, ""
+        if note == "on":
+            return said(
+                "Tagged in Immich: {tags}. Your Immich hid tags: they are turned on now (Account Settings, Features).",
+                tags=listed_words(tags),
+            )
+        if note == "off":
+            return said(
+                "Tagged in Immich: {tags}. Immich shows tags only once you turn them on: Account Settings, Features,"
+                " Tags.",
+                tags=listed_words(tags),
+            )
         return said("Tagged in Immich: {tags}", tags=listed_words(tags))
+
+    def shown_tags(self) -> None:
+        """Once a run: Tags turned on in the person's Immich where they are off (a new account's
+        default hides every tag), else, without the key's permission, the log's hint to turn them
+        on; Immich not saying leaves it be."""
+        if self._asked_shown:
+            return
+        self._asked_shown = True
+        try:
+            tags = self.client.json("GET", "/users/me/preferences").get("tags") or {}
+        except (ImmichError, ValueError, AttributeError):
+            return
+        if tags.get("enabled", True):
+            return
+        try:
+            self.client.request("PUT", "/users/me/preferences", json={"tags": {"enabled": True, "sidebarWeb": True}})
+        except ImmichError:
+            self._shown_note = "off"
+            return
+        self._shown_note = "on"
 
     def _restore(self, asset: str) -> None:
         """A content in Immich's trash taken out of it (an upload would not: Immich answers it as a
@@ -377,17 +426,23 @@ class ImmichLibrary(Library):  # pylint: disable=too-many-instance-attributes
                 raise ImmichError(said("Immich refused: {error}", error=str(error)))
 
     def _tag_ids(self, tags: list[str]) -> dict[str, str]:
-        """The tags' ids, those that do not exist made (PUT /api/tags makes "a/b" as b in a)."""
-        missing = [name for name in tags if name not in self._tags]
+        """The tags' ids by their values (tag_value), those that do not exist made (PUT
+        /api/tags makes "a/b" as b in a); ImmichError for one Immich did not make."""
+        values = [value for value in dict.fromkeys(tag_value(name) for name in tags) if value]
+        missing = [value for value in values if value not in self._tags]
         if missing:
             for tag in self.client.json("PUT", "/tags", json={"tags": missing}):
                 self._tags[str(tag.get("value") or tag.get("name"))] = str(tag["id"])
-        return {name: self._tags[name] for name in tags if name in self._tags}
+        lacking = [value for value in values if value not in self._tags]
+        if lacking:
+            raise ImmichError(said("Immich made no tag {tags}", tags=listed_words(lacking)))
+        return {value: self._tags[value] for value in values}
 
     def tag(self, file_id: int, tags: list[str]) -> None:
         asset = self._asset(file_id)
         if asset is None:
             raise FileGone(file_id)
+        self.shown_tags()
         for tag in self._tag_ids(tags).values():
             self._bulk(self.client.json("PUT", f"/tags/{tag}/assets", json={"ids": [asset]}))
 
@@ -395,12 +450,13 @@ class ImmichLibrary(Library):  # pylint: disable=too-many-instance-attributes
         asset = self._asset(file_id)
         if asset is None:
             raise FileGone(file_id)
-        if any(name not in self._tags for name in tags):
+        values = [tag_value(name) for name in tags]
+        if any(value not in self._tags for value in values):
             for tag in self.client.json("GET", "/tags"):
                 self._tags[str(tag.get("value") or tag.get("name"))] = str(tag["id"])
-        for name in tags:
-            if name in self._tags:
-                self.client.request("DELETE", f"/tags/{self._tags[name]}/assets", json={"ids": [asset]})
+        for value in values:
+            if value in self._tags:
+                self.client.request("DELETE", f"/tags/{self._tags[value]}/assets", json={"ids": [asset]})
 
     def existing(self, file_ids: list[int]) -> dict[int, str]:
         # Each asset asked for (Immich answers 400 or 404 for one gone, isTrashed for one in its

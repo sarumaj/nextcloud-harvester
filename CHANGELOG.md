@@ -30,6 +30,12 @@
   reaches the inbox's marker with the next file, rather than the vault app moving the files on
   into the folder the marker named first (the vault's top). A marker made in the vault app keeps
   its folder while the job's is `/`.
+- Immich's tags show: Immich hides every tag until the person turns Tags on (*Account Settings >
+  Features*, off for a new account), so the tags Harvester gave were there but nowhere to be seen.
+  A run that tags in Immich turns them on, once, and says so; a key without
+  `userPreference.update` gets the log's hint where to turn them on. A tag named with a `/` at its
+  ends or doubled is the one Immich makes, no longer left out quietly; a tag Immich does not make
+  fails its file.
 - *Move to the private library* in Files opens the Library with the move it proposed although
   AppAPI's redirect comes without `?fileIds=`, and so does a reload in the next 15 minutes, until
   the move starts.

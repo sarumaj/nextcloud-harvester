@@ -92,8 +92,9 @@ sent back to the page) and, unless the admin presets one, their server's address
 Uploads are streamed from the run's temporary file (never whole in memory), after Immich was
 asked whether it has the content (`POST /api/assets/bulk-upload-check`, its SHA-1). The key needs
 the permissions `user.read`, `asset.upload`, `asset.read`, `album.read`, `album.create`,
-`albumAsset.create`, `tag.read`, `tag.create` and `tag.asset` (and `asset.delete` to restore a
-photo from Immich's trash that a job fetches again). Harvester records, per job, which
+`albumAsset.create`, `tag.read`, `tag.create`, `tag.asset`, `userPreference.read` and
+`userPreference.update` (to turn on Immich's Tags, which a new account hides), and `asset.delete`
+to restore a photo from Immich's trash that a job fetches again. Harvester records, per job, which
 asset each of its files is (`immich_assets` in its database), nothing of their content.
 
 ## Proxy

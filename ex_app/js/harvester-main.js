@@ -3764,7 +3764,7 @@
 		const box = el('details', { class: 'harvester-group harvester-immich-account' },
 			el('summary', {}, el('span', { text: t('Your Immich account') })),
 			el('div', { class: 'harvester-form' },
-				el('p', { class: 'harvester-muted', text: t('Yours, for every job that saves to Immich. Make an API key in Immich (Account settings, API keys) with the permissions user.read, asset.upload, asset.read, album.read, album.create, albumAsset.create, tag.read, tag.create and tag.asset.') }),
+				el('p', { class: 'harvester-muted', text: t('Yours, for every job that saves to Immich. Make an API key in Immich (Account settings, API keys) with the permissions user.read, asset.upload, asset.read, album.read, album.create, albumAsset.create, tag.read, tag.create, tag.asset, userPreference.read and userPreference.update.') }),
 				field(t('Server'), url, t('Empty: the server your admin set, if any.')),
 				field(t('API key'), key, t('Kept encrypted in Nextcloud, never shown again. Empty: the one kept.')),
 				state,

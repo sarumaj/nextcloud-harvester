@@ -170,11 +170,12 @@ files with Nextcloud's tags, as it did.
   account is yours, not the job's: **Your Immich account** in the *Save to* section (shown for
   Immich) takes your server's address (empty: the one your admin set, if any) and an API key you
   make in Immich (*Account settings > API keys*) with the permissions `user.read`, `asset.upload`,
-  `asset.read`, `album.read`, `album.create`, `albumAsset.create`, `tag.read`, `tag.create` and
-  `tag.asset`. **Save and test** asks Immich who you are and shows the account's email; the key is
-  kept as a sensitive setting of yours in Nextcloud (encrypted), never shown again (**Forget**
-  deletes it). Every job of yours that saves to Immich uses it: a key Immich refuses, or none, stops
-  the run as a refused account does (*Sign-in refused*); set it again. The address must be
+  `asset.read`, `album.read`, `album.create`, `albumAsset.create`, `tag.read`, `tag.create`,
+  `tag.asset`, `userPreference.read` and `userPreference.update`. **Save and test** asks Immich
+  who you are and shows the account's email; the key is kept as a sensitive setting of yours in
+  Nextcloud (encrypted), never shown again (**Forget** deletes it). Every job of yours that saves
+  to Immich uses it: a key Immich refuses, or none, stops the run as a refused account does
+  (*Sign-in refused*); set it again. The address must be
   `https://` (plain `http://` only where your admin allows it, or for their own server), and a
   server you type must be on a public address. **Album** (optional) is the album the files go into,
   made when there is none of its name; the file's values may make it (`Magazines {year}`), and one
@@ -192,12 +193,19 @@ files with Nextcloud's tags, as it did.
 **Tag as** (`tag_as`): **Nextcloud tags** (the default in your files; Nextcloud's tags are global:
 everyone on the server sees the tags' names in their lists of tags, not your files), **Immich's
 tags** (the default in Immich: yours, in Immich; `a/b` is the tag `b` inside `a`, as Immich nests
-them), **Harvester's labels** (kept in Harvester's database with each file, never Nextcloud's tags:
-the job's **Files** and the library show them and filter by them) or **None**. A file in the
+them; a `/` at a tag's ends or doubled is dropped, as Immich does), **Harvester's labels** (kept
+in Harvester's database with each file, never Nextcloud's tags: the job's **Files** and the
+library show them and filter by them) or **None**. A file in the
 library, a vault, an inbox or Immich carries no Nextcloud tag: labels or none there (or Immich's
 tags in Immich). A job's tags (and their templates, `{year}`) are the labels' names as they are the
 tags'. Changing *Tag as* leaves the tags and labels its files have; a job's new tags reach its files
 as before.
+
+Immich hides tags until you turn them on (*Account Settings > Features > Tags*, off for a new
+account): the tags are there, but neither the photo's details nor the sidebar show them. A run
+that tags in Immich turns them on for you, once, and its log says so (*Your Immich hid tags: they
+are turned on now*); a key without `userPreference.update` cannot, and the log says where to turn
+them on instead.
 
 A job's **Files** (beside it in the list, `GET /api/jobs/<id>/files`) lists the newest 1000
 files it saved, with their tags or labels, and filters them by one. Another *Save to* applies

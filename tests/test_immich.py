@@ -55,6 +55,9 @@ class FakeImmich:  # pylint: disable=too-many-instance-attributes
         self.calls: list[str] = []
         self.status = 0
         self.restoring = True
+        # The person's Tags feature (Account Settings, Features), and whether the key may change it.
+        self.preferences = {"tags": {"enabled": True, "sidebarWeb": False}}
+        self.may_prefer = True
 
     def seed(self, content: bytes, trashed: bool = False) -> str:
         asset = str(uuid.uuid4())
@@ -143,12 +146,26 @@ class FakeImmich:  # pylint: disable=too-many-instance-attributes
             results.append({"id": asset, "success": not there} | ({"error": "duplicate"} if there else {}))
         return httpx.Response(200, json=results)
 
+    def on_get_users_me_preferences(self, _request, _body, _ident):
+        return httpx.Response(200, json=self.preferences)
+
+    def on_put_users_me_preferences(self, _request, body, _ident):
+        if not self.may_prefer:
+            return httpx.Response(403, json={"message": "Missing required permission: userPreference.update"})
+        for key, value in body.items():
+            self.preferences[key] = self.preferences.get(key, {}) | value
+        return httpx.Response(200, json=self.preferences)
+
     def on_put_tags(self, _request, body, _ident):
+        # As Immich's upsertTags: the parts between "/" that are not empty, each made.
         made = []
-        for value in body["tags"]:
-            for end in range(1, value.count("/") + 2):
-                self.tags.setdefault("/".join(value.split("/")[:end]), str(uuid.uuid4()))
-            made.append({"id": self.tags[value], "name": value.rsplit("/", 1)[-1], "value": value})
+        for name in dict.fromkeys(body["tags"]):
+            parts = [part for part in name.split("/") if part]
+            for end in range(1, len(parts) + 1):
+                self.tags.setdefault("/".join(parts[:end]), str(uuid.uuid4()))
+            if parts:
+                value = "/".join(parts)
+                made.append({"id": self.tags[value], "name": parts[-1], "value": value})
         return httpx.Response(200, json=made)
 
     def on_get_tags(self, _request, _body, _ident):
@@ -355,3 +372,45 @@ def test_tag_as_and_the_form_follow_the_place():
     assert destinations.tag_as({"save_to": "files", "tag_as": "immich"}) == "nextcloud"
     assert "Immich's tags only" in destinations.problem({"save_to": "files", "tag_as": "immich"}, "/x")
     assert destinations.problem({"save_to": "immich", "tag_as": "immich"}, "/x") == ""
+
+
+def test_tags_hidden_in_immich_are_turned_on_once_and_the_log_says_so(app):
+    app.immich.preferences["tags"] = {"enabled": False, "sidebarWeb": False}
+    job = run(app, saved(app))
+    assert job.last_status == "ok", job.last_message
+    assert app.immich.preferences["tags"] == {"enabled": True, "sidebarWeb": True}
+    lines = logged(app, job)
+    turned = [line for line in lines if "turned on now" in line]
+    assert turned == [
+        "Tagged in Immich: a and Photos/2024. Your Immich hid tags: they are turned on now (Account Settings,"
+        " Features)."
+    ], "said once, with the run's first tags"
+    assert "Tagged in Immich: b and Photos/2024" in lines
+    assert app.immich.calls.count("GET /users/me/preferences") == 1, "asked once a run"
+    run(app, saved(app))
+    assert app.immich.calls.count("PUT /users/me/preferences") == 1, "on already: left as it is"
+
+
+def test_a_key_that_may_not_turn_tags_on_says_where_to(app):
+    app.immich.preferences["tags"] = {"enabled": False}
+    app.immich.may_prefer = False
+    job = run(app, saved(app))
+    assert job.last_status == "ok", job.last_message
+    assert app.immich.tags_of(by_name(app)["a.jpg"]) == {"a", "Photos/2024"}, "tagged all the same"
+    assert (
+        "Tagged in Immich: a and Photos/2024. Immich shows tags only once you turn them on: Account Settings,"
+        " Features, Tags."
+    ) in logged(app, job)
+
+
+def test_tags_named_with_extra_slashes_are_the_values_immich_makes(app):
+    job = run(app, saved(app, tags=["/{letter}/", "Photos//{year}"]))
+    assert job.last_status == "ok", job.last_message
+    assert app.immich.tags_of(by_name(app)["a.jpg"]) == {"a", "Photos/2024"}, "none left out quietly"
+    assert immich.tag_value("/a//b/") == "a/b" and immich.tag_value("//") == ""
+
+
+def test_a_tag_immich_does_not_make_fails_the_file_rather_than_being_left_out(app, monkeypatch):
+    monkeypatch.setattr(FakeImmich, "on_put_tags", lambda *_: httpx.Response(200, json=[]))
+    job = run(app, saved(app))
+    assert "Immich made no tag a and Photos/2024" in json.dumps(logged(app, job))
