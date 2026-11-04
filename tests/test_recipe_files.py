@@ -284,8 +284,8 @@ def test_export_save_as_template_and_import(page, tmp_path):
     assert json.loads(sent["text"]) == FILE, "checked as an imported file is"
     page.get_by_role("button", name="Back to the jobs").click()
     page.get_by_role("button", name="New job").click()
-    page.once("dialog", lambda dialog: dialog.accept())
     page.get_by_role("button", name="Remove the template My mag").click()
+    page.locator("dialog").get_by_role("button", name="Remove").click()  # asked in the page
     for _ in range(100):
         if ("DELETE", "/templates/4", None) in CALLS:
             break
