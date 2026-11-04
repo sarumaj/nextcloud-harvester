@@ -23,7 +23,7 @@ import time
 from types import SimpleNamespace
 
 import pytest
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import Error as PlaywrightError, sync_playwright
 from test_browser import Driver, needs_chromium
 from test_recorder_features import routed
 
@@ -521,6 +521,21 @@ def test_a_navigating_click_waits_for_its_address_and_the_next_element(chromium)
         assert page.url.endswith("/item/12345") and page.is_visible("#dl")
     finally:
         page.context.close()
+
+
+def test_a_click_that_closes_its_window_is_done():
+    """A popup's Allow (window.close()) may close the page before Playwright's click returns."""
+
+    def closing(*_args, **_options):
+        page.closed = True
+        raise PlaywrightError("Target page, context or browser has been closed")
+
+    page = SimpleNamespace(closed=False, click=closing)
+    page.is_closed = lambda: page.closed
+    site_module.replay(page, {"action": "click", "selector": "#allow"}, {})
+    still_open = SimpleNamespace(click=closing, is_closed=lambda: False)
+    with pytest.raises(PlaywrightError):
+        site_module.replay(still_open, {"action": "click", "selector": "#allow"}, {})
 
 
 def test_a_step_without_a_wait_settles_as_before(monkeypatch):

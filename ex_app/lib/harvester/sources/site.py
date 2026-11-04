@@ -635,7 +635,15 @@ def replay(page, step: dict, secrets: dict[str, str], repaired: Callable[[str, s
         target.hover(selector, **wait)
         return
     elif action == "click":
-        target.click(selector, **wait)
+        try:
+            target.click(selector, **wait)
+        except PlaywrightError:
+            # A click that closes its own window (a sign-in popup's Allow, window.close()) may
+            # end before Playwright hears back from the page: done, the next step goes back to
+            # the opener.
+            if not page.is_closed():
+                raise
+            return
     elif action == "press":
         target.press(selector, step.get("key", "Enter"), **wait)
     elif action == "mail-code":

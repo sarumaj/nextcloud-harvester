@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- A recorded click that closes its own window (a sign-in popup's **Allow**) no longer fails its
+  step now and then: the window may close before the browser reports the click as done.
+
 ## 0.13.2 - 2026-11-04
 
 ### Added
