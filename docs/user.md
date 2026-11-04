@@ -185,8 +185,10 @@ place's files only.
 
 - **Sources** (`ex_app/lib/harvester/sources/`), one card each on the *New job* page:
   - `site`: files linked from a website's pages, by a recipe (below).
-  - `mail`: attachments of the messages in an IMAP mailbox (TLS), filtered by sender, subject,
-    file name, type and size; read-only (`BODY.PEEK`, the folder selected read-only), so nothing
+  - `mail`: attachments of the messages in an IMAP mailbox (TLS), or the files they link to, or
+    both (**Fetch**: *Attachments*, *Linked files*, *Both*; the form shows only the chosen part's
+    options, the others keep their values), filtered by sender, subject, file name, type and
+    size; read-only (`BODY.PEEK`, the folder selected read-only), so nothing
     is marked as read. Values: `{from}`, `{sender}`, `{subject}`, `{date}`, `{year}`, …
     A run asks little of the server: a sender that is a plain address or domain is searched for
     there, the headers come a hundred messages at a time, a message larger than the largest file
@@ -200,9 +202,10 @@ place's files only.
     sizes asked for, no link the patterns take*); the first 50 of a run, the others counted in a
     line. The other messages are only counted. A message with nothing to fetch is no failure: it
     is done with, as is one whose files were all saved or skipped.
-    **Also the files linked in the message** (off by default, also for jobs saved before;
-    `sources/maillinks.py`) downloads the files a message links to too ("Download your
-    invoice"): the HTML part's links and the addresses written in the plain text, http(s) only,
+    **Linked files** (`sources/maillinks.py`) downloads the files a message links to ("Download
+    your invoice"); a job saved before *Fetch* fetches as it did (its attachments, and the linked
+    files too when its *Also the files linked in the message* was on: read so, not rewritten).
+    The links: the HTML part's links and the addresses written in the plain text, http(s) only,
     of the **Link address** or **Link text** patterns (one at least; both given, both must match;
     an address in plain text has its line as its text), at most 10 a message. Never a `mailto:`
     or `tel:` link, nor one that unsubscribes or manages a newsletter (by its address, its text,
@@ -216,14 +219,17 @@ place's files only.
     gives a web page instead of a file (a portal's sign-in) is sent to **Pages to the on-demand
     job**, one of your on-demand website jobs, whose recipe signs in and downloads it (its queue,
     as *Send to Harvester*; checked as a sent address is); without one, the log says *a page, not
-    a file: …*. Such a page, and a link that expired (404, 410) or is closed (401, 403), is a line
-    in the log once and skipped for good, not a failure of the run. A link whose site cannot be
+    a file: …*. While you have no on-demand website job, the form says so under the list: record
+    one for the portal (*Website*, *On demand*) first. Such a page, and a link that expired (404,
+    410) or is closed (401, 403), is a line in the log once and skipped for good, not a failure of
+    the run. A link whose site cannot be
     reached (a name that does not resolve, a connection that fails after the download's own
     retries, an error 5xx, a redirect to a private address) is no failure of the run either: the
     log says *Skipped … this time (tried again next run): … (try 1 of 3)*, the run's outcome
     counts it as *skipped this time*, and the message is read again next run for it; after its
     third run it is given up (skipped for good). Only the mailbox's own troubles (its sign-in, its
-    folder, its server) fail a run. *Attachment names* is for attachments only.
+    folder, its server) fail a run. *Attachment names* is for attachments only; *Linked files*
+    needs a link address or link text.
   - `feed`: the files of an RSS or Atom feed, newest first: its enclosures (podcast episodes) or
     each entry's link, through the checked download. Values: `{title}`, `{feed}`, `{author}`,
     `{date}`, `{year}`, `{filename}`, … The log says what the feed holds (*The feed “Reports”:

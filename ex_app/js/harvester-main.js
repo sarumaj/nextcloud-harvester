@@ -3191,6 +3191,8 @@
 		// The source's essentials first; the other options in folded groups, each opened when one
 		// of its options differs from its default and saying how many do.
 		const groups = new Map()
+		// [key, its box, shown_when] of the options shown only with another's values (showWhen).
+		const conditional = []
 		const differs = (key) => {
 			const option = chosen.options[key]
 			const now = optionInputs[key].value
@@ -3221,6 +3223,13 @@
 			const current = key in value.options ? value.options[key] : value.id && option.before != null ? option.before : option.default
 			const into = groupOf(option.group)
 			if (into !== options) into.keys.push(key)
+			// Shown only while another option has one of some values (the server's shown_when):
+			// its fields in a box of their own, which showWhen hides.
+			const holder = option.shown_when && option.shown_when.length ? el('div', { 'data-option-box': key }) : into
+			if (holder !== into) {
+				into.append(holder)
+				conditional.push([key, holder, option.shown_when])
+			}
 			if (option.kind === 'recipe') {
 				const textarea = el('textarea', { rows: '10', class: 'harvester-recipe' })
 				textarea.value = current
@@ -3236,7 +3245,7 @@
 				}
 				textarea.addEventListener('input', checkLeaks)
 				checkLeaks()
-				into.append(field(said(option.title), textarea, said(option.description)), leaks,
+				holder.append(field(said(option.title), textarea, said(option.description)), leaks,
 					el('button', {
 						type: 'button',
 						text: t('Record in the browser'),
@@ -3251,7 +3260,7 @@
 					box.checked = Number(current) === 1
 					optionInputs[key] = { get value() { return box.checked ? 1 : 0 } }
 					optionFields[key] = box
-					into.append(el('label', { class: 'harvester-check' }, box,
+					holder.append(el('label', { class: 'harvester-check' }, box,
 						el('span', {}, el('strong', { text: optionTitle(key, option) }), el('br'), el('small', { class: 'harvester-muted', text: said(option.description) }))))
 					continue
 				}
@@ -3261,9 +3270,13 @@
 					const select = el('select', { 'data-option': key }, el('option', { value: '0', text: t('None') }))
 					// Until the list is there, the job keeps what it had.
 					let listed = false
+					// Without one to choose, how to make one.
+					const none = el('small', { class: 'harvester-field-help harvester-no-job', text: t('No on-demand website job yet: record one for the portal (Website, On demand) to hand it the links that open a page') })
+					none.hidden = true
 					api('GET', '/jobs?brief=1').then((jobs) => {
-						select.append(...jobs.filter((other) => onDemand(other) && other.source === 'site')
-							.map((other) => el('option', { value: String(other.id), text: `${other.name} (${other.target})` })))
+						const offered = jobs.filter((other) => onDemand(other) && other.source === 'site')
+						select.append(...offered.map((other) => el('option', { value: String(other.id), text: `${other.name} (${other.target})` })))
+						none.hidden = offered.length > 0
 						select.value = String(current || 0)
 						if (!select.value) select.value = '0'
 						listed = true
@@ -3274,15 +3287,15 @@
 					const unread = el('small', { class: 'harvester-error', role: 'alert' })
 					optionInputs[key] = { get value() { return Number(listed ? select.value : current) || 0 } }
 					optionFields[key] = select
-					into.append(field(optionTitle(key, option), select, said(option.description)), unread)
+					holder.append(field(optionTitle(key, option), select, said(option.description)), none, unread)
 					continue
 				}
 				if (option.choices && option.choices.length) {
 					// The values it may have; several (kept comma-separated) where it allows them.
 					const chosen = String(current).split(',').map((v) => v.trim())
 					const select = el('select', option.multiple ? { multiple: '', size: String(Math.min(option.choices.length, 7)) } : {},
-						...option.choices.map((choice) => {
-							const item = el('option', { value: choice, text: choice })
+						...option.choices.map((choice, index) => {
+							const item = el('option', { value: choice, text: option.labels && option.labels[index] ? said(option.labels[index]) : choice })
 							item.selected = chosen.includes(choice)
 							return item
 						}))
@@ -3290,16 +3303,16 @@
 						get value() { return [...select.selectedOptions].map((item) => item.value).join(',') || option.default },
 					}
 					optionFields[key] = select
-					into.append(field(optionTitle(key, option), select, said(option.description)))
+					holder.append(field(optionTitle(key, option), select, said(option.description)))
 					continue
 				}
 				optionInputs[key] = optionInput(option, current)
 				optionFields[key] = optionInputs[key]
-				into.append(field(optionTitle(key, option), optionInputs[key], said(option.description)))
+				holder.append(field(optionTitle(key, option), optionInputs[key], said(option.description)))
 				// A page to find in the browser first: a gallery, a channel, a feed, a repository.
 				if (option.kind === 'url' && BROWSED.includes(chosen.name)) {
 					const input = optionInputs[key]
-					into.append(el('button', {
+					holder.append(el('button', {
 						type: 'button',
 						class: 'harvester-browse-button',
 						text: t('Browse'),
@@ -3324,6 +3337,18 @@
 			box.open = box.count() > 0
 			options.append(box)
 		}
+		// The options shown only with some values of another (a mail job's Fetch): hidden
+		// otherwise, and a group whose options are all hidden with them. The job keeps their values.
+		const showWhen = () => {
+			const hidden = new Set()
+			for (const [key, holder, [other, ...values]] of conditional) {
+				holder.hidden = Boolean(optionInputs[other]) && !values.includes(String(optionInputs[other].value))
+				if (holder.hidden) hidden.add(key)
+			}
+			for (const box of groups.values()) box.hidden = box.keys.length > 0 && box.keys.every((key) => hidden.has(key))
+		}
+		options.addEventListener('change', showWhen)
+		showWhen()
 		const folderBox = field(t('Folder'), target, t('In your files, e.g. /Magazines/iX.'))
 		const saving = saveSection(value, chosen, optionInputs, optionFields, folderBox.querySelector('small'), job)
 		saving.update()

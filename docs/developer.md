@@ -47,6 +47,13 @@ registered by the homelab's `nextcloud` role (`nextcloud_harvester`), as
 `local.homelab/harvester:<version>`. `appinfo/info.xml` describes the app; its routes are also
 in the role's registration.
 
+A source's options (`sources/base.py`, `Option`) are its form: an option of a `group` is folded
+away, one with `shown_when` (another option's key, then its values) is shown only while that
+option has one of them, a `choices` option lists its `labels`. An option that replaces older ones
+gets its value from them in the source's `upgraded()` (a mail job's `fetch` from its flag
+`links`): the jobs are read so, by the runs and by `GET /api/jobs/<id>` for the form, never
+rewritten in the database.
+
 ## Destinations
 
 A job's *Save to* (`destinations.py`: its options, rules and checks) picks a `Destination` of
@@ -112,8 +119,8 @@ Translated:
   language can order them; a count is `n()` (`%n` and its forms). Only quoted texts are found:
   no variables, no template strings;
 - what the page shows of the server's lists, through the page's `said()`: the sources' titles,
-  descriptions and account fields, the options' titles and help, the templates' titles,
-  descriptions and parameters;
+  descriptions and account fields, the options' titles, help and choices' words, the templates'
+  titles, descriptions and parameters;
 - the admin's settings (Nextcloud's settings page runs `t()` over their titles, help and
   placeholders): no `<…>` in them, which Nextcloud's sanitizing drops;
 - the API's errors given as plain strings (`HTTPException(404, "no such job")`), shown by the

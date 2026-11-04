@@ -8,8 +8,8 @@ the app's notifications with the .json. The texts are:
 
 - the page's (ex_app/js): t('…') and n('…', '…', count), in single quotes;
 - what the page shows of the server's (the API's lists, translated on the page): the sources'
-  titles, descriptions and account fields, their options' titles and help, the templates'
-  titles, descriptions and parameters, as the app has them when it runs;
+  titles, descriptions and account fields, their options' titles, help and choices' words, the
+  templates' titles, descriptions and parameters, as the app has them when it runs;
 - the admin's settings (settings.form, settings.dns_form with each status): their titles, help
   and placeholders that are words;
 - the API's errors given as plain strings (HTTPException(status, "…")), and the subjects and
@@ -74,8 +74,8 @@ def page_texts() -> dict[str, str]:
 
 
 def source_texts() -> Iterator[tuple[object, str]]:
-    """The sources' titles, descriptions and account fields, and their options' titles and help,
-    as the API lists them for the page (with where each is)."""
+    """The sources' titles, descriptions and account fields, and their options' titles, help and
+    choices' words, as the API lists them for the page (with where each is)."""
     # pylint: disable=import-outside-toplevel,import-error
     from harvester import watch
     from harvester.runner import COMMON_OPTIONS
@@ -92,6 +92,8 @@ def source_texts() -> Iterator[tuple[object, str]]:
             if key != "home":  # "Through the proxy": the page's own text, with the admin's name
                 yield option.title, f"{where}, option {key}"
             yield option.description, f"{where}, option {key}"
+            for label in option.labels:
+                yield label, f"{where}, option {key}"
 
 
 def preset_texts() -> Iterator[tuple[object, str]]:

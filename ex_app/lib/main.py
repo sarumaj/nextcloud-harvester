@@ -195,8 +195,11 @@ def listed(job: Job) -> dict:
 
 @APP.get("/api/jobs/{job_id}")
 async def get_job(job_id: int, nc: NC) -> dict:
-    """One of the user's jobs with its options (its form)."""
-    return vars(await own_job(job_id, nc))
+    """One of the user's jobs with its options (its form), as its source reads them now (an
+    option that came after the job was saved has the value it runs with)."""
+    job = await own_job(job_id, nc)
+    source = SOURCES.get(job.source)
+    return vars(job) | ({"options": source.upgraded(job.options)} if source else {})
 
 
 def fetches_of(jobs: list[Job], fetched: list[dict] | None = None) -> dict[int, list[dict]]:
@@ -328,8 +331,13 @@ def forget_changed(job: Job, saved: Job) -> None:
     per run, schedule or tags change nothing there. Other types or sizes try again the files they
     refused. Another Save to (or vault) forgets where its files are (not that it fetched them)."""
 
+    # As the source reads them: a job saved before an option has the value it ran with.
+    before, after = (
+        SOURCES[one.source].upgraded(one.options) if one.source in SOURCES else one.options for one in (job, saved)
+    )
+
     def changed(names) -> bool:
-        return any(saved.options.get(name) != job.options.get(name) for name in names)
+        return any(after.get(name) != before.get(name) for name in names)
 
     if saved.source != job.source or changed(SOURCES[saved.source].listing_options):
         store().forget_marks(job.id or 0)

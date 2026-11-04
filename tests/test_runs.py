@@ -19,7 +19,7 @@ from test_runner import FakeFiles, FakeLibrary, FakeNextcloud, FakeSource
 
 from harvester import executor as executor_module
 from harvester import runner, schedule
-from harvester.sources import FULL_PASS, REFUSED, AuthError, Denied, Item, Refused, SourceError, download
+from harvester.sources import FULL_PASS, MARK, REFUSED, AuthError, Denied, Item, Refused, SourceError, download
 from harvester.store import Job, Store
 
 
@@ -264,6 +264,29 @@ def test_only_a_change_of_the_listing_forgets_the_complete_pass(tmp_path, monkey
     assert change(max_items=50, path="{text}{ext}") == {FULL_PASS, "a", REFUSED + "a"}, "files per run, names"
     assert change(file_type="pdf") == {FULL_PASS}, "other types: the refused file is tried again"
     assert change(recipe='{"start": "https://other.example/"}') == set(), "another recipe lists other files"
+
+
+def test_a_mail_job_saved_before_fetch_keeps_what_it_knew_when_saved_with_it(tmp_path, monkeypatch):
+    """Its flag "links" read as Fetch (Mail.upgraded): the same Fetch saved changes nothing,
+    another one lists the messages anew."""
+    import main  # pylint: disable=import-outside-toplevel
+
+    store = Store(str(tmp_path / "db"))
+    monkeypatch.setitem(main.STATE, "store", store)
+    before = store.save(
+        Job(user="u", name="n", source="mail", target="/x", schedule="", options={"host": "h", "links": 1})
+    )
+    job_id = before.id or 0
+
+    done = MARK + "mail:INBOX:1:1"
+
+    def change(**options):
+        store.mark_seen(job_id, done)
+        main.forget_changed(before, Job(**{**vars(before), "options": before.options | options}))
+        return store.seen_keys(job_id)
+
+    assert change(fetch="both") == {done}, "as it fetched: its messages done with stay so"
+    assert change(fetch="attachments") == set(), "read again for what it fetches now"
 
 
 # Tags changed: the pass is kept until it goes through, and a run asked for still comes.

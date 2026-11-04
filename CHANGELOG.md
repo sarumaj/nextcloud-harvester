@@ -42,9 +42,19 @@
 - A name the DNS servers block (they answer `0.0.0.0` or `::`) is told as such in the job's log,
   by the browser's guard and the downloads' checks (*blocked by the DNS server*), and a name they
   do not know as possibly blocked.
+- **Fetch** first in a mail job's form: *Attachments*, *Linked files* or *Both*. The form shows
+  only the chosen part's options (an option's `shown_when`; a group whose options are all hidden
+  goes with them) and keeps the others' values; a *Linked files* job asks for a link address or
+  link text and nothing of attachment names. A job saved before keeps what it fetched (its
+  attachments, and its linked files when *Also the files linked in the message* was on), read so
+  (`Source.upgraded`, also for `GET /api/jobs/<id>`), not rewritten. A choice's words in the
+  form (an option's `labels`).
+- Under a mail job's **Pages to the on-demand job**, while you have no on-demand website job:
+  how to make one (record one for the portal, *Website*, *On demand*).
 
 ### Changed
 
+- A mail job's **Pages to the on-demand job** says what it is for in one sentence.
 - The progress log names the address a run looks at (*Looking for new files at https://…*) and
   says how many of the listed files the job has already (*37 listed files are known already: not
   downloaded again*), and the run's outcome counts them (*0 downloaded, 37 known*).

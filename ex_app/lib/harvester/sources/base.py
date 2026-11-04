@@ -252,6 +252,8 @@ class Option:
     # with multiple).
     choices: tuple[str, ...] = ()
     multiple: bool = False
+    # The choices in words, as the form lists them (in the order of choices; the values without).
+    labels: tuple[str, ...] = ()
     # Values the form suggests, the field taking others too (yt-dlp's formats, IMAP folders).
     suggestions: tuple[str, ...] = ()
     # A template's values, offered for insertion ({year}, {title}, ...).
@@ -268,6 +270,10 @@ class Option:
     # browser and connection), files (files and sizes), runs (repeated runs), links (a message's
     # linked files).
     group: str = ""
+    # Shown only while another option has one of some values: its key, then the values (a mail
+    # job's attachment names only while it fetches attachments); () always shown. The job keeps
+    # the value of an option hidden so, which its source then does not use.
+    shown_when: tuple[str, ...] = ()
 
 
 # A job's choice to have its HTTP clients present themselves as a browser does (headers and TLS
@@ -356,6 +362,7 @@ class Source(abc.ABC):
     address_option: ClassVar[str] = ""
 
     def __init__(self, options: dict, credentials: dict[str, str], client: httpx.Client | None):
+        options = self.upgraded(options)
         self.settings = {
             key: options.get(key, option.default if option.before is None else option.before)
             for key, option in self.options.items()
@@ -388,6 +395,12 @@ class Source(abc.ABC):
         # Hands an address to one of the person's on-demand jobs (its ID) to fetch, as Send to
         # Harvester does (ondemand.hand_over, the executor's): why it could not, "" once queued.
         self.hand_over: Callable[[int, str], str] = lambda job_id, url: "no on-demand job takes it here"
+
+    @classmethod
+    def upgraded(cls, options: dict) -> dict:
+        """The job's options as the source reads them now: an option that came after the job was
+        saved given the value of those it has (nothing is written back; the form shows it so)."""
+        return options
 
     def rechecks(self) -> bool:
         """Whether a run asks the addresses of the files the job saved again (RECHECK); never for

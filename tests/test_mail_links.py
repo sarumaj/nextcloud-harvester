@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""The files linked in a message's body (the mail source's "Also the files linked in the
-message"): which links are taken, their download through the guarded client (httpx's
-MockTransport behind it) with its redirects, names and checks, a page handed to an on-demand job
-or logged, an expired link skipped once; and ondemand.hand_over's checks. No network."""
+"""The files linked in a message's body (the mail source's Fetch: Linked files, or Both, and a
+job's flag "links" from before Fetch): which links are taken, their download through the guarded
+client (httpx's MockTransport behind it) with its redirects, names and checks, a page handed to an
+on-demand job or logged, an expired link skipped once; and ondemand.hand_over's checks. No
+network."""
 
 # pylint: disable=missing-function-docstring
 
@@ -113,8 +114,57 @@ def test_the_options_are_checked():
         mail_source.Mail({"host": "imap.example.org", "links": 1}, {}, None)
     with pytest.raises(SourceError, match="Link text: not a regular expression"):
         mail_source.Mail({"host": "imap.example.org", "links": 1, "link_text_pattern": "("}, {}, None)
+    with pytest.raises(SourceError, match="link address or link text"):
+        mail_source.Mail({"host": "imap.example.org", "fetch": "links"}, {}, None)
+    with pytest.raises(SourceError, match="Fetch is one of attachments, links, both"):
+        mail_source.Mail({"host": "imap.example.org", "fetch": "everything"}, {}, None)
     mail_source.Mail({"host": "imap.example.org"}, {}, None).close()
-    assert mail_source.Mail.options["links"].before == 0 and mail_source.Mail.options["links"].default == 0
+    mail_source.Mail({"host": "imap.example.org", "fetch": "links", "link_pattern": "pdf"}, {}, None).close()
+    assert mail_source.Mail.options["fetch"].default == "attachments"
+
+
+def test_a_job_saved_before_fetch_keeps_what_it_took():
+    """Read, not rewritten: the flag "links" (Fetch's forerunner) on means both, off or missing
+    attachments; a job with Fetch keeps it, whatever its old flag."""
+    upgraded = mail_source.Mail.upgraded
+    assert upgraded({"host": "h"}) == {"host": "h", "fetch": "attachments"}
+    assert upgraded({"links": 0})["fetch"] == "attachments"
+    assert upgraded({"links": 1})["fetch"] == upgraded({"links": "1"})["fetch"] == "both"
+    assert upgraded({"links": 1, "fetch": "links"})["fetch"] == "links"
+    old = mail_source.Mail({"host": "imap.example.org", "links": 1, "link_pattern": "pdf"}, {}, None)
+    assert old.attached() and old.links()
+
+
+def with_attachment(raw: bytes) -> bytes:
+    message = message_of(raw)
+    message.add_attachment(PDF, maintype="application", subtype="pdf", filename="Attached.pdf")
+    return message.as_bytes()
+
+
+@pytest.mark.parametrize(
+    ("fetch", "saved"),
+    [
+        ("attachments", ["/In/2025/2025-10-14 Attached.pdf"]),
+        ("links", ["/In/2025/2025-10-14 Rechnung Oktober.pdf"]),
+        ("both", ["/In/2025/2025-10-14 Attached.pdf", "/In/2025/2025-10-14 Rechnung Oktober.pdf"]),
+    ],
+)
+def test_fetch_takes_the_attachments_the_linked_files_or_both(fetch, saved):
+    asked: list[str] = []
+    run = Run()
+    with site(asked) as client:
+        made = links_source(
+            FakeIMAP({b"1": with_attachment(linking(plain=""))}),
+            client,
+            fetch=fetch,
+            link_text_pattern="Download your invoice",
+            filename_pattern=r"\.pdf$",
+        )
+        _, log = run.go(made)
+    assert sorted(run.library.files) == saved
+    assert bool(asked) == (fetch != "attachments"), "no link asked for by a job of attachments"
+    if fetch == "links":
+        assert "Message from billing@shop.example of 2025-10-14, “Your invoice”: 1 link" in log
 
 
 def test_linked_files_are_downloaded_named_and_known_by_message_and_address():

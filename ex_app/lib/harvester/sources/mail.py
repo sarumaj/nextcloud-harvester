@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Email attachments: the files attached to the messages of an IMAP mailbox, e.g. a supplier's invoices,
-and if asked the files their bodies link to (maillinks.py).
+or the files their bodies link to (maillinks.py), or both (the job's Fetch).
 
 The mailbox is only read: the folder is selected read-only and the messages are fetched with
 BODY.PEEK, so nothing is marked as read. A message's attachments are told apart by its Message-ID
@@ -61,6 +61,10 @@ TOLD = 50
 # each failed try: TRIED, the try's number and the link's key.
 LINK_TRIES = 3
 TRIED = MARK + "mail-link-tried:"
+
+
+# What a job takes from the messages: their attachments, the files their links lead to, or both.
+FETCHES = ("attachments", "links", "both")
 
 
 # How a job signs in: a password, or OAuth2's XOAUTH2 with a refresh token at a provider.
@@ -146,7 +150,10 @@ class Mail(Source):  # pylint: disable=too-many-public-methods
 
     name = "mail"
     title = "Email attachments"
-    description = "Attachments of the messages in a mailbox (IMAP), e.g. invoices from a sender; read-only."
+    description = (
+        "Attachments of the messages in a mailbox (IMAP), or the files they link to, e.g. invoices from a sender; "
+        "read-only."
+    )
     credentials = ("username", "password", "client_id", "client_secret", "refresh_token")
     credential_help = {
         "username": ("Username", "The mailbox's login, usually its address."),
@@ -156,6 +163,14 @@ class Mail(Source):  # pylint: disable=too-many-public-methods
         "refresh_token": ("OAuth refresh token", "For Sign-in: OAuth2: a refresh token with the mail scope."),
     }
     options = {
+        "fetch": Option(
+            "Fetch",
+            "attachments",
+            "What the job takes from the messages of the sender and subject below: their attachments, the files "
+            "their links lead to (“Download your invoice”), or both.",
+            choices=FETCHES,
+            labels=("Attachments", "Linked files", "Both"),
+        ),
         "auth": Option(
             "Sign-in",
             "password",
@@ -209,6 +224,7 @@ class Mail(Source):  # pylint: disable=too-many-public-methods
             kind="regex",
             placeholder="\\.pdf$",
             suggestions=(".*", "\\.pdf$", "\\.(pdf|xml)$", "\\.(jpe?g|png)$"),
+            shown_when=("fetch", "attachments", "both"),
         ),
         "path": Option(
             "File name",
@@ -219,25 +235,16 @@ class Mail(Source):  # pylint: disable=too-many-public-methods
             values=("from", "sender", "subject", "date", "year", "month", "day", "filename", "stem", "ext"),
             suggestions=("{year}/{date} {filename}", "{sender}/{year}/{date} {filename}", "{date} {subject}{ext}"),
         ),
-        "links": Option(
-            "Also the files linked in the message",
-            0,
-            "Downloads the files the message links to too (“Download your invoice”), of the link address or link "
-            f"text below (one at least), at most {maillinks.MAX_LINKS} a message; never an unsubscribe link. A "
-            "link that gives a web page (a sign-in) instead of a file goes to the on-demand job below, or is "
-            "only logged.",
-            kind="flag",
-            before=0,
-            group="links",
-        ),
         "link_pattern": Option(
             "Link address",
             "",
-            "Regular expression on the link's address; empty: any (then the link text decides).",
+            "Regular expression on the link's address; empty: any (then the link text decides). The link address "
+            f"or the link text (one at least) picks the links, at most {maillinks.MAX_LINKS} a message; never an "
+            "unsubscribe link.",
             kind="regex",
             placeholder="shop\\.example/.*invoice",
             suggestions=("\\.pdf(\\?|$)", "/(download|invoice|rechnung|faktura)"),
-            group="links",
+            shown_when=("fetch", "links", "both"),
         ),
         "link_text_pattern": Option(
             "Link text",
@@ -246,16 +253,17 @@ class Mail(Source):  # pylint: disable=too-many-public-methods
             kind="regex",
             placeholder="Download|Rechnung",
             suggestions=("Download|Herunterladen|Pobierz", "Invoice|Rechnung|Faktura", "PDF"),
-            group="links",
+            shown_when=("fetch", "links", "both"),
         ),
         "link_job": Option(
             "Pages to the on-demand job",
             0,
-            "One of your on-demand website jobs: a link that gives a web page (a portal's sign-in) is sent to it, "
-            "and its recipe signs in and downloads the file. None: such a link is only logged.",
+            "For links that open a web page (a portal's sign-in) instead of giving the file: the on-demand website "
+            "job that signs in there and downloads it; None: such a link is only logged.",
             kind="job",
             minimum=0,
             group="links",
+            shown_when=("fetch", "links", "both"),
         ),
         "file_type": download.DOWNLOAD_OPTIONS["file_type"],
         "min_size": download.DOWNLOAD_OPTIONS["min_size"],
@@ -269,7 +277,7 @@ class Mail(Source):  # pylint: disable=too-many-public-methods
         "from_pattern",
         "subject_pattern",
         "filename_pattern",
-        "links",
+        "fetch",
         "link_pattern",
         "link_text_pattern",
         "file_type",
@@ -322,13 +330,28 @@ class Mail(Source):  # pylint: disable=too-many-public-methods
         # The failed tries of the listed links (by key, TRIED), for their fetch.
         self.tries: dict[str, int] = {}
 
+    @classmethod
+    def upgraded(cls, options: dict) -> dict:
+        """A job saved before Fetch: its attachments, and the files linked in the messages too
+        when its flag "links" (Fetch's forerunner) is on."""
+        if "fetch" in options:
+            return options
+        linked = str(options.get("links", 0)).strip() in ("1", "True", "true")
+        return options | {"fetch": "both" if linked else "attachments"}
+
+    def attached(self) -> bool:
+        """Whether the job takes the messages' attachments."""
+        return self.settings["fetch"] in ("attachments", "both")
+
     def links(self) -> bool:
-        """Whether the job takes the files linked in the messages too."""
-        return str(self.settings["links"]).strip() in ("1", "True", "true")
+        """Whether the job takes the files linked in the messages."""
+        return self.settings["fetch"] in ("links", "both")
 
     def link_problems(self) -> list[str]:
-        """What is wrong with the linked files' options."""
+        """What is wrong with Fetch and the linked files' options."""
         problems = []
+        if self.settings["fetch"] not in FETCHES:
+            problems.append(f"Fetch is one of {', '.join(FETCHES)}, not {self.settings['fetch']}")
         if self.links() and not (str(self.settings["link_pattern"]) or str(self.settings["link_text_pattern"])):
             problems.append("the files linked in the message need a link address or link text to look for")
         try:
@@ -438,7 +461,7 @@ class Mail(Source):  # pylint: disable=too-many-public-methods
                 raise SourceError(f"the IMAP server could not give message {uid.decode()}")
             message = email.message_from_bytes(fetched_bytes(data), policy=email.policy.default)
             where = f"{validity}:{uid.decode()}"
-            attached = self.wanted_attachments(message, where)  # type: ignore[arg-type]
+            attached = self.wanted_attachments(message, where) if self.attached() else []  # type: ignore[arg-type]
             links = self.wanted_links(message, where, seen) if self.links() else []  # type: ignore[arg-type]
             if told:
                 self.report("info", self.message_line(header, self.taken_line(len(attached), len(links))))
@@ -517,10 +540,12 @@ class Mail(Source):  # pylint: disable=too-many-public-methods
             parts.append(said_n("%n link", "%n links", links))
         if parts:
             return listed(parts, "unit")
-        if self.links():
+        if self.links() and self.attached():
             return said(
                 "nothing to fetch: no attachment of the names, types and sizes asked for, no link the patterns take"
             )
+        if self.links():
+            return said("nothing to fetch: no link the patterns take")
         return said("nothing to fetch: no attachment of the names, types and sizes asked for")
 
     def newest_code(self, imap: Any, after: float, pattern: str) -> str:
