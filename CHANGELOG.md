@@ -49,6 +49,13 @@
   attachments, and its linked files when *Also the files linked in the message* was on), read so
   (`Source.upgraded`, also for `GET /api/jobs/<id>`), not rewritten. A choice's words in the
   form (an option's `labels`).
+- A mail job's folder the mailbox does not have: the run's error names the folders it has, the
+  closest first, ten of them (*The mailbox has no folder “Rechnungen”. It has:
+  INBOX/Rechnungen, Archive, INBOX*); **Try the mailbox** checks the folder first and offers the
+  mailbox's folders to take into the field (`folders` in `POST /api/try`'s answer).
+- A mail job's run whose new messages are none of the sender and subject says so as a warning
+  naming the patterns (*Folder INBOX: none of the 12 new messages is from “…” with a subject
+  like “…”*).
 - Under a mail job's **Pages to the on-demand job**, while you have no on-demand website job:
   how to make one (record one for the portal, *Website*, *On demand*).
 

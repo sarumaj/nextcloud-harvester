@@ -1,14 +1,16 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """A mail job's form (harvester-main.js) in Chromium against the stubbed API of test_page: its
 Fetch in words, the options of the part not chosen hidden (and a group of hidden options with
-them) while the job keeps their values, a job saved before Fetch as it ran, and the hint under
-Pages to the on-demand job while the person has no on-demand website job."""
+them) while the job keeps their values, a job saved before Fetch as it ran, the hint under Pages
+to the on-demand job while the person has no on-demand website job, and Try the mailbox's folders
+to choose from when the mailbox has not the job's."""
 
 # pylint: disable=missing-function-docstring
 
 import pytest
 from test_browser import needs_chromium
 from test_page import CALLS, JOB, fixture_page  # pylint: disable=unused-import
+from test_page_try import answering
 
 import main
 
@@ -89,3 +91,23 @@ def test_an_on_demand_website_job_is_offered_without_the_hint(page):
     page.wait_for_function("() => document.querySelectorAll('select[data-option=link_job] option').length === 2")
     assert select.locator("option").all_inner_texts() == ["None", "Portal (/Portal)"]
     assert page.locator(".harvester-no-job").evaluate("hint => hint.hidden")
+
+
+@needs_chromium
+@pytest.mark.parametrize("page", [[MAIL]], indirect=True)
+def test_a_missing_folder_tried_offers_the_mailboxs_folders_to_take(page):
+    error = "The mailbox has no folder “Rechnungen”. It has: INBOX/Rechnungen, Archive, INBOX"
+    folders = ["INBOX/Rechnungen", "Archive", "INBOX"]
+    answer = {"ok": False, "running": False, "seconds": 0.5, "found": 0, "items": [], "notes": []}
+    bodies = answering(page, [answer | {"error": error, "hint": "", "folders": folders}])
+    edit(page)
+    field = page.locator('label.harvester-field:has(> span:text-is("Folder")) input').last
+    field.fill("Rechnungen")
+    page.get_by_role("button", name="Try the mailbox").click()
+    choices = page.locator(".harvester-try-folders")
+    choices.wait_for()
+    assert bodies[0]["job"]["options"]["folder"] == "Rechnungen"
+    assert f"The try failed: {error}" in page.locator(".harvester-try [role=alert]").inner_text()
+    assert choices.get_by_role("button").all_inner_texts() == folders, "the closest first"
+    choices.get_by_role("button", name="INBOX/Rechnungen").click()
+    assert field.input_value() == "INBOX/Rechnungen", "taken into the field"

@@ -11,6 +11,7 @@ import pytest
 
 from harvester.sources import AuthError, SourceError
 from harvester.sources import mail as mail_source
+from harvester.sources import mailfolders
 from harvester.sources.mail import Mail
 
 PDF = b"%PDF-1.7\n" + b"x" * 500
@@ -35,9 +36,19 @@ def message(sender: str, subject: str, attachments: list[tuple[str, bytes, str]]
 class FakeIMAP:
     """An IMAP server with a folder of messages, recording what it is asked."""
 
-    def __init__(self, messages: dict[bytes, bytes], password: str = "secret"):
+    def __init__(self, messages: dict[bytes, bytes], password: str = "secret", folders: list[bytes] | None = None):
         self.messages = messages
         self.password = password
+        # LIST's answer: a line per folder (its flags, the delimiter, its name).
+        self.folders = (
+            [
+                b'(\\HasChildren) "/" INBOX',
+                b'(\\HasNoChildren) "/" "INBOX/Rechnungen"',
+                b'(\\HasNoChildren) "/" Archive',
+            ]
+            if folders is None
+            else folders
+        )
         self.commands: list[tuple] = []
         self.logged_out = False
 
@@ -94,6 +105,11 @@ class FakeIMAP:
 
     def logout(self):
         self.logged_out = True
+
+    # Last: the class's annotations above mean the builtin list.
+    def list(self):
+        self.commands.append(("LIST",))
+        return "OK", self.folders
 
 
 def source(server: FakeIMAP, **options) -> Mail:
@@ -170,8 +186,29 @@ def test_since_days_searches_from_a_date():
 def test_a_refused_sign_in_and_a_missing_folder():
     with pytest.raises(AuthError):
         list(source(FakeIMAP({}, password="other")).items(lambda key: False))
-    with pytest.raises(SourceError, match="no folder"):
-        list(source(mailbox(), folder="Archive").items(lambda key: False))
+    with pytest.raises(mail_source.MissingFolder) as missing:
+        list(source(mailbox(), folder="rechnungen").items(lambda key: False))
+    assert str(missing.value) == "The mailbox has no folder “rechnungen”. It has: INBOX/Rechnungen, Archive, INBOX"
+    assert missing.value.args[0].template["text"] == "The mailbox has no folder “{folder}”. It has: {folders}"
+    assert missing.value.folders == ["INBOX/Rechnungen", "Archive", "INBOX"], "the closest first"
+
+
+def test_a_missing_folders_list_the_closest_first_at_most_ten():
+    dotted = [b'(\\HasNoChildren) "." INBOX', b'(\\Noselect \\HasChildren) "." "[Gmail]"']
+    dotted += [b'(\\HasNoChildren) "." "INBOX.Folder %d"' % number for number in range(12)]
+    dotted += [b'(\\HasNoChildren) "." INBOX.Invoices', b'(\\HasNoChildren) "." "Entw&APw-rfe"']
+    with pytest.raises(mail_source.MissingFolder) as missing:
+        list(source(FakeIMAP({}, folders=dotted), folder="invoice").items(lambda key: False))
+    assert missing.value.folders[0] == "INBOX.Invoices", "with INBOX's prefix and the server's delimiter"
+    assert "[Gmail]" not in missing.value.folders, "a folder that cannot be selected is none"
+    assert "Entwürfe" in missing.value.folders, "names in IMAP's UTF-7 decoded"
+    assert str(missing.value).startswith("The mailbox has no folder “invoice”. It has: INBOX.Invoices, ")
+    assert str(missing.value).endswith(", …") and str(missing.value).count(", ") == 10, "ten of them, then …"
+    with pytest.raises(mail_source.MissingFolder) as missing:
+        list(source(FakeIMAP({}, folders=[]), folder="Archiv").items(lambda key: False))
+    assert str(missing.value) == "The mailbox has no folder “Archiv”." and not missing.value.folders
+    literal = [(b'(\\HasNoChildren) "/" {6}', b"Belege"), b")"]
+    assert mailfolders.listed_folders(literal) == (["Belege"], "/"), "a name sent as a literal"
 
 
 def test_settings_are_checked_without_connecting():
@@ -354,6 +391,25 @@ def test_the_log_says_what_the_search_found_and_what_each_message_gives():
     assert not [line for line in log if line.startswith("Message from")]
     _, log = Run()(FakeIMAP({}))
     assert "Folder INBOX: no messages found" in log
+
+
+def test_new_messages_none_of_the_sender_and_subject_are_a_warning_naming_the_patterns():
+    said: list[tuple[str, str]] = []
+    made = source(mailbox(), from_pattern="^Nobody", subject_pattern="Rechnung")
+    made.report = lambda level, text: said.append((level, text))
+    assert not list(made.items(lambda key: False))
+    assert said == [
+        (
+            "warning",
+            "Folder INBOX: none of the 3 new messages is from “^Nobody” with a subject like “Rechnung”",
+        )
+    ]
+    assert said[0][1].template["params"]["subject"] == "Rechnung", "translated on the page"
+    said.clear()
+    made = source(FakeIMAP({b"1": mailbox().messages[b"2"]}), subject_pattern="Invoice")
+    made.report = lambda level, text: said.append((level, text))
+    list(made.items(lambda key: False))
+    assert said == [("warning", "Folder INBOX: 1 new message, without a subject like “Invoice”")]
 
 
 def test_a_message_with_nothing_to_fetch_says_so_and_a_long_list_is_cut(monkeypatch):

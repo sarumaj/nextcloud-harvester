@@ -223,6 +223,19 @@ def test_a_failure_says_why_with_a_hint(app):
     assert "wrong" not in json.dumps(answer)
 
 
+def test_a_mailbox_without_the_folder_offers_those_it_has(app):
+    _, nc, _ = app
+    body = form("mail")
+    body["options"] |= {"folder": "Rechnungen"}
+    answer = tried(nc, body, account={"username": "me", "password": "secret"})
+    assert not answer["ok"]
+    assert answer["error"] == "The mailbox has no folder “Rechnungen”. It has: INBOX/Rechnungen, Archive, INBOX"
+    assert answer["error_l10n"]["params"]["folder"] == "Rechnungen"
+    assert answer["folders"] == ["INBOX/Rechnungen", "Archive", "INBOX"], "the closest first, to choose"
+    assert not answer["notes"], "checked first: no message read"
+    assert "folders" not in tried(nc, form("mail"), account={"username": "me", "password": "secret"})
+
+
 def test_the_saved_jobs_account_is_used_unless_another_is_typed(app):
     store, nc, _ = app
     saved = store.save(Job(user="anna", **main.JobIn(**form("mail")).model_dump()))

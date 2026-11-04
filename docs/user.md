@@ -57,7 +57,9 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   each gives, an entry yt-dlp skipped. The account's fields as typed are used, the saved job's
   for those left empty; the history is the saved job's (a new job has none). The file types are
   judged by the name's extension and the sizes where the listing tells them (a release's or a
-  remote's file, yt-dlp's size): the download's checks still decide. A failure says why, with a
+  remote's file, yt-dlp's size): the download's checks still decide. A mailbox's folder is
+  checked first: one it does not have fails the try with the mailbox's folders, the closest
+  first, as buttons that take one into *Folder*. A failure says why, with a
   hint where one is known (the account, an address that is not allowed or that the DNS servers
   block, a site gallery-dl or yt-dlp does not know, a page that is no feed). A try takes a
   runner's place as a run does (it waits up to 15 seconds for one and for the job's site), goes
@@ -201,7 +203,13 @@ place's files only.
     “Invoice”: 1 attachment, 2 links*, or *nothing to fetch: no attachment of the names, types and
     sizes asked for, no link the patterns take*); the first 50 of a run, the others counted in a
     line. The other messages are only counted. A message with nothing to fetch is no failure: it
-    is done with, as is one whose files were all saved or skipped.
+    is done with, as is one whose files were all saved or skipped. New messages none of which is
+    of the sender and subject make the line a warning naming the patterns (*Folder INBOX: none
+    of the 12 new messages is from “shop@example\.org” with a subject like “Invoice”*): a
+    pattern that never matches looks like a quiet mailbox otherwise. A folder the mailbox does
+    not have fails the run with those it has (`LIST`), the closest to the job's first (regardless
+    of case, with or without `INBOX/` or `INBOX.`), ten of them: *The mailbox has no folder
+    “Rechnungen”. It has: INBOX/Rechnungen, Archive, INBOX*.
     **Linked files** (`sources/maillinks.py`) downloads the files a message links to ("Download
     your invoice"); a job saved before *Fetch* fetches as it did (its attachments, and the linked
     files too when its *Also the files linked in the message* was on: read so, not rewritten).

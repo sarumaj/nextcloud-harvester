@@ -573,6 +573,7 @@
         "Trying… (at most a minute)": "Wird ausprobiert … (höchstens eine Minute)",
         "What a run would fetch now, with the file names and tags it would give, before you save: the listing once, with the account typed or saved, nothing downloaded.": "Was ein Durchlauf jetzt holen würde, mit den Dateinamen und Tags, die er geben würde, bevor du speicherst: die Auflistung einmal, mit dem eingegebenen oder gespeicherten Konto, ohne etwas herunterzuladen.",
         "What the listing said": "Was die Auflistung gemeldet hat",
+        "The mailbox’s folders, the closest first (click one to take it):": "Die Ordner des Postfachs, der ähnlichste zuerst (klicke einen an, um ihn zu übernehmen):",
         "The try failed: {error}": "Der Versuch ist fehlgeschlagen: {error}",
         "named when downloaded: the name shown stands in": "beim Herunterladen benannt: der gezeigte Name ist ein Platzhalter",
         "Tags: {tags}": "Tags: {tags}",
@@ -1202,15 +1203,29 @@
             "Ordner {folder}: %n neue Nachricht, {matching}",
             "Ordner {folder}: %n neue Nachrichten, {matching}"
         ],
+        "_Folder {folder}: %n new message, without a subject like “{subject}”_::_Folder {folder}: none of the %n new messages has a subject like “{subject}”_": [
+            "Ordner {folder}: %n neue Nachricht, ohne einen Betreff wie „{subject}“",
+            "Ordner {folder}: keine der %n neuen Nachrichten hat einen Betreff wie „{subject}“"
+        ],
         "Message from {sender} of {date}, “{subject}”: {what}": "Nachricht von {sender} vom {date}, „{subject}“: {what}",
         "nothing to fetch: no attachment of the names, types and sizes asked for": "nichts zu holen: kein Anhang der gewünschten Namen, Typen und Größen",
+        "The mailbox has no folder “{folder}”. It has: {folders}": "Das Postfach hat keinen Ordner „{folder}“. Es hat: {folders}",
         "Folder {folder}: no messages found": "Ordner {folder}: keine Nachrichten gefunden",
         "_Folder {folder}: no new messages, %n done with in an earlier run_::_Folder {folder}: no new messages, %n done with in earlier runs_": [
             "Ordner {folder}: keine neuen Nachrichten, %n in einem früheren Lauf erledigt",
             "Ordner {folder}: keine neuen Nachrichten, %n in früheren Läufen erledigt"
         ],
+        "_Folder {folder}: %n new message, not from “{sender}” with a subject like “{subject}”_::_Folder {folder}: none of the %n new messages is from “{sender}” with a subject like “{subject}”_": [
+            "Ordner {folder}: %n neue Nachricht, nicht von „{sender}“ mit einem Betreff wie „{subject}“",
+            "Ordner {folder}: keine der %n neuen Nachrichten ist von „{sender}“ mit einem Betreff wie „{subject}“"
+        ],
+        "_Folder {folder}: %n new message, not from “{sender}”_::_Folder {folder}: none of the %n new messages is from “{sender}”_": [
+            "Ordner {folder}: %n neue Nachricht, nicht von „{sender}“",
+            "Ordner {folder}: keine der %n neuen Nachrichten ist von „{sender}“"
+        ],
         "nothing to fetch: no attachment of the names, types and sizes asked for, no link the patterns take": "nichts zu holen: kein Anhang der gewünschten Namen, Typen und Größen, kein Link, den die Muster nehmen",
         "nothing to fetch: no link the patterns take": "nichts zu holen: kein Link, den die Muster nehmen",
+        "The mailbox has no folder “{folder}”.": "Das Postfach hat keinen Ordner „{folder}“.",
         "_%n from the sender and with the subject asked for_::_%n from the sender and with the subject asked for_": [
             "%n vom gewünschten Absender und mit dem gewünschten Betreff",
             "%n vom gewünschten Absender und mit dem gewünschten Betreff"

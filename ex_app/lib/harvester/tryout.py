@@ -11,7 +11,8 @@ extension, by a size the site gives), and how many its patterns left out. The fi
 are listed with the path and tags a run gives them (the job's File name and Tags templates); a
 file named only by its download (pending) says so. Nothing is written: no file, no mark of the
 job's, no log line; the progress lines the source says (a mailbox's messages, an entry skipped)
-come back with the outcome.
+come back with the outcome. A mailbox's folder is checked first: one it does not have fails the try
+with the folders it has, which the form offers to choose.
 """
 
 import abc
@@ -40,6 +41,9 @@ SHOWN = 20
 MOST = 2000
 # The progress lines a try gives back (a mailbox's messages: mail.TOLD of them, and a few more).
 NOTES = 60
+
+# The folders of a mailbox a try offers when it has not the job's (the closest first).
+FOLDERS = 50
 
 # What a try says of each file, as a run would take it: fetched this run, in a later run (Files
 # per run), known (the job's history has it), left out by its type or size (as far as the listing
@@ -305,6 +309,8 @@ class Trial:  # pylint: disable=too-many-instance-attributes
                 "error_l10n": template_of(text),
                 "hint": tip,
                 "hint_l10n": template_of(tip),
+                # A mailbox without the job's folder: those it has, the closest first, to choose.
+                "folders": list(getattr(self.error, "folders", []))[:FOLDERS],
             }
         outcome = self.outcome()
         return answer | {"outcome": outcome, "outcome_l10n": template_of(outcome)}

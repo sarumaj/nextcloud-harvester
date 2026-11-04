@@ -596,6 +596,7 @@ OC.L10N.register(
         "Trying… (at most a minute)": "Próbowanie… (najwyżej minutę)",
         "What a run would fetch now, with the file names and tags it would give, before you save: the listing once, with the account typed or saved, nothing downloaded.": "Co przebieg pobrałby teraz, z nazwami plików i tagami, które by nadał, zanim zapiszesz: lista raz, z wpisanym lub zapisanym kontem, bez pobierania.",
         "What the listing said": "Co powiedziała lista",
+        "The mailbox’s folders, the closest first (click one to take it):": "Foldery skrzynki, najbardziej podobny najpierw (kliknij jeden, aby go wybrać):",
         "The try failed: {error}": "Próba się nie powiodła: {error}",
         "named when downloaded: the name shown stands in": "nazwany przy pobieraniu: pokazana nazwa jest zastępcza",
         "Tags: {tags}": "Tagi: {tags}",
@@ -1297,8 +1298,15 @@ OC.L10N.register(
             "Folder {folder}: %n nowych wiadomości, {matching}",
             "Folder {folder}: %n nowej wiadomości, {matching}"
         ],
+        "_Folder {folder}: %n new message, without a subject like “{subject}”_::_Folder {folder}: none of the %n new messages has a subject like “{subject}”_": [
+            "Folder {folder}: %n nowa wiadomość, bez tematu podobnego do „{subject}”",
+            "Folder {folder}: żadna z %n nowych wiadomości nie ma tematu podobnego do „{subject}”",
+            "Folder {folder}: żadna z %n nowych wiadomości nie ma tematu podobnego do „{subject}”",
+            "Folder {folder}: żadna z %n nowych wiadomości nie ma tematu podobnego do „{subject}”"
+        ],
         "Message from {sender} of {date}, “{subject}”: {what}": "Wiadomość od {sender} z {date}, „{subject}”: {what}",
         "nothing to fetch: no attachment of the names, types and sizes asked for": "nic do pobrania: brak załącznika o żądanych nazwach, typach i rozmiarach",
+        "The mailbox has no folder “{folder}”. It has: {folders}": "Skrzynka nie ma folderu „{folder}”. Ma: {folders}",
         "Folder {folder}: no messages found": "Folder {folder}: nie znaleziono wiadomości",
         "_Folder {folder}: no new messages, %n done with in an earlier run_::_Folder {folder}: no new messages, %n done with in earlier runs_": [
             "Folder {folder}: brak nowych wiadomości, %n załatwiona we wcześniejszym przebiegu",
@@ -1306,8 +1314,21 @@ OC.L10N.register(
             "Folder {folder}: brak nowych wiadomości, %n załatwionych we wcześniejszych przebiegach",
             "Folder {folder}: brak nowych wiadomości, %n załatwionej we wcześniejszych przebiegach"
         ],
+        "_Folder {folder}: %n new message, not from “{sender}” with a subject like “{subject}”_::_Folder {folder}: none of the %n new messages is from “{sender}” with a subject like “{subject}”_": [
+            "Folder {folder}: %n nowa wiadomość, nie od „{sender}” z tematem podobnym do „{subject}”",
+            "Folder {folder}: żadna z %n nowych wiadomości nie jest od „{sender}” z tematem podobnym do „{subject}”",
+            "Folder {folder}: żadna z %n nowych wiadomości nie jest od „{sender}” z tematem podobnym do „{subject}”",
+            "Folder {folder}: żadna z %n nowych wiadomości nie jest od „{sender}” z tematem podobnym do „{subject}”"
+        ],
+        "_Folder {folder}: %n new message, not from “{sender}”_::_Folder {folder}: none of the %n new messages is from “{sender}”_": [
+            "Folder {folder}: %n nowa wiadomość, nie od „{sender}”",
+            "Folder {folder}: żadna z %n nowych wiadomości nie jest od „{sender}”",
+            "Folder {folder}: żadna z %n nowych wiadomości nie jest od „{sender}”",
+            "Folder {folder}: żadna z %n nowych wiadomości nie jest od „{sender}”"
+        ],
         "nothing to fetch: no attachment of the names, types and sizes asked for, no link the patterns take": "nic do pobrania: brak załącznika o żądanych nazwach, typach i rozmiarach, brak linku, który biorą wzorce",
         "nothing to fetch: no link the patterns take": "nic do pobrania: brak linku pasującego do wzorców",
+        "The mailbox has no folder “{folder}”.": "Skrzynka nie ma folderu „{folder}”.",
         "_%n from the sender and with the subject asked for_::_%n from the sender and with the subject asked for_": [
             "%n od żądanego nadawcy i z żądanym tematem",
             "%n od żądanego nadawcy i z żądanym tematem",

@@ -100,6 +100,8 @@ at `tryout.LIMIT` (60 s; a helper program is killed), or after 2000 files. The a
   folder and the tags a run gives it, from the job's templates);
 - `outcome` (or `error` and `hint`) and `notes` (the source's progress lines: a mailbox's
   messages), each with its template beside it (`outcome_l10n`, …), which the page translates.
+- with `error`, `folders`: a mailbox's folders, the closest to the job's first, when it has not
+  the job's (`mail.MissingFolder`; the page offers them for *Folder*), else empty.
 
 ## Translations
 

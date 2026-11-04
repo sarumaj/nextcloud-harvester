@@ -2730,8 +2730,9 @@
 	// Try the address (every type but a website, whose recorder tests its recipe): the job's
 	// listing once as the form holds it, nothing downloaded or saved (POST /api/try); body() is
 	// the job as Save sends it, jobId() the saved job's (its history and account), the account's
-	// fields as typed go with it. The outcome in a persistent live region, a failure as an alert.
-	function tryPanel(source, body, jobId, credentials) {
+	// fields as typed go with it; fill(key, value) puts a value it offers into an option's field.
+	// The outcome in a persistent live region, a failure as an alert.
+	function tryPanel(source, body, jobId, credentials, fill) {
 		if (source.name === 'site') return ''
 		const label = source.name === 'mail' ? t('Try the mailbox') : source.name === 'remote' ? t('Try the remote') : t('Try the address')
 		const result = el('div', { class: 'harvester-try-result', role: 'status' })
@@ -2748,7 +2749,7 @@
 				failure.replaceChildren()
 				result.replaceChildren(el('p', { class: 'harvester-muted', text: t('Trying… (at most a minute)') }))
 				try {
-					showTry(await api('POST', '/try', { job: body(), id: jobId(), account: credentials.account() }), result, failure)
+					showTry(await api('POST', '/try', { job: body(), id: jobId(), account: credentials.account() }), result, failure, fill)
 				} catch (e) {
 					result.replaceChildren()
 					failure.replaceChildren(el('p', { text: e.message }))
@@ -2766,14 +2767,20 @@
 	}
 
 	// A try's answer: its outcome in one line, the first files with their names, tags and what a
-	// run would do with them, what the source said (a mailbox's messages); or why it failed.
-	function showTry(answer, result, failure) {
+	// run would do with them, what the source said (a mailbox's messages); or why it failed, with
+	// the folders a mailbox has when it has not the job's, to take one (fill).
+	function showTry(answer, result, failure, fill) {
 		const notes = answer.notes && answer.notes.length
 			? [el('h4', { text: t('What the listing said') }),
 				el('ul', { class: 'harvester-try-notes' }, ...answer.notes.map((note, index) => el('li', { text: shown(note, (answer.notes_l10n || [])[index]) })))]
 			: []
 		if (!answer.ok) {
-			result.replaceChildren(...notes)
+			const folders = answer.folders && answer.folders.length && fill
+				? [el('div', { class: 'harvester-values harvester-try-folders' },
+					el('small', { class: 'harvester-muted', text: `${t('The mailbox’s folders, the closest first (click one to take it):')} ` }),
+					...answer.folders.map((folder) => el('button', { type: 'button', class: 'harvester-chip', text: folder, onclick: () => fill('folder', folder) })))]
+				: []
+			result.replaceChildren(...folders, ...notes)
 			failure.replaceChildren(
 				el('p', { class: 'harvester-test-summary harvester-test-failed' }, glyph('✗'), t('The try failed: {error}', { error: shown(answer.error, answer.error_l10n) })),
 				...(answer.hint ? [el('p', { text: shown(answer.hint, answer.hint_l10n) })] : []))
@@ -3513,7 +3520,14 @@
 				}
 			},
 		})
-		page = el('div', {}, form, credentials, tryPanel(chosen, () => ({ ...formBody(), name: name.value || said(chosen.title), target: target.value || '/' }), () => (current ? current.id : null), credentials),
+		page = el('div', {}, form, credentials, tryPanel(chosen, () => ({ ...formBody(), name: name.value || said(chosen.title), target: target.value || '/' }), () => (current ? current.id : null), credentials, (key, chosenValue) => {
+			// A value the try offers (a mailbox's folder) into its option's field, as if typed.
+			const input = optionInputs[key]
+			if (!input) return
+			input.value = chosenValue
+			input.dispatchEvent(new Event('input', { bubbles: true }))
+			input.focus()
+		}),
 			el('div', { class: 'harvester-form-actions' }, error, save, back, exportButton, templateButton, notice))
 		root.replaceChildren(page)
 		name.focus()

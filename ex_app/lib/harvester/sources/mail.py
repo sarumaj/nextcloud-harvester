@@ -12,7 +12,9 @@ by the server, the headers come a hundred messages at a time, and a message whos
 were all handled (or that is not the job's) is remembered and not read again, until the job's
 filters change.
 
-The progress log says what the search found and names each message of the sender and subject
+A folder the mailbox does not have fails the run with the folders it has, the closest first
+(MissingFolder). The progress log says what the search found (a warning naming the patterns when
+new messages came but none of the sender and subject) and names each message of the sender and subject
 (up to TOLD a run) with what the job takes from it, or why nothing. A linked file whose site
 cannot be reached is one link's trouble, not the run's: put off to the next runs, given up after
 LINK_TRIES (put_off).
@@ -41,6 +43,7 @@ from bs4 import BeautifulSoup
 from .. import browser, patterns
 from ..l10n import Said, listed, said, said_n
 from . import download, maillinks
+from .mailfolders import FOLDERS_SAID, MissingFolder, closest_folders, listed_folders
 from .base import MARK, AuthError, Item, Option, Postponed, Refused, Source, SourceError, pattern_search
 
 # Month names IMAP's SINCE expects, whatever the locale.
@@ -385,8 +388,27 @@ class Mail(Source):  # pylint: disable=too-many-public-methods
         folder = utf7_imap(str(self.settings["folder"])).replace("\\", "\\\\").replace('"', '\\"')
         status, _ = self.imap.select(f'"{folder}"', readonly=True)
         if status != "OK":
-            raise SourceError(f"no folder {self.settings['folder']}")
+            raise self.missing_folder()
         return self.imap
+
+    def missing_folder(self) -> MissingFolder:
+        """The error of a folder the mailbox does not have, naming those it has (LIST), the
+        closest to the job's first, FOLDERS_SAID of them."""
+        wanted = str(self.settings["folder"])
+        try:
+            status, data = self.imap.list()
+        except (imaplib.IMAP4.error, OSError):
+            status, data = "NO", []
+        folders = closest_folders(wanted, *listed_folders(data)) if status == "OK" else []
+        if not folders:
+            return MissingFolder(said("The mailbox has no folder “{folder}”.", folder=wanted), [])
+        named = folders[:FOLDERS_SAID] + (["…"] if len(folders) > FOLDERS_SAID else [])
+        return MissingFolder(
+            said(
+                "The mailbox has no folder “{folder}”. It has: {folders}", folder=wanted, folders=listed(named, "unit")
+            ),
+            folders,
+        )
 
     def plain_sender(self) -> str:
         """The sender pattern as the server's search takes it, when it is a plain address or
@@ -433,7 +455,10 @@ class Mail(Source):  # pylint: disable=too-many-public-methods
         found = self.search(imap)
         fresh = [uid for uid in found if not seen(done(uid))]
         matching = self.matching_headers(imap, fresh, done)
-        self.report("info", self.found_line(len(found), len(fresh), len(matching)))
+        if fresh and not matching:
+            self.report("warning", self.unmatched_line(len(fresh)))
+        else:
+            self.report("info", self.found_line(len(found), len(fresh), len(matching)))
         for number, (uid, size, header) in enumerate(matching):
             told = number < TOLD
             if number == TOLD:
@@ -519,6 +544,36 @@ class Mail(Source):  # pylint: disable=too-many-public-methods
                 "%n from the sender and with the subject asked for",
                 matching,
             ),
+        )
+
+    def unmatched_line(self, fresh: int) -> Said:
+        """New messages, none of them of the sender and subject asked for: the patterns named (a
+        warning, as a pattern that never matches looks like a mailbox without news)."""
+        folder = str(self.settings["folder"])
+        sender, subject = str(self.settings["from_pattern"]), str(self.settings["subject_pattern"])
+        if sender and subject:
+            return said_n(
+                "Folder {folder}: %n new message, not from “{sender}” with a subject like “{subject}”",
+                "Folder {folder}: none of the %n new messages is from “{sender}” with a subject like “{subject}”",
+                fresh,
+                folder=folder,
+                sender=sender,
+                subject=subject,
+            )
+        if sender:
+            return said_n(
+                "Folder {folder}: %n new message, not from “{sender}”",
+                "Folder {folder}: none of the %n new messages is from “{sender}”",
+                fresh,
+                folder=folder,
+                sender=sender,
+            )
+        return said_n(
+            "Folder {folder}: %n new message, without a subject like “{subject}”",
+            "Folder {folder}: none of the %n new messages has a subject like “{subject}”",
+            fresh,
+            folder=folder,
+            subject=subject,
         )
 
     @staticmethod
