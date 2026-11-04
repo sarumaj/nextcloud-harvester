@@ -5,7 +5,8 @@
 A move is proposed with the file IDs the action sent (propose), shown on Harvester's page, and
 started there with the library folder it goes into (start: by default FOLDER), keeping the files'
 folders below the one chosen. It runs in a thread of its own, as the person (their own files
-only: nothing shared with them, which is not theirs to delete). Each file:
+only: nothing shared with them, which is not theirs to delete, and nothing in a team folder,
+which belongs to everyone who shares it). Each file:
 
 1. is streamed from WebDAV into the library, encrypted as it comes (Incoming: never whole in
    memory, never in plain on the disk), at a free name (" (2)" where one is taken);
@@ -22,13 +23,16 @@ files are either moved or still in Files."""
 import dataclasses
 import logging
 import posixpath
+import re
 import secrets
 import threading
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
+from urllib.parse import quote
 
 from nc_py_api import NextcloudException
+from nc_py_api.files._files import dav_get_obj_path
 
 from .l10n import said
 from .library import BadPath, LibraryFull, Shelf, clean
@@ -192,6 +196,16 @@ class Mover:  # pylint: disable=too-few-public-methods
                     )
                 )
                 continue
+            if self._in_team_folder(node):
+                self.move.items.append(
+                    Item(
+                        selected["fileId"],
+                        node.user_path,
+                        state=FAILED,
+                        message=said("In a team folder: it belongs to everyone who shares the folder."),
+                    )
+                )
+                continue
             base = posixpath.dirname("/" + node.user_path.strip("/"))
             files = self._walk(node) if node.is_dir else [node]
             for file in files:
@@ -217,11 +231,35 @@ class Mover:  # pylint: disable=too-few-public-methods
         """The files in the folder and below it (a PROPFIND of depth 1 each)."""
         found = []
         for node in self.call(self.nc.files.listdir(folder.user_path, depth=1)):
+            if node.is_dir and node.is_mounted and self._in_team_folder(node):
+                continue  # a team folder mounted below: not the person's alone to move
             if node.is_dir:
                 found += self._walk(node)
             elif not node.is_shared:
                 found.append(node)
         return found
+
+    def _in_team_folder(self, node) -> bool:
+        """Whether the file or folder is in a team folder (Nextcloud's mount type group, of the
+        app Team folders): the permissions say only "mounted", as for an external storage, which
+        the person may move out of."""
+        if not node.is_mounted:
+            return False
+        body = (
+            '<?xml version="1.0"?><d:propfind xmlns:d="DAV:" xmlns:nc="http://nextcloud.org/ns">'
+            "<d:prop><nc:mount-type/></d:prop></d:propfind>"
+        )
+        path = quote(dav_get_obj_path(self.user, node.user_path))
+        answer = self.call(
+            self.nc._session.adapter_dav.request(  # pylint: disable=protected-access
+                "PROPFIND", path, content=body, headers={"Depth": "0", "Content-Type": "text/xml"}
+            )
+        )
+        if answer.status_code != 207:
+            # Unknown: kept from the move, as a team folder would be.
+            return True
+        found = re.search(r"<nc:mount-type>([^<]*)</nc:mount-type>", answer.text)
+        return found is not None and found.group(1).strip() == "group"
 
     def _free(self, target: str) -> str:
         """target, or the first of target (2), (3), … not taken in the library."""

@@ -1039,6 +1039,7 @@
         "The trash bin could not be read: empty it yourself.": "Der Papierkorb konnte nicht gelesen werden: leeren Sie ihn selbst.",
         "Not found in your files.": "Nicht in Ihren Dateien gefunden.",
         "Shared with you: only its owner can move it.": "Mit Ihnen geteilt: nur die Eigentümerin oder der Eigentümer kann es verschieben.",
+        "In a team folder: it belongs to everyone who shares the folder.": "In einem Team-Ordner: Er gehört allen, die den Ordner teilen.",
         "Enter the code from {label} on Harvester's page within {minutes} minutes: the job waits for it.": "Geben Sie den Code aus {label} innerhalb von {minutes} Minuten auf der Seite von Harvester ein: Der Job wartet darauf.",
         "{label}: approve it within {minutes} minutes, the job goes on once the site shows it went through.": "{label}: Bestätigen Sie es innerhalb von {minutes} Minuten, der Job macht weiter, sobald die Website zeigt, dass es geklappt hat.",
         "Waiting up to {minutes} min for you: enter the code from {label}": "Wartet bis zu {minutes} min auf Sie: Geben Sie den Code aus {label} ein",

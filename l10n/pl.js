@@ -1080,6 +1080,7 @@ OC.L10N.register(
         "The trash bin could not be read: empty it yourself.": "Nie udało się odczytać kosza: opróżnij go sam.",
         "Not found in your files.": "Nie znaleziono w twoich plikach.",
         "Shared with you: only its owner can move it.": "Udostępnione tobie: przenieść może tylko właściciel.",
+        "In a team folder: it belongs to everyone who shares the folder.": "W folderze zespołu: należy do wszystkich, którzy go współdzielą.",
         "Enter the code from {label} on Harvester's page within {minutes} minutes: the job waits for it.": "Wpisz kod z {label} na stronie Harvestera w ciągu {minutes} minut: zadanie na niego czeka.",
         "{label}: approve it within {minutes} minutes, the job goes on once the site shows it went through.": "{label}: zatwierdź to w ciągu {minutes} minut, zadanie działa dalej, gdy strona pokaże, że się udało.",
         "Waiting up to {minutes} min for you: enter the code from {label}": "Czeka na Ciebie do {minutes} min: wpisz kod z {label}",

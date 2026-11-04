@@ -210,7 +210,8 @@ streamed into the library, encrypted, checked (decrypted again and compared), th
 is deleted (its versions go into the trash bin with it), and once all are done the originals and
 their versions are removed from the trash bin too. A file whose name is taken in the library
 gets " (2)". A file that fails stays where it was, and the page says why, per file; a file shared
-with you is not yours to move. Nextcloud may
+with you is not yours to move, nor is one in a team folder (it belongs to everyone who shares
+the folder; a team folder inside a folder you move is left out). Nextcloud may
 still have the file in places Harvester cannot reach: a share you made of it (a recipient's
 copy), a sync client's copy on your devices, a backup of the server.
 

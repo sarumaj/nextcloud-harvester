@@ -14,6 +14,7 @@ import shutil
 import tracemalloc
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import unquote
 
 import pytest
 from fastapi import HTTPException
@@ -54,7 +55,8 @@ class Dav:  # pylint: disable=too-many-instance-attributes
         self.trash: list[SimpleNamespace] = []
         self.versions: dict[int, list[str]] = {}
         self.fail: dict[str, str] = {}
-        self._session = SimpleNamespace()
+        self.mounts: dict[str, str] = {}
+        self._session = SimpleNamespace(adapter_dav=SimpleNamespace(request=self._propfind))
 
     def id_of(self, path: str) -> int:
         return self.ids.setdefault("/" + path.strip("/"), len(self.ids) + 1)
@@ -62,7 +64,15 @@ class Dav:  # pylint: disable=too-many-instance-attributes
     def node_of(self, path: str):
         place = self.root / path.strip("/")
         size = 0 if place.is_dir() else place.stat().st_size
-        return node(path, self.id_of(path), size, place.is_dir(), "/" + path.strip("/") in self.shared)
+        found = node(path, self.id_of(path), size, place.is_dir(), "/" + path.strip("/") in self.shared)
+        mounted = any(("/" + path.strip("/") + "/").startswith(mount + "/") for mount in self.mounts)
+        return SimpleNamespace(**vars(found), is_mounted=mounted)
+
+    async def _propfind(self, method, path, **kwargs):  # pylint: disable=unused-argument
+        user_path = "/" + unquote(path).split("/", 3)[-1].strip("/")
+        kind = next((kind for mount, kind in self.mounts.items() if (user_path + "/").startswith(mount + "/")), "")
+        text = f"<d:multistatus><nc:mount-type>{kind}</nc:mount-type></d:multistatus>"
+        return SimpleNamespace(status_code=207, text=text)
 
     async def by_id(self, file_id):
         for path, known in self.ids.items():
@@ -202,6 +212,24 @@ def test_a_file_shared_with_the_person_or_gone_is_not_moved(app):
         (FAILED, "Not found in your files."),
     ]
     assert (app.files / "photo.jpg").exists()
+
+
+def test_a_team_folder_is_not_moved_an_external_storage_is(app):
+    (app.files / "Team").mkdir()
+    (app.files / "Team" / "plan.txt").write_bytes(b"ours")
+    (app.files / "Docs" / "Team2").mkdir()
+    (app.files / "Docs" / "Team2" / "shared.txt").write_bytes(b"ours too")
+    (app.files / "USB").mkdir()
+    (app.files / "USB" / "scan.pdf").write_bytes(b"%PDF mine")
+    app.dav.mounts = {"/Team": "group", "/Docs/Team2": "group", "/USB": "external"}
+    for path in ("/Team", "/Team/plan.txt", "/Docs/Team2/shared.txt", "/USB", "/USB/scan.pdf"):
+        app.dav.id_of(path)
+    done = move(app, "/Team", "/Docs", "/USB")
+    states = {item.path: (item.state, item.message) for item in done.items}
+    assert states["Team/"] == (FAILED, "In a team folder: it belongs to everyone who shares the folder.")
+    assert "/Docs/Team2/shared.txt" not in states, "a team folder below a folder moved is left out"
+    assert states["/USB/scan.pdf"][0] == MOVED and states["/Docs/notes.txt"][0] == MOVED
+    assert (app.files / "Team" / "plan.txt").exists() and (app.files / "Docs" / "Team2" / "shared.txt").exists()
 
 
 def test_a_move_before_the_setup_says_so_and_moves_nothing(app):

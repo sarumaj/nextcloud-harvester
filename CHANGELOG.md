@@ -21,7 +21,8 @@
   cookie (HttpOnly, SameSite=Strict) or per-file tickets instead of a token in addresses.
 - **Move to the private library** in Files' actions menu, for files and folders: each streamed
   into the library, checked, the original deleted (its versions with it) and purged from the
-  trash bin; a file that fails stays, versions and all, and the page says why. `occ harvester:library-reset <user>
+  trash bin; a file that fails stays, versions and all, and the page says why. Nothing shared
+  with the person and nothing in a team folder is moved. `occ harvester:library-reset <user>
   --confirm`: the admin deletes a person's library.
 - **Save to** a Cryptomator vault: **its inbox** (the folder gets the marker of the app *Vaults
   for Cryptomator*, which moves the files into the vault when the person unlocks it; files moved
