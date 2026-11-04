@@ -2927,14 +2927,15 @@
 		link.remove()
 	}
 
-	// A text asked for in a dialog (a name, a folder), as ask() asks a question; resolves the text,
-	// or null for Cancel.
-	function askText(question, value, label) {
+	// A text asked for in a dialog (a name, a folder), as ask() asks a question, with suggestions
+	// (the library's folders) if any; resolves the text, or null for Cancel.
+	function askText(question, value, label, suggestions = []) {
 		return new Promise((resolve) => {
-			const input = el('input', { type: 'text', value })
+			const list = el('datalist', { id: `harvester-suggest-${Date.now()}` }, ...suggestions.map((option) => el('option', { value: option })))
+			const input = el('input', { type: 'text', value, ...(suggestions.length ? { list: list.id } : {}) })
 			const yes = el('button', { type: 'submit', class: 'primary', text: label })
 			const no = el('button', { type: 'button', text: t('Cancel') })
-			const form = el('form', { method: 'dialog' }, field(question, input), el('div', { class: 'harvester-dialog-buttons' }, no, yes))
+			const form = el('form', { method: 'dialog' }, field(question, input), list, el('div', { class: 'harvester-dialog-buttons' }, no, yes))
 			const dialog = el('dialog', { class: 'harvester-dialog', 'aria-label': question }, form)
 			const opener = document.activeElement
 			const end = (answer) => {
@@ -2971,10 +2972,42 @@
 			el('div', { class: 'harvester-header-buttons' }, unlocked ? lock : '', back))
 	}
 
+	// How the library is shown, kept in this browser: sorted by name, date or size (folders first),
+	// as a grid of tiles or a list.
+	const LIBRARY_VIEW = 'harvester-library-view'
+	function libraryView() {
+		let kept = {}
+		try { kept = JSON.parse(localStorage.getItem(LIBRARY_VIEW) || '{}') || {} } catch (e) { /* not kept */ }
+		return {
+			sort: ['name', 'at', 'size'].includes(kept.sort) ? kept.sort : 'name',
+			desc: Boolean(kept.desc),
+			layout: kept.layout === 'list' ? 'list' : 'grid',
+		}
+	}
+	function keepLibraryView(view) {
+		try { localStorage.setItem(LIBRARY_VIEW, JSON.stringify(view)) } catch (e) { /* not kept */ }
+	}
+	const byName = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
+	function sortedEntries(entries, view) {
+		const order = view.desc ? -1 : 1
+		const key = {
+			name: (a, b) => byName.compare(a.name, b.name),
+			at: (a, b) => a.at - b.at || byName.compare(a.name, b.name),
+			size: (a, b) => a.size - b.size || byName.compare(a.name, b.name),
+		}[view.sort]
+		return [...entries].sort((a, b) => (a.dir === b.dir ? order * key(a, b) : a.dir ? -1 : 1))
+	}
+	const dateText = (at) => new Date(at * 1000).toLocaleString()
+	// Library entries dragged onto a folder (their IDs), told apart from files from the computer.
+	const DRAGGED = 'application/x-harvester-library'
+
 	// The library: set up (the first time), unlocked (the password, or the recovery key), then by
-	// folder (or a label's files, or what a search finds): pictures as a grid of thumbnails, other
-	// files as a list, a viewer, downloads, uploads, new folders, Rename, Move and Delete.
-	async function renderLibrary(root, folder = '/', label = '', query = '') {
+	// folder (or a label's files, what a search finds, or the newest files: Recent), sorted and
+	// shown as tiles or a list. Files are chosen (a box each; Shift chooses a range) for Download
+	// (one ZIP file), Move, Move to Files, Labels and Delete; dragged onto a folder or a part of
+	// the path to move them; opened in a viewer that goes to the next and the one before; their
+	// details show the job that saved them and where they came from, with their labels.
+	async function renderLibrary(root, folder = '/', label = '', query = '', recent = false) {
 		for (const address of library.blobs.splice(0)) URL.revokeObjectURL(address)
 		const error = el('p', { class: 'harvester-error', role: 'alert' })
 		let state
@@ -2987,25 +3020,19 @@
 		}
 		library.cookie = state.cookie
 		if (!state.setup) return renderLibrarySetup(root, state, moves)
-		if (!state.unlocked) return renderLibraryUnlock(root, state, () => renderLibrary(root, folder, label, query))
-		let listed = { entries: [], labels: [] }
+		if (!state.unlocked) return renderLibraryUnlock(root, state, () => renderLibrary(root, folder, label, query, recent))
+		let listed = { entries: [], labels: [], folders: [] }
 		try {
-			listed = await libraryApi('GET', `/library?folder=${encodeURIComponent(folder)}&label=${encodeURIComponent(label)}&q=${encodeURIComponent(query)}`)
+			listed = await libraryApi('GET', `/library?folder=${encodeURIComponent(folder)}&label=${encodeURIComponent(label)}&q=${encodeURIComponent(query)}${recent ? '&recent=1' : ''}`)
 		} catch (e) {
 			error.textContent = e.message
 		}
-		const again = () => renderLibrary(root, folder, label, query)
-		const parts = folder.split('/').filter(Boolean)
-		const crumbs = el('nav', { class: 'harvester-crumbs', 'aria-label': t('Folder') },
-			el('button', { type: 'button', class: 'tertiary', text: t('Library'), onclick: () => renderLibrary(root, '/') }),
-			...parts.map((part, index) => el('button', { type: 'button', class: 'tertiary', text: `/ ${part}`, onclick: () => renderLibrary(root, `/${parts.slice(0, index + 1).join('/')}`) })))
-		const filter = el('select', { onchange: () => renderLibrary(root, folder, filter.value, query) },
-			el('option', { value: '', text: t('All files') }),
-			...listed.labels.map((name) => el('option', { value: name, text: name })))
-		filter.value = label
-		const search = el('input', { type: 'search', value: query, placeholder: t('Names and labels') })
-		const searchForm = el('form', { class: 'harvester-library-search', role: 'search', onsubmit: (event) => { event.preventDefault(); renderLibrary(root, folder, label, search.value.trim()) } },
-			field(t('Search in this folder'), search))
+		const again = () => renderLibrary(root, folder, label, query, recent)
+		const go = (path) => renderLibrary(root, path)
+		const view = libraryView()
+		const found = Boolean(label || query || recent)
+		const status = el('p', { class: 'harvester-muted', role: 'status' })
+		// What is done to entries: each asked of the server, then the library shown again.
 		const acting = async (work) => {
 			error.textContent = ''
 			try {
@@ -3015,28 +3042,51 @@
 				error.textContent = e.message
 			}
 		}
-		const remove = async (entry) => {
-			const question = entry.dir ? t('Delete the folder {name} with everything in it?', { name: entry.name }) : t('Delete {name}?', { name: entry.name })
-			if (await ask(question, t('Delete'), true)) await acting(() => libraryApi('DELETE', `/library/files/${entry.id}`))
+		const batch = (ids, body) => acting(async () => {
+			const answer = await libraryApi('POST', '/library/batch', { ids, ...body })
+			if (answer.failed.length) {
+				throw new Error(n('%n was not done:', '%n were not done:', answer.failed.length) + ' '
+					+ answer.failed.map((failed) => `${failed.name || failed.id} (${failed.error})`).join(', '))
+			}
+		})
+		const remove = async (entries) => {
+			const one = entries[0]
+			const question = entries.length > 1
+				? n('Delete %n item? Folders go with everything in them.', 'Delete %n items? Folders go with everything in them.', entries.length)
+				: one.dir ? t('Delete the folder {name} with everything in it?', { name: one.name }) : t('Delete {name}?', { name: one.name })
+			if (await ask(question, t('Delete'), true)) await batch(entries.map((entry) => entry.id), { action: 'delete' })
 		}
 		const rename = async (entry) => {
 			const name = await askText(t('New name'), entry.name, t('Rename'))
 			if (name && name !== entry.name) await acting(() => libraryApi('PUT', `/library/files/${entry.id}`, { name }))
 		}
-		const relocate = async (entry) => {
-			const target = await askText(t('Move to the folder (/ is the library’s top)'), folder, t('Move'))
-			if (target) await acting(() => libraryApi('PUT', `/library/files/${entry.id}`, { folder: target }))
+		const relocate = async (entries) => {
+			const target = await askText(t('Move to the folder (/ is the library’s top)'), recent ? '/' : folder, t('Move'), ['/', ...listed.folders])
+			if (target) await batch(entries.map((entry) => entry.id), { action: 'move', folder: target })
 		}
+		const toFiles = async (entries) => {
+			const target = await askText(t('Move into this folder of your Files (made if need be)'), '/From the library', t('Move to Files'))
+			if (target) await acting(() => libraryApi('POST', '/library/to-files', { ids: entries.map((entry) => entry.id), folder: target }))
+		}
+		const relabel = async (entries) => {
+			const change = await askLabels(entries, listed.labels)
+			if (change) await batch(entries.map((entry) => entry.id), { action: 'label', ...change })
+		}
+		const download = (entries) => {
+			error.textContent = ''
+			const work = entries.length === 1 && !entries[0].dir ? libraryDownload(entries[0]) : libraryZip(entries)
+			work.catch((e) => { error.textContent = e.message })
+		}
+		const details = (entry) => libraryDetails(entry, { download, rename, relocate, toFiles, remove, relabel, go, open: (file) => open(file) })
 		const newFolder = async () => {
 			const name = await askText(t('New folder'), '', t('Make'))
 			if (name) await acting(() => libraryApi('POST', '/library/folders', { path: `${folder.replace(/\/$/, '')}/${name}` }))
 		}
-		const status = el('p', { class: 'harvester-muted', role: 'status' })
 		const upload = async (files) => {
 			error.textContent = ''
 			for (const [index, file] of [...files].entries()) {
 				try {
-					await libraryUpload(file, folder, (sent) => {
+					await libraryUpload(file, recent ? '/' : folder, (sent) => {
 						status.textContent = t('Uploading {name} ({done} of {count}): {percent} %', { name: file.name, done: index + 1, count: files.length, percent: Math.floor(100 * sent / (file.size || 1)) })
 					})
 				} catch (e) {
@@ -3048,56 +3098,318 @@
 			await again()
 		}
 		const picker = el('input', { type: 'file', multiple: '', hidden: '', onchange: () => upload(picker.files) })
-		const open = (entry) => (entry.dir ? renderLibrary(root, entry.path) : libraryViewer(entry, remove))
-		const pictures = listed.entries.filter((entry) => !entry.dir && isPicture(entry))
-		const others = listed.entries.filter((entry) => entry.dir || !isPicture(entry))
-		const found = Boolean(label || query)
-		const usage = state.limit
-			? t('{used} of {limit} used', { used: sizeText(state.usage), limit: sizeText(state.limit) })
-			: t('{used} used', { used: sizeText(state.usage) })
-		const thumbnail = (entry) => {
-			const icon = el('span', { class: 'harvester-thumb-icon', 'aria-hidden': 'true', text: kindIcon(entry) })
+
+		// Dragging entries onto a folder (a tile, a row, a part of the path) moves them there.
+		const dropTarget = (node, path) => {
+			node.addEventListener('dragover', (event) => {
+				if (!event.dataTransfer.types.includes(DRAGGED)) return
+				event.preventDefault()
+				event.stopPropagation()
+				event.dataTransfer.dropEffect = 'move'
+				node.classList.add('harvester-drop-target')
+			})
+			node.addEventListener('dragleave', () => node.classList.remove('harvester-drop-target'))
+			node.addEventListener('drop', (event) => {
+				node.classList.remove('harvester-drop-target')
+				if (!event.dataTransfer.types.includes(DRAGGED)) return
+				event.preventDefault()
+				event.stopPropagation()
+				// Not the folder onto itself; one into its own folders the server refuses, saying so.
+				const moving = JSON.parse(event.dataTransfer.getData(DRAGGED) || '[]')
+					.filter((id) => (listed.entries.find((entry) => entry.id === id) || {}).path !== path)
+				if (moving.length) batch(moving, { action: 'move', folder: path })
+			})
+		}
+
+		const parts = folder.split('/').filter(Boolean)
+		const crumbs = el('nav', { class: 'harvester-crumbs', 'aria-label': t('Folder') },
+			el('button', { type: 'button', class: 'tertiary', text: t('Library'), onclick: () => go('/') }),
+			...(recent
+				? [el('span', { class: 'harvester-muted', text: `/ ${t('Recent')}` })]
+				: parts.map((part, index) => el('button', { type: 'button', class: 'tertiary', text: `/ ${part}`, onclick: () => go(`/${parts.slice(0, index + 1).join('/')}`) }))))
+		const crumbButtons = [...crumbs.querySelectorAll('button')]
+		crumbButtons.forEach((button, index) => dropTarget(button, index === 0 ? '/' : `/${parts.slice(0, index).join('/')}`))
+		const filter = el('select', { onchange: () => renderLibrary(root, folder, filter.value, query) },
+			el('option', { value: '', text: t('All files') }),
+			...listed.labels.map((name) => el('option', { value: name, text: name })))
+		filter.value = label
+		const search = el('input', { type: 'search', value: query, placeholder: t('Names and labels') })
+		const searchForm = el('form', { class: 'harvester-library-search', role: 'search', onsubmit: (event) => { event.preventDefault(); renderLibrary(root, folder, label, search.value.trim()) } },
+			field(t('Search in this folder'), search))
+		const sort = el('select', {
+			'aria-label': t('Sort by'),
+			onchange: () => { Object.assign(view, JSON.parse(sort.value)); keepLibraryView(view); drawEntries() },
+		},
+		el('option', { value: '{"sort":"name","desc":false}', text: t('Name, A to Z') }),
+		el('option', { value: '{"sort":"name","desc":true}', text: t('Name, Z to A') }),
+		el('option', { value: '{"sort":"at","desc":true}', text: t('Newest first') }),
+		el('option', { value: '{"sort":"at","desc":false}', text: t('Oldest first') }),
+		el('option', { value: '{"sort":"size","desc":true}', text: t('Largest first') }),
+		el('option', { value: '{"sort":"size","desc":false}', text: t('Smallest first') }))
+		sort.value = JSON.stringify({ sort: view.sort, desc: view.desc })
+		const layoutButton = (layout, text) => el('button', {
+			type: 'button',
+			class: 'tertiary',
+			'aria-pressed': String(view.layout === layout),
+			text,
+			onclick: (event) => {
+				view.layout = layout
+				keepLibraryView(view)
+				for (const button of event.target.parentNode.children) button.setAttribute('aria-pressed', String(button === event.target))
+				drawEntries()
+			},
+		})
+		const layouts = el('div', { class: 'harvester-segmented', role: 'group', 'aria-label': t('Show as') }, layoutButton('grid', t('Grid')), layoutButton('list', t('List')))
+
+		// The entries chosen (their IDs), and the bar of what can be done with them.
+		const chosen = new Set()
+		let anchor = -1
+		let ordered = []
+		const chosenEntries = () => ordered.filter((entry) => chosen.has(entry.id))
+		const allBox = el('input', { type: 'checkbox', 'aria-label': t('Choose all') })
+		allBox.addEventListener('change', () => {
+			for (const entry of ordered) allBox.checked ? chosen.add(entry.id) : chosen.delete(entry.id)
+			syncChosen()
+		})
+		const countText = el('span', { class: 'harvester-chosen-count', role: 'status' })
+		const bar = el('div', { class: 'harvester-chosen-bar' })
+		const syncChosen = () => {
+			const entries = chosenEntries()
+			allBox.checked = Boolean(ordered.length) && entries.length === ordered.length
+			allBox.indeterminate = Boolean(entries.length) && entries.length < ordered.length
+			countText.textContent = entries.length ? n('%n chosen', '%n chosen', entries.length) : t('Choose files to act on several at once')
+			for (const box of entriesBox.querySelectorAll('[data-entry]')) {
+				const on = chosen.has(Number(box.dataset.entry))
+				box.classList.toggle('harvester-chosen', on)
+				const check = box.querySelector('input[type=checkbox]')
+				if (check) check.checked = on
+			}
+			const one = entries.length === 1 ? entries[0] : null
+			bar.replaceChildren(...(entries.length ? [
+				el('button', { type: 'button', text: entries.length === 1 && !one.dir ? t('Download') : t('Download as ZIP'), onclick: () => download(entries) }),
+				el('button', { type: 'button', text: t('Move'), onclick: () => relocate(entries) }),
+				el('button', { type: 'button', text: t('Move to Files'), onclick: () => toFiles(entries) }),
+				el('button', { type: 'button', text: t('Labels'), onclick: () => relabel(entries) }),
+				one ? el('button', { type: 'button', text: t('Rename'), onclick: () => rename(one) }) : '',
+				one ? el('button', { type: 'button', text: t('Details'), onclick: () => details(one) }) : '',
+				el('button', { type: 'button', class: 'error', text: t('Delete'), onclick: () => remove(entries) }),
+				el('button', { type: 'button', class: 'tertiary', text: t('Clear'), onclick: () => { chosen.clear(); syncChosen() } }),
+			] : []))
+		}
+		// A box clicked: the entry chosen or not; with Shift, every entry from the last one clicked.
+		const choose = (entry, index, event) => {
+			const on = event.target.checked
+			if (event.shiftKey && anchor >= 0) {
+				const [from, to] = [Math.min(anchor, index), Math.max(anchor, index)]
+				for (const other of ordered.slice(from, to + 1)) on ? chosen.add(other.id) : chosen.delete(other.id)
+			} else {
+				on ? chosen.add(entry.id) : chosen.delete(entry.id)
+			}
+			anchor = index
+			syncChosen()
+		}
+
+		const files = () => ordered.filter((entry) => !entry.dir)
+		const open = (entry) => (entry.dir ? go(entry.path) : libraryViewer(files(), files().indexOf(entry), { download, remove, details }))
+		const thumbnail = (entry, small) => {
+			const icon = el('span', { class: small ? 'harvester-row-icon' : 'harvester-thumb-icon', 'aria-hidden': 'true', text: kindIcon(entry) })
 			if (!entry.thumb) return icon
-			const image = el('img', { alt: '', loading: 'lazy' })
+			const image = el('img', { alt: '', loading: 'lazy', class: small ? 'harvester-row-thumb' : '' })
 			libraryAddress(entry, { thumbnail: true }).then((address) => { image.src = address }).catch(() => image.replaceWith(icon))
 			return image
 		}
-		const view = el('div', { class: 'harvester-library' },
+		const shownName = (entry) => (found ? entry.path : entry.dir ? `${entry.name}/` : entry.name)
+		const draggable = (node, entry) => {
+			node.setAttribute('draggable', 'true')
+			node.addEventListener('dragstart', (event) => {
+				const ids = chosen.has(entry.id) ? [...chosen] : [entry.id]
+				event.dataTransfer.setData(DRAGGED, JSON.stringify(ids))
+				event.dataTransfer.effectAllowed = 'move'
+			})
+			if (entry.dir) dropTarget(node, entry.path)
+		}
+		const entriesBox = el('div', { class: 'harvester-library-entries' })
+		const drawEntries = () => {
+			ordered = recent ? listed.entries : sortedEntries(listed.entries, view)
+			anchor = -1
+			const box = (entry, index) => el('input', {
+				type: 'checkbox',
+				'aria-label': t('Choose {name}', { name: entry.name }),
+				onclick: (event) => choose(entry, index, event),
+			})
+			if (view.layout === 'grid') {
+				entriesBox.replaceChildren(ordered.length ? el('ul', { class: 'harvester-gallery' }, ...ordered.map((entry, index) => {
+					const tile = el('li', { class: 'harvester-tile', 'data-entry': String(entry.id) },
+						box(entry, index),
+						el('button', { type: 'button', class: 'harvester-thumb', title: entry.path, onclick: () => open(entry) },
+							thumbnail(entry, false),
+							el('span', { class: 'harvester-thumb-name', text: shownName(entry) })))
+					draggable(tile, entry)
+					return tile
+				})) : '')
+			} else {
+				entriesBox.replaceChildren(ordered.length ? el('ul', { class: 'harvester-file-list harvester-library-list' }, ...ordered.map((entry, index) => {
+					const row = el('li', { 'data-entry': String(entry.id) },
+						box(entry, index),
+						thumbnail(entry, true),
+						el('button', { type: 'button', class: 'tertiary harvester-row-name', title: entry.path, text: shownName(entry), onclick: () => open(entry) }),
+						...entry.labels.map((name) => el('span', { class: 'harvester-chip', text: name })),
+						el('small', { class: 'harvester-muted harvester-row-size', text: entry.dir ? '' : sizeText(entry.size) }),
+						el('small', { class: 'harvester-muted harvester-row-date', text: dateText(entry.at) }),
+						el('button', { type: 'button', class: 'tertiary', text: t('Details'), onclick: () => details(entry) }))
+					draggable(row, entry)
+					return row
+				})) : '')
+			}
+			syncChosen()
+		}
+
+		const usage = state.limit
+			? t('{used} of {limit} used', { used: sizeText(state.usage), limit: sizeText(state.limit) })
+			: t('{used} used', { used: sizeText(state.usage) })
+		const page = el('div', { class: 'harvester-library' },
 			libraryHeading(root, true),
 			el('p', { class: 'harvester-muted', text: usage }),
 			await libraryMoves(root, moves, again),
 			el('div', { class: 'harvester-library-tools' },
 				searchForm,
 				listed.labels.length ? field(t('Label'), filter) : '',
+				el('button', { type: 'button', 'aria-pressed': String(recent), text: t('Recent'), title: t('The newest files of the whole library'), onclick: () => (recent ? go('/') : renderLibrary(root, '/', '', '', true)) }),
 				el('button', { type: 'button', text: t('New folder'), onclick: newFolder }),
 				el('button', { type: 'button', class: 'primary', text: t('Upload'), onclick: () => picker.click() }),
 				picker),
 			crumbs,
+			el('div', { class: 'harvester-library-bar' },
+				el('label', { class: 'harvester-check' }, allBox, countText),
+				bar,
+				el('span', { class: 'harvester-library-view' }, recent ? '' : sort, layouts)),
 			error, status,
-			pictures.length ? el('ul', { class: 'harvester-gallery' }, ...pictures.map((entry) => el('li', {},
-				el('button', { type: 'button', class: 'harvester-thumb', title: entry.path, onclick: () => open(entry) },
-					thumbnail(entry),
-					el('span', { class: 'harvester-thumb-name', text: entry.name }))))) : '',
-			others.length ? el('ul', { class: 'harvester-file-list' }, ...others.map((entry) => el('li', {},
-				el('span', { 'aria-hidden': 'true', text: kindIcon(entry) }),
-				el('button', { type: 'button', class: 'tertiary', text: found ? entry.path : entry.dir ? `${entry.name}/` : entry.name, onclick: () => open(entry) }),
-				entry.dir ? '' : el('small', { class: 'harvester-muted', text: sizeText(entry.size) }),
-				...entry.labels.map((name) => el('span', { class: 'harvester-chip', text: name })),
-				entry.dir ? '' : el('button', { type: 'button', class: 'tertiary', text: t('Download'), onclick: () => libraryDownload(entry).catch((e) => { error.textContent = e.message }) }),
-				el('button', { type: 'button', class: 'tertiary', text: t('Rename'), onclick: () => rename(entry) }),
-				el('button', { type: 'button', class: 'tertiary', text: t('Move'), onclick: () => relocate(entry) }),
-				el('button', { type: 'button', class: 'tertiary', text: t('Delete'), onclick: () => remove(entry) })))) : '',
+			entriesBox,
 			listed.entries.length ? '' : el('p', { class: 'harvester-muted', text: found ? t('Nothing found here.') : t('Nothing here yet: upload files, drop them here, move them here from Files, or let a job save here.') }),
 			libraryLock(root, state))
-		// Files dropped anywhere on the library go into the folder shown.
-		view.addEventListener('dragover', (event) => { event.preventDefault(); view.classList.add('harvester-dropping') })
-		view.addEventListener('dragleave', () => view.classList.remove('harvester-dropping'))
-		view.addEventListener('drop', (event) => {
+		drawEntries()
+		// Files from the computer dropped anywhere on the library go into the folder shown.
+		const fromComputer = (event) => event.dataTransfer && event.dataTransfer.types.includes('Files')
+		page.addEventListener('dragover', (event) => {
+			if (!fromComputer(event)) return
 			event.preventDefault()
-			view.classList.remove('harvester-dropping')
-			if (event.dataTransfer && event.dataTransfer.files.length) upload(event.dataTransfer.files)
+			page.classList.add('harvester-dropping')
 		})
-		root.replaceChildren(view)
+		page.addEventListener('dragleave', () => page.classList.remove('harvester-dropping'))
+		page.addEventListener('drop', (event) => {
+			page.classList.remove('harvester-dropping')
+			if (!fromComputer(event)) return
+			event.preventDefault()
+			if (event.dataTransfer.files.length) upload(event.dataTransfer.files)
+		})
+		root.replaceChildren(page)
+	}
+
+	// Files and folders as one ZIP file, made as it downloads (its ticket opens it once).
+	async function libraryZip(entries) {
+		const { ticket, name } = await libraryApi('POST', '/library/zip', { ids: entries.map((entry) => entry.id) })
+		const link = el('a', { href: `${API}/library/zip?ticket=${encodeURIComponent(ticket)}`, download: name })
+		document.body.append(link)
+		link.click()
+		link.remove()
+	}
+
+	// A modal dialog of the library (details, labels): its title, content and buttons; end()
+	// closes it and gives the focus back.
+	function libraryDialog(heading, className = '') {
+		const title = el('h3', { id: `harvester-dialog-${Date.now()}`, text: heading })
+		const content = el('div', { class: 'harvester-dialog-content' })
+		const buttons = el('div', { class: 'harvester-dialog-buttons' })
+		const dialog = el('dialog', { class: `harvester-dialog ${className}`, 'aria-labelledby': title.id }, title, content, buttons)
+		const opener = document.activeElement
+		const end = () => {
+			dialog.close()
+			dialog.remove()
+			if (opener && opener.isConnected) opener.focus()
+		}
+		dialog.addEventListener('cancel', (event) => { event.preventDefault(); end() })
+		;(document.getElementById('harvester') || document.body).append(dialog)
+		dialog.showModal()
+		return { dialog, title, content, buttons, end }
+	}
+
+	// The labels of the entries chosen: labels to give them (several, by commas; the labels known
+	// offered) and those they have to take off. Resolves { add, remove }, or null for Cancel.
+	function askLabels(entries, known) {
+		return new Promise((resolve) => {
+			const { content, buttons, end } = libraryDialog(n('Labels of %n item', 'Labels of %n items', entries.length))
+			const list = el('datalist', { id: `harvester-labels-${Date.now()}` }, ...known.map((name) => el('option', { value: name })))
+			const input = el('input', { type: 'text', list: list.id, placeholder: t('trip, sea') })
+			const present = [...new Set(entries.flatMap((entry) => entry.labels))].sort(byName.compare)
+			const removing = new Set()
+			const chips = present.map((name) => el('button', {
+				type: 'button',
+				class: 'harvester-chip harvester-chip-remove',
+				'aria-pressed': 'false',
+				text: `${name} ✕`,
+				title: t('Take {label} off', { label: name }),
+				onclick: (event) => {
+					removing.has(name) ? removing.delete(name) : removing.add(name)
+					event.target.setAttribute('aria-pressed', String(removing.has(name)))
+				},
+			}))
+			const done = (answer) => { end(); resolve(answer) }
+			content.append(field(t('Give the labels'), input, t('Several by commas.')), list,
+				present.length ? el('div', {}, el('p', { text: t('Take labels off (click to mark):') }), el('p', {}, ...chips)) : '')
+			buttons.append(
+				el('button', { type: 'button', text: t('Cancel'), onclick: () => done(null) }),
+				el('button', {
+					type: 'button',
+					class: 'primary',
+					text: t('Save'),
+					onclick: () => done({ add: input.value.split(',').map((name) => name.trim()).filter(Boolean), remove: [...removing] }),
+				}))
+			input.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); buttons.lastChild.click() } })
+			input.focus()
+		})
+	}
+
+	// An entry's details: where it is, its kind, size and time, the job that saved it and where the
+	// file came from (its link opens in a new tab), its labels; and what can be done with it.
+	async function libraryDetails(entry, act) {
+		const { content, buttons, end } = libraryDialog(entry.name, 'harvester-details')
+		const row = (name, ...value) => [el('dt', { text: name }), el('dd', {}, ...value)]
+		const list = el('dl', { class: 'harvester-details-list' })
+		content.append(list)
+		const fill = (data) => {
+			const source = data.source
+			const link = source && /^https?:\/\//i.test(source.key)
+				? el('a', { href: source.key, target: '_blank', rel: 'noopener noreferrer', text: source.key })
+				: source ? el('code', { text: source.key }) : ''
+			const values = source ? Object.entries(source.values || {}).filter(([, value]) => value !== '' && value !== null) : []
+			const folder = data.path.replace(/\/[^/]*$/, '') || '/'
+			list.replaceChildren(
+				...row(t('Folder'), el('button', { type: 'button', class: 'tertiary', text: folder, onclick: () => { end(); act.go(folder) } })),
+				...(data.dir ? [] : row(t('Kind'), data.type)),
+				...(data.dir ? [] : row(t('Size'), sizeText(data.size))),
+				...row(data.job_name ? t('Saved') : t('Added'), dateText(data.at)),
+				...row(t('By'), data.job_name ? t('the job “{name}”', { name: data.job_name }) : data.job ? t('a job deleted since') : t('you (an upload or a move from Files)')),
+				...(source ? row(t('From'), link) : []),
+				...(values.length ? row(t('Values'), el('span', {}, ...values.map(([key, value]) => el('span', { class: 'harvester-chip', text: `${key}: ${Array.isArray(value) ? value.join(', ') : value}` })))) : []),
+				...row(t('Labels'), data.labels.length ? el('span', {}, ...data.labels.map((name) => el('span', { class: 'harvester-chip', text: name }))) : t('none')))
+		}
+		fill(entry)
+		const then = (work) => () => { end(); work([entry]) }
+		buttons.append(
+			entry.dir ? '' : el('button', { type: 'button', text: t('Open'), onclick: () => { end(); act.open(entry) } }),
+			el('button', { type: 'button', text: entry.dir ? t('Download as ZIP') : t('Download'), onclick: () => act.download([entry]) }),
+			el('button', { type: 'button', text: t('Rename'), onclick: () => { end(); act.rename(entry) } }),
+			el('button', { type: 'button', text: t('Move'), onclick: then(act.relocate) }),
+			el('button', { type: 'button', text: t('Move to Files'), onclick: then(act.toFiles) }),
+			el('button', { type: 'button', text: t('Labels'), onclick: then(act.relabel) }),
+			el('button', { type: 'button', class: 'error', text: t('Delete'), onclick: then(act.remove) }),
+			el('button', { type: 'button', class: 'primary', text: t('Close'), onclick: end }))
+		buttons.lastChild.focus()
+		try {
+			fill(await libraryApi('GET', `/library/files/${entry.id}/details`))
+		} catch (e) {
+			content.append(el('p', { class: 'harvester-error', role: 'alert', text: e.message }))
+		}
 	}
 
 	// A file from the computer into the library: announced, then sent in pieces, each encrypted
@@ -3230,19 +3542,26 @@
 		password.focus()
 	}
 
-	// A file of the library in a dialog: a picture, a video or sound (streamed, with seeking), a
-	// PDF or plain text; anything else downloaded.
-	async function libraryViewer(entry, remove) {
-		const title = el('h3', { id: 'harvester-viewer-title', text: entry.name })
-		const close = el('button', { type: 'button', text: t('Close') })
-		const content = el('div', { class: 'harvester-viewer-content' }, el('p', { class: 'harvester-muted', text: t('Loading…') }))
+	// The library's files in a dialog, one at a time: a picture, a video or sound (streamed, with
+	// seeking), a PDF or plain text; anything else to download. ‹ and › (the arrow keys, a swipe)
+	// go to the one before and the next of the folder's files as sorted.
+	function libraryViewer(files, start, act) {
+		let index = start
+		const title = el('h3', { id: 'harvester-viewer-title' })
+		const where = el('span', { class: 'harvester-muted', role: 'status' })
+		const meta = el('p', { class: 'harvester-muted' })
+		const content = el('div', { class: 'harvester-viewer-content' })
+		const before = el('button', { type: 'button', class: 'harvester-viewer-step', 'aria-label': t('The one before'), text: '‹', onclick: () => step(-1) })
+		const next = el('button', { type: 'button', class: 'harvester-viewer-step', 'aria-label': t('The next'), text: '›', onclick: () => step(1) })
+		const close = el('button', { type: 'button', class: 'primary', text: t('Close') })
 		const dialog = el('dialog', { class: 'harvester-dialog harvester-viewer', 'aria-labelledby': title.id },
-			title,
-			el('p', { class: 'harvester-muted' }, sizeText(entry.size), ...entry.labels.map((name) => el('span', { class: 'harvester-chip', text: name }))),
-			content,
+			el('div', { class: 'harvester-viewer-head' }, title, where),
+			meta,
+			el('div', { class: 'harvester-viewer-stage' }, before, content, next),
 			el('div', { class: 'harvester-dialog-buttons' },
-				el('button', { type: 'button', text: t('Download'), onclick: () => libraryDownload(entry) }),
-				el('button', { type: 'button', class: 'error', text: t('Delete'), onclick: () => { end(); remove(entry) } }),
+				el('button', { type: 'button', text: t('Details'), onclick: () => { end(); act.details(files[index]) } }),
+				el('button', { type: 'button', text: t('Download'), onclick: () => act.download([files[index]]) }),
+				el('button', { type: 'button', class: 'error', text: t('Delete'), onclick: () => { end(); act.remove([files[index]]) } }),
 				close))
 		const opener = document.activeElement
 		const end = () => {
@@ -3250,37 +3569,70 @@
 			dialog.remove()
 			if (opener && opener.isConnected) opener.focus()
 		}
+		let shown = 0
+		const show = async () => {
+			const entry = files[index]
+			const turn = ++shown
+			title.textContent = entry.name
+			where.textContent = files.length > 1 ? t('{index} of {count}', { index: index + 1, count: files.length }) : ''
+			meta.replaceChildren(sizeText(entry.size), ' · ', dateText(entry.at), ...entry.labels.map((name) => el('span', { class: 'harvester-chip', text: ` ${name}` })))
+			before.disabled = index === 0
+			next.disabled = index === files.length - 1
+			content.replaceChildren(el('p', { class: 'harvester-muted', text: t('Loading…') }))
+			const viewable = isPicture(entry) || /^(video|audio)\//.test(entry.type) || ['application/pdf', 'text/plain'].includes(entry.type)
+			if (!viewable) {
+				content.replaceChildren(el('p', { class: 'harvester-muted', text: t('No preview of this kind of file: download it.') }))
+				return
+			}
+			try {
+				const address = await libraryAddress(entry)
+				let node
+				if (isPicture(entry)) node = el('img', { src: address, alt: entry.name })
+				else if (entry.type.startsWith('video/')) node = el('video', { src: address, controls: '', preload: 'metadata' })
+				else if (entry.type.startsWith('audio/')) node = el('audio', { src: address, controls: '', preload: 'metadata' })
+				else if (entry.type === 'application/pdf') node = el('iframe', { src: address, title: entry.name })
+				else node = el('pre', { class: 'harvester-text-file', text: await (await fetch(address, { headers: { requesttoken: OC.requestToken, 'X-Harvester-Library': library.token } })).text() })
+				if (turn === shown) content.replaceChildren(node)
+			} catch (e) {
+				if (turn === shown) content.replaceChildren(el('p', { class: 'harvester-error', role: 'alert', text: e.message }))
+			}
+		}
+		const step = (by) => {
+			const to = Math.min(files.length - 1, Math.max(0, index + by))
+			if (to === index) return
+			index = to
+			show()
+		}
 		close.addEventListener('click', end)
 		dialog.addEventListener('cancel', (event) => { event.preventDefault(); end() })
+		dialog.addEventListener('keydown', (event) => {
+			if (event.target.closest('video, audio, input')) return
+			if (event.key === 'ArrowLeft') { event.preventDefault(); step(-1) }
+			if (event.key === 'ArrowRight') { event.preventDefault(); step(1) }
+		})
+		// A swipe sideways on a phone: to the next (to the left) or the one before.
+		let touched = null
+		content.addEventListener('touchstart', (event) => { touched = event.touches.length === 1 ? [event.touches[0].clientX, event.touches[0].clientY] : null }, { passive: true })
+		content.addEventListener('touchend', (event) => {
+			if (!touched) return
+			const dx = event.changedTouches[0].clientX - touched[0]
+			const dy = event.changedTouches[0].clientY - touched[1]
+			touched = null
+			if (Math.abs(dx) > 50 && Math.abs(dx) > 2 * Math.abs(dy)) step(dx < 0 ? 1 : -1)
+		})
 		;(document.getElementById('harvester') || document.body).append(dialog)
 		dialog.showModal()
 		close.focus()
-		const shown = isPicture(entry) || /^(video|audio)\//.test(entry.type) || ['application/pdf', 'text/plain'].includes(entry.type)
-		if (!shown) {
-			content.replaceChildren(el('p', { class: 'harvester-muted', text: t('No preview of this kind of file: download it.') }))
-			return
-		}
-		try {
-			const address = await libraryAddress(entry)
-			if (isPicture(entry)) content.replaceChildren(el('img', { src: address, alt: entry.name }))
-			else if (entry.type.startsWith('video/')) content.replaceChildren(el('video', { src: address, controls: '', preload: 'metadata' }))
-			else if (entry.type.startsWith('audio/')) content.replaceChildren(el('audio', { src: address, controls: '', preload: 'metadata' }))
-			else if (entry.type === 'application/pdf') content.replaceChildren(el('iframe', { src: address, title: entry.name }))
-			else {
-				const text = await (await fetch(address, { headers: { requesttoken: OC.requestToken, 'X-Harvester-Library': library.token } })).text()
-				content.replaceChildren(el('pre', { class: 'harvester-text-file', text }))
-			}
-		} catch (e) {
-			content.replaceChildren(el('p', { class: 'harvester-error', role: 'alert', text: e.message }))
-		}
+		show()
 	}
 
 	// Moves from Files (the Files action Move to the private library): a proposed one, with the
 	// library folder it goes into and Move; one under way with each file's state (asked again
-	// every 2 seconds while the library is shown); an ended one with how it went.
+	// every 2 seconds while the library is shown); an ended one with how it went. Moves to Files
+	// (kind out) start at once, and show alike.
 	async function libraryMoves(root, moves, again) {
 		if (!moves.length) return ''
-		const box = el('section', { class: 'harvester-group harvester-moves', 'aria-label': t('From Files') })
+		const box = el('section', { class: 'harvester-group harvester-moves', 'aria-label': t('Moves') })
 		const states = { waiting: t('waiting'), moving: t('moving'), moved: t('moved'), failed: t('failed') }
 		for (const move of moves.slice(0, 3)) {
 			if (!move.started) {
@@ -3308,8 +3660,12 @@
 			}
 			const counts = { moved: 0, failed: 0 }
 			for (const item of move.items) if (item.state in counts) counts[item.state] += 1
+			const out = move.kind === 'out'
+			const heading = out
+				? (move.ended ? t('Moved to Files ({folder}): {moved} moved, {failed} failed', { ...counts, folder: move.folder }) : t('Moving to Files ({folder})…', { folder: move.folder }))
+				: (move.ended ? t('Moved from Files: {moved} moved, {failed} failed', counts) : t('Moving from Files…'))
 			box.append(el('div', {},
-				el('h3', { text: move.ended ? t('Moved from Files: {moved} moved, {failed} failed', counts) : t('Moving from Files…') }),
+				el('h3', { text: heading }),
 				move.problem ? el('p', { class: 'harvester-error', role: 'alert', text: said(move.problem) }) : '',
 				move.trash ? el('p', { class: 'harvester-error', text: said(move.trash) }) : '',
 				el('ul', { class: 'harvester-file-list' }, ...move.items.map((item) => el('li', {},
@@ -4208,6 +4564,38 @@
 		#harvester .harvester-file-list code { overflow-wrap: anywhere; }
 		#harvester .harvester-library-tools { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; margin: 8px 0; }
 		#harvester .harvester-library-tools .harvester-field { margin: 0; }
+		#harvester .harvester-library-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 8px 0; min-height: 44px; }
+		#harvester .harvester-library-bar .harvester-check { margin: 0; }
+		#harvester .harvester-chosen-bar { display: flex; flex-wrap: wrap; gap: 4px; }
+		#harvester .harvester-chosen-bar button { margin: 0; }
+		#harvester .harvester-library-view { display: flex; flex-wrap: wrap; gap: 4px; margin-left: auto; align-items: center; }
+		#harvester .harvester-library-view select { margin: 0; }
+		#harvester .harvester-segmented { display: inline-flex; }
+		#harvester .harvester-segmented button { margin: 0; }
+		#harvester .harvester-segmented button[aria-pressed="true"], #harvester .harvester-library-tools button[aria-pressed="true"] { background: var(--color-primary-element-light); color: var(--color-primary-element-light-text, var(--color-main-text)); }
+		#harvester .harvester-tile { position: relative; border-radius: var(--border-radius-large, 8px); }
+		#harvester .harvester-tile > input[type=checkbox] { position: absolute; top: 8px; left: 8px; z-index: 1; margin: 0; width: 20px; height: 20px; opacity: 0.6; }
+		#harvester .harvester-tile:hover > input[type=checkbox], #harvester .harvester-tile > input[type=checkbox]:checked, #harvester .harvester-tile > input[type=checkbox]:focus-visible { opacity: 1; }
+		#harvester .harvester-chosen { background: var(--color-primary-element-light); outline: 2px solid var(--color-primary-element); }
+		#harvester .harvester-drop-target { outline: 2px dashed var(--color-primary-element); background: var(--color-primary-element-light); }
+		#harvester .harvester-library-list li { flex-wrap: nowrap; }
+		#harvester .harvester-library-list li > input[type=checkbox] { margin: 0; flex: none; }
+		#harvester .harvester-row-thumb, #harvester .harvester-row-icon { width: 32px; height: 32px; flex: none; object-fit: cover; border-radius: var(--border-radius); text-align: center; line-height: 32px; }
+		#harvester .harvester-row-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; justify-content: flex-start; }
+		#harvester .harvester-row-size { flex: none; min-width: 64px; text-align: right; }
+		#harvester .harvester-row-date { flex: none; }
+		@media (max-width: 600px) { #harvester .harvester-row-date { display: none; } #harvester .harvester-library-list li { flex-wrap: wrap; } }
+		#harvester .harvester-viewer-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+		#harvester .harvester-viewer-head h3 { margin: 0; overflow-wrap: anywhere; }
+		#harvester .harvester-viewer-stage { display: flex; align-items: center; gap: 4px; }
+		#harvester .harvester-viewer-stage .harvester-viewer-content { flex: 1 1 auto; min-width: 0; }
+		#harvester .harvester-viewer-step { flex: none; font-size: 28px; min-width: 44px; min-height: 64px; margin: 0; }
+		#harvester .harvester-details-list { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 8px 0; }
+		#harvester .harvester-details-list dt { font-weight: bold; }
+		#harvester .harvester-details-list dd { margin: 0; overflow-wrap: anywhere; min-width: 0; }
+		#harvester .harvester-details-list dd button { margin: 0; padding: 0 4px; min-height: 0; }
+		#harvester .harvester-chip-remove { border: none; min-height: 0; padding: 2px 8px; cursor: pointer; }
+		#harvester .harvester-chip-remove[aria-pressed="true"] { text-decoration: line-through; background: color-mix(in srgb, var(--color-error) 15%, transparent); }
 		#harvester .harvester-library.harvester-dropping { outline: 2px dashed var(--color-primary-element); outline-offset: 4px; }
 		#harvester .harvester-recovery-key { display: inline-block; padding: 8px 12px; font-size: 1.2em; letter-spacing: 0.05em; user-select: all; background: var(--color-background-dark); border-radius: var(--border-radius); }
 		#harvester .harvester-moves { margin: 12px 0; }

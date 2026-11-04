@@ -609,6 +609,15 @@ class Store:  # pylint: disable=too-many-public-methods
         ]
         return [entry for entry in files if not label or label in entry["tags"]][:most]
 
+    def placed_file(self, job_id: int, file_id: int) -> dict | None:
+        """Where the job's file of this ID came from: its key (the link, or what the source
+        tells files apart by) and its values; None when the job has no such file."""
+        with self._lock:
+            row = self._db.execute(
+                "SELECT key, vals FROM placed WHERE job = ? AND file = ?", (job_id, file_id)
+            ).fetchone()
+        return {"key": row["key"], "values": json.loads(row["vals"])} if row is not None else None
+
     @contextlib.contextmanager
     def writing(self) -> Iterator[sqlite3.Connection]:
         """The database under the store's lock, in one transaction: for the tables of the app's

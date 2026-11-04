@@ -4,8 +4,11 @@ warning and password, what a place switches off with why, no Nextcloud tags outs
 a job's Files with their labels, and the Library (set up with its recovery key typed back,
 locked until unlocked, its token sent as a header and never in an address but a ticket's, the
 cookie's addresses where the cookie comes back, thumbnails, the list, the viewer, uploads in
-pieces, a move from Files and its states readable in light and dark), the dialogs centred at
-any width, in Chromium against a stubbed API."""
+pieces, a move from Files and its states readable in light and dark; browsing: files chosen
+with Shift for a range, a ZIP, Move with the folders offered, Labels, Move to Files, sorted
+and as a list (kept in the browser), the details with where a file came from, the viewer's
+arrow keys, dragging onto a folder, Recent), the dialogs centred at any width, in Chromium
+against a stubbed API."""
 
 # pylint: disable=missing-function-docstring,unused-import,redefined-outer-name
 
@@ -188,7 +191,7 @@ def test_the_library_unlocks_and_shows_its_files_without_a_token_in_an_address(p
     page.get_by_role("button", name="Unlock").click()
     page.wait_for_selector(".harvester-gallery img[src^='blob:']")
     assert ("/library/files/3/thumbnail", "t0k3n") in TOKENS, "the thumbnail fetched with the token"
-    listed = page.locator(".harvester-library > .harvester-file-list").inner_text()
+    listed = page.locator(".harvester-library-entries").inner_text()
     assert "2024/" in listed and "issue.pdf" in listed
     assert ("/library", "t0k3n") in TOKENS, "the listing asked with the browser's token"
     assert "2.0 KB of 10.0 GB used" in page.locator(".harvester-library").inner_text()
@@ -435,3 +438,126 @@ def test_a_fresh_move_from_files_opens_the_library_without_file_ids_and_after_a_
     page.goto(PAGE + "?fetch=https%3A%2F%2Fsite.example%2Fa")
     page.wait_for_selector("text=https://site.example/a")
     assert not page.locator(".harvester-moves").count(), "the bookmarklet's address first"
+
+
+BROWSED = [
+    {"id": 10, "path": "/Box", "name": "Box", "dir": True, "size": 0, "type": "", "labels": [], "job": None, "at": 5},
+    *[
+        {
+            "id": 10 + number,
+            "path": f"/p{number}.png",
+            "name": f"p{number}.png",
+            "dir": False,
+            "size": number * 1000,
+            "type": "image/png",
+            "labels": ["sea"] if number == 2 else [],
+            "job": 1,
+            "at": 100 - number,
+        }
+        for number in (1, 2, 3, 10)
+    ],
+]
+
+
+@needs_chromium
+def test_the_library_is_browsed_chosen_sorted_dragged_and_shown_in_turn(page):
+    listing = {"folder": "/", "entries": BROWSED, "labels": ["sea"], "folders": ["/Box", "/Old"]}
+    details = BROWSED[2] | {
+        "job_name": "Gallery",
+        "source": {"key": "https://example.org/p2", "values": {"year": "2026"}},
+    }
+    answers = {
+        "GET /library/state": LIBRARY | {"unlocked": True},
+        "GET /library/moves": [],
+        "GET /library": listing,
+        "POST /library/batch": {"done": [11, 12], "failed": []},
+        "POST /library/zip": {"ticket": "z1p", "name": "Library.zip", "count": 2},
+        "POST /library/to-files": {"id": "m2", "kind": "out", "items": []},
+        "GET /library/files/12/details": details,
+        "GET /library/files/12": (200, "image/png", b"png"),
+        "GET /library/files/13": (200, "image/png", b"png"),
+    }
+    answering(page, answers)
+    page.evaluate("localStorage.removeItem('harvester-library-view')")
+    page.get_by_role("button", name="Library", exact=True).click()
+    names = page.locator(".harvester-thumb-name")
+    names.first.wait_for()
+    assert names.all_inner_texts() == [
+        "Box/",
+        "p1.png",
+        "p2.png",
+        "p3.png",
+        "p10.png",
+    ], "folders first, numbers in order"
+    # Shift chooses the range from the box clicked before.
+    page.get_by_label("Choose p1.png").click()
+    page.get_by_label("Choose p3.png").click(modifiers=["Shift"])
+    assert page.locator(".harvester-chosen-count").inner_text() == "3 chosen"
+    page.get_by_label("Choose p3.png").click()
+    with page.expect_download() as downloaded:
+        page.get_by_role("button", name="Download as ZIP").click()
+    assert downloaded.value.url.endswith("/library/zip?ticket=z1p")
+    assert ("POST", "/library/zip", {"ids": [11, 12]}) in CALLS
+    page.locator(".harvester-chosen-bar").get_by_role("button", name="Move", exact=True).click()
+    dialog = page.locator("dialog.harvester-dialog")
+    assert dialog.locator("datalist option").evaluate_all("(options) => options.map((o) => o.value)") == [
+        "/",
+        "/Box",
+        "/Old",
+    ]
+    dialog.get_by_role("combobox").fill("/Old")
+    dialog.get_by_role("button", name="Move").click()
+    page.wait_for_function("() => !document.querySelector('dialog')")
+    assert ("POST", "/library/batch", {"ids": [11, 12], "action": "move", "folder": "/Old"}) in CALLS
+    # Sorted by size, as a list: kept in the browser.
+    page.get_by_label("Sort by").select_option(label="Largest first")
+    page.get_by_role("button", name="List", exact=True).click()
+    rows = page.locator(".harvester-library-list .harvester-row-name")
+    assert rows.all_inner_texts() == ["Box/", "p10.png", "p3.png", "p2.png", "p1.png"]
+    assert json.loads(page.evaluate("localStorage.getItem('harvester-library-view')")) == {
+        "sort": "size",
+        "desc": True,
+        "layout": "list",
+    }
+    # Labels and Move to Files for the chosen.
+    page.get_by_label("Choose p2.png").click()
+    page.locator(".harvester-chosen-bar").get_by_role("button", name="Labels").click()
+    dialog.get_by_label("Give the labels").fill("trip, red ")
+    dialog.get_by_role("button", name="sea ✕").click()
+    dialog.get_by_role("button", name="Save").click()
+    page.wait_for_function("() => !document.querySelector('dialog')")
+    assert (
+        "POST",
+        "/library/batch",
+        {"ids": [12], "action": "label", "add": ["trip", "red"], "remove": ["sea"]},
+    ) in CALLS
+    page.get_by_label("Choose p2.png").click()
+    page.locator(".harvester-chosen-bar").get_by_role("button", name="Move to Files").click()
+    dialog.get_by_role("textbox").fill("/Pictures")
+    dialog.get_by_role("button", name="Move to Files").click()
+    page.wait_for_function("() => !document.querySelector('dialog')")
+    assert ("POST", "/library/to-files", {"ids": [12], "folder": "/Pictures"}) in CALLS
+    # Details: the job and where the file came from.
+    page.locator("[data-entry='12']").get_by_role("button", name="Details").click()
+    details_box = page.locator("dialog.harvester-details")
+    details_box.get_by_role("link", name="https://example.org/p2").wait_for()
+    assert "the job “Gallery”" in details_box.inner_text() and "year: 2026" in details_box.inner_text()
+    details_box.get_by_role("button", name="Open").click()
+    # The viewer goes on with the arrow keys, among the files as sorted.
+    viewer = page.locator("dialog.harvester-viewer")
+    viewer.locator("img[src^='blob:']").wait_for()
+    assert any(path == "/library/files/12" for path, _ in TOKENS)
+    assert viewer.get_by_role("status").inner_text() == "3 of 4"
+    page.keyboard.press("ArrowLeft")
+    page.wait_for_function("() => document.querySelector('#harvester-viewer-title').innerText === 'p3.png'")
+    page.wait_for_function("() => document.querySelector('dialog.harvester-viewer img[alt=\"p3.png\"]')")
+    viewer.get_by_role("button", name="Close").click()
+    # Dragged onto a folder: moved there.
+    with page.expect_request(
+        lambda request: request.url.endswith("/library/batch") and "/Box" in (request.post_data or "")
+    ):
+        page.locator("[data-entry='11']").drag_to(page.locator("[data-entry='10']"))
+    assert ("POST", "/library/batch", {"ids": [11], "action": "move", "folder": "/Box"}) in CALLS
+    page.get_by_role("button", name="Recent").click()
+    page.wait_for_function("() => document.querySelector('.harvester-crumbs').innerText.includes('Recent')")
+    assert any(call[1].startswith("/library?") and "recent=1" in call[1] for call in CALLS)

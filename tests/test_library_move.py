@@ -11,6 +11,7 @@ import asyncio
 import io
 import os
 import shutil
+import time
 import tracemalloc
 from pathlib import Path
 from types import SimpleNamespace
@@ -19,13 +20,15 @@ from urllib.parse import unquote
 import pytest
 from fastapi import HTTPException
 from nc_py_api import NextcloudException
+from starlette.requests import Request
 from test_library import CHEAP, nextcloud, set_up
 
 from harvester import library
+from harvester import nextcloud as nextcloud_module
 from harvester import librarycrypt as crypt
 from harvester.library import Shelf
 from harvester.librarykeys import Keyring
-from harvester.librarymove import FAILED, MOVED, Moves
+from harvester.librarymove import FAILED, MOVED, OUT, Moves
 from harvester.routes import common
 from harvester.routes import moves as routes
 from harvester.store import Store
@@ -56,6 +59,7 @@ class Dav:  # pylint: disable=too-many-instance-attributes
         self.versions: dict[int, list[str]] = {}
         self.fail: dict[str, str] = {}
         self.mounts: dict[str, str] = {}
+        self.uploads: list[str] = []
         self._session = SimpleNamespace(adapter_dav=SimpleNamespace(request=self._propfind))
 
     def id_of(self, path: str) -> int:
@@ -104,6 +108,30 @@ class Dav:  # pylint: disable=too-many-instance-attributes
         else:
             place.unlink()
 
+    async def by_path(self, path):
+        if not (self.root / path.strip("/")).exists():
+            raise NextcloudException(404, "Not Found")
+        return self.node_of(path)
+
+    async def makedirs(self, path, exist_ok=False):  # pylint: disable=unused-argument
+        (self.root / path.strip("/")).mkdir(parents=True, exist_ok=True)
+
+    async def upload(self, path, content):
+        place = self.root / path.strip("/")
+        place.write_bytes(content)
+        self.uploads.append(path)
+        return SimpleNamespace(file_id=f"{self.id_of(path):08d}ocabc")
+
+    async def upload_stream(self, path, fp, **kwargs):  # pylint: disable=unused-argument
+        with open(self.root / path.strip("/"), "wb") as file:
+            for piece in iter(lambda: fp.read(1 << 20), b""):
+                file.write(piece)
+        if self.fail.get("PUT") == path.strip("/"):
+            with open(self.root / path.strip("/"), "ab") as file:
+                file.write(b"!")
+        self.uploads.append(path)
+        return SimpleNamespace(file_id=f"{self.id_of(path):08d}ocabc")
+
     async def trashbin_list(self):
         return list(self.trash)
 
@@ -143,6 +171,7 @@ def fixture_app(tmp_path, monkeypatch):
     moves = Moves(shelf, lambda: FakeNc(dav), asyncio.run)
     monkeypatch.setitem(common.STATE, "shelf", shelf)
     monkeypatch.setitem(common.STATE, "moves", moves)
+    monkeypatch.setitem(common.STATE, "keyring", keys)
     return SimpleNamespace(shelf=shelf, keys=keys, token=token, dav=dav, moves=moves, files=files)
 
 
@@ -290,3 +319,63 @@ def test_the_admins_reset_deletes_a_library_entirely_and_only_with_confirm(app):
     assert not app.keys.is_set_up("anna") and app.shelf.usage("anna") == 0
     assert not (app.shelf.root / "anna").exists()
     assert routes.occ_command()["callback_url"].startswith("/occ/"), "outside /api: no proxy route reaches it"
+
+
+def to_files(app, *paths: str, folder: str = "/Back"):
+    """Moves the library's files and folders at paths into the folder of Files; the move."""
+    opened = app.keys.session("anna", app.token)
+    by_path = {entry["path"]: entry["id"] for entry in app.shelf.index(opened).values()}
+    moved = app.moves.export(opened, app.token, [by_path[path] for path in paths], folder)
+    for _ in range(500):
+        if moved.ended:
+            break
+        time.sleep(0.01)
+    return moved
+
+
+def test_files_and_folders_move_to_files_checked_and_leave_the_library(app):
+    app.shelf.put("anna", "/Trip/a.jpg", io.BytesIO(b"jpeg a"))
+    app.shelf.put("anna", "/Trip/day 2/b.jpg", io.BytesIO(b"jpeg b"))
+    app.shelf.put("anna", "/notes.txt", io.BytesIO(b"notes"))
+    (app.files / "Back").mkdir()
+    (app.files / "Back" / "notes.txt").write_bytes(b"other")
+    done = to_files(app, "/Trip", "/notes.txt")
+    assert done.kind == OUT and done.problem == "" and done.ended
+    assert [(item.path, item.target, item.state) for item in done.items] == [
+        ("/Trip/a.jpg", "/Back/Trip/a.jpg", MOVED),
+        ("/Trip/day 2/b.jpg", "/Back/Trip/day 2/b.jpg", MOVED),
+        ("/notes.txt", "/Back/notes (2).txt", MOVED),
+    ]
+    assert (app.files / "Back" / "Trip" / "day 2" / "b.jpg").read_bytes() == b"jpeg b"
+    assert (app.files / "Back" / "notes.txt").read_bytes() == b"other", "a name taken is numbered"
+    assert (app.files / "Back" / "notes (2).txt").read_bytes() == b"notes"
+    assert app.shelf.index(app.keys.session("anna", app.token)) == {}, "the files and the emptied folder are gone"
+
+
+def test_a_large_file_streams_to_files_and_a_copy_that_differs_stays_in_the_library(app, monkeypatch):
+    monkeypatch.setattr(nextcloud_module, "SINGLE_PUT", 1000)
+    data = os.urandom(3 * library.PIECE + 5)
+    app.shelf.put("anna", "/big.bin", io.BytesIO(data))
+    app.shelf.put("anna", "/odd.bin", io.BytesIO(b"x" * 2000))
+    app.dav.fail["PUT"] = "odd.bin"
+    done = to_files(app, "/big.bin", "/odd.bin", folder="/")
+    big, odd = done.items
+    assert big.state == MOVED and (app.files / "big.bin").read_bytes() == data
+    assert odd.state == FAILED and "does not match" in odd.message
+    assert not (app.files / "odd.bin").exists(), "the copy that differs is deleted from Files"
+    assert library_files(app) == {"/odd.bin": b"x" * 2000}, "and the file stays in the library"
+
+
+def test_a_move_to_files_needs_the_library_unlocked_and_a_sound_folder(app):
+    app.shelf.put("anna", "/a.txt", io.BytesIO(b"a"))
+    opened = app.keys.session("anna", app.token)
+    with pytest.raises(library.BadPath):
+        app.moves.export(opened, app.token, [next(iter(app.shelf.index(opened)))], "/../etc")
+    app.keys.lock(app.token)
+    with pytest.raises(HTTPException) as refused:
+        asyncio.run(
+            routes.to_files(
+                routes.ToFiles(ids=[1], folder="/"), Request({"type": "http", "headers": []}), nextcloud(), app.token
+            )
+        )
+    assert refused.value.status_code == 403

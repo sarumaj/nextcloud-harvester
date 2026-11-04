@@ -93,6 +93,9 @@ LIMITS = {"person": 10 * GB, "total": 0}
 MAX_NAME = 255
 MAX_DEPTH = 30
 PIECE = 1 << 20
+# A label's most characters; the most files Recent shows.
+MAX_LABEL = 100
+RECENT = 200
 
 
 class BadPath(SourceError, ValueError):
@@ -114,6 +117,15 @@ def clean(path: str) -> str:
         if part.startswith(".") or len(part) > MAX_NAME or any(ord(char) < 32 or char in "\\\x7f" for char in part):
             raise BadPath(f"{path}: the library keeps no name {part!r}")
     return "/" + "/".join(parts)
+
+
+def clean_label(label: str) -> str:
+    """A label as the library keeps it (spaces at its ends dropped), or BadPath: not empty, no
+    control character, MAX_LABEL characters at most."""
+    label = label.strip()
+    if not label or len(label) > MAX_LABEL or any(ord(char) < 32 or char == "\x7f" for char in label):
+        raise BadPath(f"the library keeps no label {label!r}")
+    return label
 
 
 def person_folder(user: str) -> str:
@@ -619,6 +631,26 @@ class Shelf:  # pylint: disable=too-many-public-methods
             (entry for entry in below if "/" not in entry["path"][len(prefix) :]),
             key=lambda entry: (not entry["dir"], entry["name"].casefold()),
         )
+
+    def recent(self, session: Session, most: int = RECENT) -> list[dict]:
+        """The person's newest files (not folders) in the whole library, the newest first."""
+        files = [entry for entry in self.index(session).values() if not entry["dir"]]
+        return sorted(files, key=lambda entry: (-entry["at"], entry["path"]))[:most]
+
+    def folders(self, session: Session) -> list[str]:
+        """The paths of the person's folders, by path (what the page offers to move into)."""
+        return sorted((entry["path"] for entry in self.index(session).values() if entry["dir"]), key=str.casefold)
+
+    def below(self, session: Session, file_id: int) -> list[dict]:
+        """The person's file, or folder and everything in it (by path, the folder first);
+        KeyError for none."""
+        index = self.index(session)
+        entry = index[file_id]
+        if not entry["dir"]:
+            return [entry]
+        prefix = entry["path"] + "/"
+        inside = [item for item in index.values() if item["path"].startswith(prefix)]
+        return [entry, *sorted(inside, key=lambda item: item["path"])]
 
     def labels(self, session: Session) -> list[str]:
         """The labels of the person's files, by name."""

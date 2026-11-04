@@ -17,6 +17,12 @@ it), the page fetches pictures with the header into blob: addresses and asks a t
 a sound or a PDF (POST …/ticket): ?ticket= opens that one file, while the session lasts, nothing
 else.
 
+Several files at once (batch): moved into a folder, deleted, or labels given and taken off;
+downloaded as one ZIP file (libraryzip.py), streamed as it is made, by a ticket of its own (a
+download is a plain link). Recent lists the newest files of the whole library; a file's details
+name the job that saved it and where it came from (the job's record of it, not encrypted: a job's
+records never are).
+
 Writing (an upload, a new folder) needs the library set up, not unlocked. A file is served with
 its type for what a browser shows safely (pictures but SVG, videos, sounds, PDFs, plain text),
 else as a download, never sniffed (nosniff), and with a sandbox for whatever the browser shows of
@@ -25,6 +31,7 @@ it; a Range gives part of it (a video's seeking), only the chunks that hold it d
 
 import itertools
 import logging
+import posixpath
 import re
 import secrets
 import threading
@@ -38,7 +45,8 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .. import librarycrypt as crypt
-from ..library import LIMITS, BadPath, Incoming, LibraryFull, Shelf
+from .. import libraryzip
+from ..library import LIMITS, BadPath, Incoming, LibraryFull, Shelf, clean_label
 from ..librarykeys import LOCK_MINUTES, MAX_LOCK_MINUTES, MIN_PASSWORD, Keyring, Locked, NotSetUp, Session
 from .common import NC, STATE, own_job, store
 
@@ -60,6 +68,11 @@ UPLOAD_PIECE = 16 * 1024 * 1024
 UPLOAD_IDLE = 3600
 # A person's uploads under way at once, at most (each holds a file open).
 UPLOADS_AT_ONCE = 8
+# The most files and folders one batch (or ZIP) names, and the most labels it gives or takes.
+BATCH = 1000
+BATCH_LABELS = 20
+# A ZIP's ticket is good for so long.
+ZIP_SECONDS = 120
 
 
 def shelf() -> Shelf:
@@ -220,16 +233,139 @@ async def list_library(  # pylint: disable=too-many-arguments,too-many-positiona
     folder: Annotated[str, Query(max_length=4000)] = "/",
     label: Annotated[str, Query(max_length=200)] = "",
     q: Annotated[str, Query(max_length=200)] = "",
+    recent: bool = False,
     x_harvester_library: Token = "",
 ) -> dict:
     """The person's files and folders in folder (or with the label, or matching q in their names
-    and labels: in it and below it), and the labels of all their files."""
+    and labels: in it and below it; recent: the newest files of the whole library), the labels of
+    all their files and the paths of all their folders."""
     session = await opened(nc, request, x_harvester_library)
     try:
-        entries = shelf().listing(session, folder, label, q.strip())
+        entries = shelf().recent(session) if recent else shelf().listing(session, folder, label, q.strip())
     except BadPath as error:
         raise HTTPException(422, "No such folder.") from error
-    return {"folder": folder, "entries": entries, "labels": shelf().labels(session)}
+    return {
+        "folder": folder,
+        "entries": entries,
+        "labels": shelf().labels(session),
+        "folders": shelf().folders(session),
+    }
+
+
+@ROUTER.get("/api/library/files/{file_id}/details")
+async def library_details(file_id: int, request: Request, nc: NC, x_harvester_library: Token = "") -> dict:
+    """One of the person's files or folders with the job that saved it (its ID and name, while
+    the job is there) and where the file came from (the job's record: its link or key and its
+    values)."""
+    session = await opened(nc, request, x_harvester_library)
+    entry = shelf().entry(session, file_id)
+    if entry is None:
+        raise HTTPException(404, "No such file.")
+    job = store().job(entry["job"]) if entry["job"] else None
+    if job is None or job.user != session.user:
+        return entry | {"job_name": "", "source": None}
+    return entry | {"job_name": job.name, "source": None if entry["dir"] else store().placed_file(job.id or 0, file_id)}
+
+
+class Batch(BaseModel):
+    """What to do with several files and folders: move them into folder, delete them, or give
+    them the labels of add and take those of remove off."""
+
+    ids: list[int] = Field(min_length=1, max_length=BATCH)
+    action: str = Field(pattern="^(move|delete|label)$")
+    folder: str = Field("/", max_length=4000)
+    add: list[str] = Field([], max_length=BATCH_LABELS)
+    remove: list[str] = Field([], max_length=BATCH_LABELS)
+
+
+@ROUTER.post("/api/library/batch")
+async def library_batch(body: Batch, request: Request, nc: NC, x_harvester_library: Token = "") -> dict:
+    """Moves, deletes or labels the person's files and folders, each on its own: the IDs done,
+    and those that failed with why (a file inside a folder deleted with it counts as done)."""
+    session = await opened(nc, request, x_harvester_library)
+    try:
+        add = [clean_label(label) for label in body.add]
+        remove = [clean_label(label) for label in body.remove]
+    except BadPath as error:
+        raise HTTPException(422, str(error)) from error
+    done: list[int] = []
+    failed: list[dict] = []
+    for file_id in dict.fromkeys(body.ids):
+        entry = shelf().entry(session, file_id)
+        if entry is None:
+            if body.action == "delete":
+                done.append(file_id)  # gone already: with a folder deleted before it
+            else:
+                failed.append({"id": file_id, "name": "", "error": "No such file."})
+            continue
+        try:
+            if body.action == "move":
+                shelf().update(session, file_id, folder=body.folder)
+            elif body.action == "delete":
+                shelf().delete(session.user, file_id)
+            else:
+                shelf().label(session.user, file_id, add=add, remove=remove)
+        except (BadPath, KeyError) as error:
+            failed.append({"id": file_id, "name": entry["name"], "error": str(error)})
+            continue
+        done.append(file_id)
+    return {"done": done, "failed": failed}
+
+
+class Zip(BaseModel):
+    """The files and folders a ZIP file holds."""
+
+    ids: list[int] = Field(min_length=1, max_length=BATCH)
+
+
+# ZIP files asked for: by ticket, [token, user, [(name, entry)], its name, when it lapses].
+ZIPS: dict[str, list] = {}
+
+
+@ROUTER.post("/api/library/zip")
+async def library_zip_ticket(body: Zip, request: Request, nc: NC, x_harvester_library: Token = "") -> dict:
+    """A ticket for one ZIP file of the person's files and folders (GET …/zip?ticket=), good for
+    ZIP_SECONDS, once."""
+    session = await opened(nc, request, x_harvester_library)
+    try:
+        chosen = libraryzip.members(shelf(), session, body.ids)
+    except KeyError as error:
+        raise HTTPException(404, "No such file.") from error
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+    # Named after the one file or folder chosen, else Library.zip.
+    first = shelf().entry(session, body.ids[0])
+    name = "Library.zip"
+    if len(set(body.ids)) == 1 and first is not None:
+        name = (first["name"] if first["dir"] else posixpath.splitext(first["name"])[0]) + ".zip"
+    ticket = secrets.token_urlsafe(24)
+    now = time.monotonic()
+    with _TICKETS_LOCK:
+        for lapsed in [key for key, value in ZIPS.items() if value[4] < now]:
+            ZIPS.pop(lapsed)
+        ZIPS[ticket] = [token_of(request, x_harvester_library), session.user, chosen, name, now + ZIP_SECONDS]
+    return {"ticket": ticket, "name": name, "count": len(chosen)}
+
+
+@ROUTER.get("/api/library/zip")
+async def library_zip(nc: NC, ticket: Annotated[str, Query(max_length=100)] = "") -> Response:
+    """The ZIP file of a ticket (once), streamed as it is made."""
+    user = await nc.user
+    with _TICKETS_LOCK:
+        held = ZIPS.pop(ticket, None)
+    if held is None or held[1] != user or held[4] < time.monotonic():
+        raise HTTPException(403, "The download has lapsed: choose Download again.")
+    try:
+        session = keyring().session(user, held[0])
+    except Locked as error:
+        raise HTTPException(403, str(error)) from error
+    headers = {
+        "X-Content-Type-Options": "nosniff",
+        "Cache-Control": "private, no-store",
+        "Content-Disposition": disposition(held[3], True),
+    }
+    pieces = libraryzip.stream(shelf(), session, held[2])
+    return StreamingResponse(guarded(pieces, 0), media_type="application/zip", headers=headers)
 
 
 class Folder(BaseModel):

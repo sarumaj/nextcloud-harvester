@@ -226,13 +226,35 @@ and whenever the app restarts. Unlocked, the key that opens your files is in the
 only, for that browser, never on its disk. Five wrong passwords in a row make the next try wait a
 minute.
 
-**Using it.** Folders (**New folder**), pictures as a grid of thumbnails and other files as a list,
-a viewer for pictures, videos and sounds (played as they stream, with seeking), PDFs and plain
-text (any other kind is downloaded, never shown), **Download**, **Rename**, **Move** (into
-another folder; `/` is the top), **Delete** (a folder with everything in it), a filter by label
-and **Search in this folder** (names and labels, any case, in the folder and below it).
-**Upload** (or drop files onto the library) sends files from your computer in pieces of 8 MB,
-each encrypted as it comes; a name that is taken is written over.
+**Using it.** Folders (**New folder**) and files as a **Grid** of tiles (pictures as thumbnails)
+or a **List** (with sizes and times), sorted by name (numbers in order: `p2` before `p10`), date
+or size, folders first; the view and the order are kept in your browser. **Recent** shows the
+newest files of the whole library. A filter by label and **Search in this folder** (names and
+labels, any case, in the folder and below it) find files below the folder too.
+
+- **Choosing files:** each file and folder has a box; **Shift** while clicking one chooses every
+  one from the box clicked before; the box above them chooses all. For what is chosen:
+  **Download** (one file as it is; several, or a folder, as one ZIP file, made as it downloads,
+  the folders kept inside it), **Move** (into a folder: the library's folders are offered; `/`
+  is the top), **Move to Files**, **Labels** (give labels, several by commas; take labels off),
+  **Rename** and **Details** (one), **Delete** (a folder with everything in it).
+- **Dragging** files (the chosen ones, if the one dragged is) onto a folder, or onto a part of
+  the path above the files, moves them there.
+- **The viewer** shows pictures, videos and sounds (played as they stream, with seeking), PDFs
+  and plain text (any other kind is downloaded, never shown); **‹** and **›**, the arrow keys
+  or a swipe on a phone go to the folder's file before or the next, as sorted.
+- **Details** of a file: its folder, kind, size and time, the job that saved it (or you, for an
+  upload or a move from Files), where it came from (the link the job found it at, opened in a
+  new tab, and its values) and its labels; and what can be done with it.
+- **Upload** (or drop files from your computer onto the library) sends files in pieces of 8 MB,
+  each encrypted as it comes; a name that is taken is written over.
+
+**Moving to Files.** **Move to Files** puts the files and folders chosen into a folder of your
+Files (*From the library* by default; made if need be), their folders kept below it. Each file
+is decrypted as it streams into Files, read back from there and compared, and only then deleted
+from the library (a folder all of whose files went, too); a name taken in Files gets " (2)". A
+file that fails stays in the library, and the page says why. It needs the library unlocked
+while it runs: locking it stops the move, and what was not moved yet stays.
 
 **Moving from Files.** In Files, select files or folders and choose **Move to the private
 library** in their actions menu. Harvester's page opens with them: choose the library folder

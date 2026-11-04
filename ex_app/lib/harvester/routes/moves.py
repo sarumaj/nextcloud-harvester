@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Move to the private library (librarymove.py) from the Files app, and the admin's reset of a
-person's library.
+"""Move to the private library (librarymove.py) from the Files app, Move to Files out of it, and
+the admin's reset of a person's library.
 
 The Files action "Move to the private library" (registered with AppAPI's files actions menu,
 version 2: one request with every node selected) posts the selected files here as the person;
@@ -14,13 +14,14 @@ request without a person (AppAPI's own)."""
 
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
 from ..library import BadPath
 from ..librarymove import FOLDER, MOST, Moves
 from .common import NC, STATE
+from .library import Token, opened, token_of
 
 ROUTER = APIRouter()
 # The Files action's name, and the page it sends the browser to (the top menu entry's).
@@ -80,6 +81,27 @@ async def start_move(move_id: str, body: Start, nc: NC) -> dict:
         raise HTTPException(422, str(error)) from error
     except ValueError as error:
         raise HTTPException(409, "The move has started already.") from error
+    return move.view()
+
+
+class ToFiles(BaseModel):
+    """Library files and folders to move into a folder of the person's Files."""
+
+    ids: Annotated[list[int], Field(min_length=1, max_length=MOST)]
+    folder: str = Field("/", max_length=4000)
+
+
+@ROUTER.post("/api/library/to-files")
+async def to_files(body: ToFiles, request: Request, nc: NC, x_harvester_library: Token = "") -> dict:
+    """Starts moving the person's library files and folders into their Files (unlocked: the
+    browser's session decrypts them); the move, shown with the others."""
+    session = await opened(nc, request, x_harvester_library)
+    try:
+        move = moves().export(session, token_of(request, x_harvester_library), body.ids, body.folder)
+    except KeyError as error:
+        raise HTTPException(404, "No such file.") from error
+    except BadPath as error:
+        raise HTTPException(422, str(error)) from error
     return move.view()
 
 

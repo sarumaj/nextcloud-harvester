@@ -18,10 +18,21 @@ which belongs to everyone who shares it). Each file:
 
 A step that fails leaves the original where it was (the library's copy removed again) and says
 why, per file. Moves are kept in memory: after a restart the page no longer shows them; the
-files are either moved or still in Files."""
+files are either moved or still in Files.
+
+The other way, Move to Files (export, kind OUT): files and folders chosen in the library go into a
+folder of the person's Files, their folders kept below it, while the library is unlocked (the
+browser's session, kept open by the move). Each file is decrypted as it streams into Files (in
+chunks for a large one, never whole in memory, never in plain on Harvester's disk) at a free name,
+read back from Files and compared (its SHA-256), and only then deleted from the library; a folder
+all of whose files went is deleted from the library too. A file that fails stays in the library
+(a copy that does not match is deleted from Files again) and the page says why."""
 
 import dataclasses
+import hashlib
+import hmac
 import logging
+import os
 import posixpath
 import re
 import secrets
@@ -34,9 +45,11 @@ from urllib.parse import quote
 from nc_py_api import NextcloudException
 from nc_py_api.files._files import dav_get_obj_path
 
+from . import librarycrypt as crypt
 from .l10n import said
 from .library import BadPath, LibraryFull, Shelf, clean
-from .librarykeys import NotSetUp
+from .librarykeys import Locked, NotSetUp, Session
+from .nextcloud import NextcloudLibrary
 from .runner import numbered
 
 LOGGER = logging.getLogger("harvester")
@@ -49,6 +62,8 @@ KEPT_SECONDS = 24 * 3600
 MOST = 1000
 MOVES_KEPT = 20
 WAITING, MOVING, MOVED, FAILED = "waiting", "moving", "moved", "failed"
+# A move's way: from Files into the library, or out of it into Files.
+IN, OUT = "in", "out"
 
 
 @dataclasses.dataclass
@@ -79,11 +94,13 @@ class Move:  # pylint: disable=too-many-instance-attributes
     created: float = dataclasses.field(default_factory=time.time)
     problem: str = ""
     trash: str = ""
+    kind: str = IN
 
     def view(self) -> dict:
         """The move for the page."""
         return {
             "id": self.id,
+            "kind": self.kind,
             "selected": self.selected,
             "folder": self.folder,
             "started": self.started,
@@ -128,6 +145,32 @@ class Moves:
                     self._moves.pop(old.id)
             self._moves[move.id] = move
         return move
+
+    def export(self, session: Session, token: str, ids: list[int], folder: str) -> Move:
+        """Starts a move of the person's library files and folders (ids) into the folder of their
+        Files, kept going by the session of the browser's token; KeyError for an ID that is none."""
+        index = self.shelf.index(session)
+        selected = [
+            {"id": index[file_id]["id"], "name": index[file_id]["name"], "dir": index[file_id]["dir"]}
+            for file_id in dict.fromkeys(ids[:MOST])
+        ]
+        move = Move(secrets.token_urlsafe(12), session.user, selected, folder=files_folder(folder), kind=OUT)
+        move.started = time.time()
+        with self._lock:
+            self._moves[move.id] = move
+        thread = threading.Thread(target=self.run_export, args=(move, token), name=f"export-{move.id}", daemon=True)
+        thread.start()
+        return move
+
+    def run_export(self, move: Move, token: str) -> None:
+        """Runs a move to Files to its end (in its thread)."""
+        try:
+            Exporter(self.shelf, self.connect(), self.call, move, token).run()
+        except Exception as error:  # pylint: disable=broad-exception-caught
+            LOGGER.warning("a move to Files ended: %s", type(error).__name__)
+            move.problem = str(error) or type(error).__name__
+        finally:
+            move.ended = time.time()
 
     def of(self, user: str) -> list[Move]:
         """The person's moves, the newest first."""
@@ -343,3 +386,149 @@ class Mover:  # pylint: disable=too-few-public-methods
             self.move.trash = said(
                 "{count} of the originals are still in the trash bin: empty it yourself.", count=left
             )
+
+
+def files_folder(folder: str) -> str:
+    """A folder of the person's Files ("/Documents"), or BadPath for one with a "." or ".." part,
+    a control character or a backslash."""
+    parts = [part for part in folder.split("/") if part]
+    if any(part in (".", "..") or any(ord(char) < 32 or char in "\\\x7f" for char in part) for part in parts):
+        raise BadPath(f"{folder}: no such folder name")
+    return "/" + "/".join(parts)
+
+
+class Decrypted:
+    """A library file read as a file (what an upload reads): decrypted as it is read, its
+    SHA-256 taken; seek only to its start (read again) or its end (its size)."""
+
+    def __init__(self, shelf: Shelf, session: Session, entry: dict):
+        self.shelf, self.session, self.entry = shelf, session, entry
+        self.size = int(entry["size"])
+        self._restart()
+
+    def _restart(self) -> None:
+        size = self.size
+        self._pieces = self.shelf.content(self.session, self.entry["id"], 0, size - 1) if size else iter(())
+        self._buffer = b""
+        self._at = 0
+        self.digest = hashlib.sha256()
+
+    def seek(self, offset: int, whence: int = os.SEEK_SET) -> int:
+        """To the start (read again) or the end (to tell the size); nowhere else."""
+        if offset == 0 and whence == os.SEEK_SET:
+            self._restart()
+        elif offset == 0 and whence == os.SEEK_END:
+            self._at = self.size
+        else:
+            raise OSError("a decrypted file is read from its start")
+        return self._at
+
+    def tell(self) -> int:
+        """Where the reading is (the size after a seek to the end)."""
+        return self._at
+
+    def read(self, count: int = -1) -> bytes:
+        """The next count bytes (all that is left for -1)."""
+        while count < 0 or len(self._buffer) < count:
+            piece = next(self._pieces, None)
+            if piece is None:
+                break
+            self._buffer += piece
+        data, self._buffer = (self._buffer, b"") if count < 0 else (self._buffer[:count], self._buffer[count:])
+        self.digest.update(data)
+        self._at += len(data)
+        return data
+
+
+class Hashed:  # pylint: disable=too-few-public-methods
+    """What a download writes into: its SHA-256 and size."""
+
+    def __init__(self) -> None:
+        self.digest = hashlib.sha256()
+        self.size = 0
+
+    def write(self, data: bytes) -> int:
+        """Takes the next bytes of the download."""
+        self.digest.update(data)
+        self.size += len(data)
+        return len(data)
+
+
+class Exporter:  # pylint: disable=too-few-public-methods
+    """One move to Files: the library's files decrypted into the person's Files (nc acting as
+    them), each checked before the library's copy goes."""
+
+    def __init__(
+        self, shelf: Shelf, nc, call: Call, move: Move, token: str
+    ):  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self.shelf, self.nc, self.call, self.move, self.token = shelf, nc, call, move, token
+        self.user = move.user
+        self.files = NextcloudLibrary(nc, call)
+
+    def _session(self) -> Session:
+        """The browser's session (each use keeps it open longer); Locked when it ended."""
+        return self.shelf.keys.session(self.user, self.token)
+
+    def run(self) -> None:
+        """Moves each file and folder chosen; a folder all of whose files went goes too."""
+        self.call(self.nc.set_user(self.user))
+        for selected in self.move.selected:
+            try:
+                entries = self.shelf.below(self._session(), selected["id"])
+            except Locked as error:
+                self.move.problem = str(error)
+                return
+            except KeyError:
+                self.move.items.append(
+                    Item(selected["id"], selected["name"], state=FAILED, message=said("Not in your library."))
+                )
+                continue
+            top = posixpath.dirname(entries[0]["path"])
+            items = [
+                Item(
+                    entry["id"],
+                    entry["path"],
+                    entry["size"],
+                    target=posixpath.join(self.move.folder, entry["path"][len(top) :].lstrip("/")),
+                )
+                for entry in entries
+                if not entry["dir"]
+            ]
+            self.move.items += items
+            for item, entry in zip(items, [entry for entry in entries if not entry["dir"]]):
+                self._one(item, entry)
+            if entries[0]["dir"] and all(item.state == MOVED for item in items):
+                self.shelf.delete(self.user, entries[0]["id"])
+
+    def _free(self, target: str) -> str:
+        """target, or the first of target (2), (3), … not taken in Files."""
+        number, path = 1, target
+        while self.files.find(path) is not None:
+            number += 1
+            path = numbered(target, number)
+        return path
+
+    def _one(self, item: Item, entry: dict) -> None:
+        """Moves one file into Files: uploaded as it is decrypted, read back and compared, then
+        deleted from the library; else it stays there and the item says why."""
+        item.state = MOVING
+        placed = ""
+        try:
+            reader = Decrypted(self.shelf, self._session(), entry)
+            item.target = placed = self._free(item.target)
+            self.files.put(placed, reader)
+            check = Hashed()
+            self.call(self.nc.files.download2stream(placed, check))
+            if check.size != item.size or not hmac.compare_digest(check.digest.digest(), reader.digest.digest()):
+                raise ValueError(said("The copy in Files does not match: it stays in the library."))
+            self.shelf.delete(self.user, item.file_id)
+        except (NextcloudException, OSError, ValueError, KeyError, Locked, crypt.Tampered) as error:
+            if placed and not isinstance(error, Locked) and self.files.find(placed) is not None:
+                try:
+                    self.call(self.nc.files.delete(placed))
+                except NextcloudException:
+                    pass
+            item.state = FAILED
+            item.message = str(error) or type(error).__name__
+            return
+        item.state = MOVED

@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Added
+
+- The Library browses as Files does: a grid or a list, sorted by name, date or size (kept in
+  the browser), **Recent** (the newest files of the whole library), files chosen with a box
+  each (Shift for a range, all at once) for **Download** as one ZIP file streamed as it is made,
+  **Move** (the folders offered), **Labels**, **Rename**, **Details** and **Delete**, and
+  dragged onto a folder or a part of the path to move them.
+- The Library's viewer goes on to the next file and the one before (‹ ›, the arrow keys, a
+  swipe); a file's **Details** name the job that saved it and the link it came from, with its
+  values and labels.
+- **Move to Files** takes files and folders out of the library into a folder of your Files,
+  each checked (read back from Files and compared) before the library's copy goes.
+
 ### Fixed
 
 - The Library's viewer and the page's questions open in the middle of the window, at any width
