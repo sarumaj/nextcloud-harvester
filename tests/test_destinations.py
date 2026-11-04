@@ -29,6 +29,7 @@ from harvester import executor as executor_module
 from harvester.inbox import MARKER
 from harvester.routes import common
 from harvester.routes import vault as vault_routes
+from harvester.sources import MARK, REFUSED
 from harvester.store import Job, Store
 from harvester.vault import FolderStorage, Vault
 from harvester.vaultlib import key_name
@@ -381,3 +382,80 @@ def test_the_webdav_storage_streams_a_large_file_in_chunks_and_reads_it_back(app
         storage.list("missing")
     with pytest.raises(FileNotFoundError):
         storage.mkdir("missing/x")
+
+
+def moved(app, job: Job, refetch: bool, **changes) -> Job:
+    """The job saved through the form with changes (target, or options), and refetch as asked."""
+    options = dict(job.options) | {key: value for key, value in changes.items() if key != "target"}
+    form = main.JobIn(
+        name=job.name,
+        source=job.source,
+        target=changes.get("target", job.target),
+        schedule=job.schedule,
+        tags=job.tags,
+        options=options,
+        refetch=refetch,
+    )
+    asyncio.run(main.update_job(job.id or 0, form, app.nc))
+    return app.store.job(job.id or 0) or job
+
+
+def test_files_saved_before_stay_or_are_downloaded_again_where_the_files_go_now(app, monkeypatch):
+    monkeypatch.setitem(common.STATE, "executor", executor_module.Executor(app.store, lambda: app.nc))
+    job = run(app, saved(app, save_to="files", tag_as="labels", target="/Mag"))
+    assert sorted(path.name for path in (app.root / "Mag").iterdir()) == ["a.txt", "b.txt", "c.txt"]
+    # Another folder, the files left where they are: skipped as before, and the log says so.
+    job = run(app, moved(app, job, False, target="/Other"))
+    assert job.last_status == "ok" and not (app.root / "Other").exists()
+    lines = json.dumps(app.store.log_lines("anna", job.id))
+    assert "3 files saved before stay in /Mag in your files: not downloaded again into /Other in your files" in lines
+    # Another folder, the files asked for again: downloaded into it.
+    job = run(app, moved(app, job, True, target="/Again"))
+    assert sorted(path.name for path in (app.root / "Again").iterdir()) == ["a.txt", "b.txt", "c.txt"]
+    lines = json.dumps(app.store.log_lines("anna", job.id))
+    assert (
+        "3 files saved before in /Other in your files are downloaded again into /Again in your files, "
+        "as the next runs find them"
+    ) in lines
+    assert len(app.store.placed(job.id or 0)) == 3, "recorded anew, in the new place"
+    # Nothing changed where the files go: refetch is no matter.
+    before = len(app.store.log_lines("anna", job.id))
+    job = moved(app, job, True, max_items=5)
+    assert len(app.store.log_lines("anna", job.id)) == before and len(app.store.placed(job.id or 0)) == 3
+
+
+def test_a_refetch_forgets_the_files_and_marks_but_not_the_refusals(app):
+    job = run(app, saved(app, save_to="files", tag_as="labels", target="/Mag"))
+    job_id = job.id or 0
+    app.store.mark_seen(job_id, "never-a-file")
+    app.store.mark_seen(job_id, f"{REFUSED}never-a-file")
+    app.store.mark_seen(job_id, f"{MARK}pass")
+    assert app.store.placed_count(job_id) == 3
+    assert app.store.refetch(job_id) == 3
+    keys = app.store.seen_keys(job_id)
+    assert {"a", "b", "c", f"{MARK}pass"} & keys == set(), "its files and the listing's marks are forgotten"
+    assert {"never-a-file", f"{REFUSED}never-a-file"} <= keys, "not the items without a file, nor the refusals"
+    assert app.store.placed(job_id) == {} and app.store.placed_count(job_id) == 0
+
+
+def test_another_place_without_a_refetch_forgets_where_the_files_are_not_that_it_fetched_them(app, monkeypatch):
+    monkeypatch.setitem(common.STATE, "executor", executor_module.Executor(app.store, lambda: app.nc))
+    job = run(app, saved(app, save_to="files", tag_as="labels", target="/Mag"))
+    job = moved(app, job, False, save_to="inbox", vault="/Vaults/V", target="/Mag inbox")
+    assert app.store.placed(job.id or 0) == {}, "its IDs are the old place's"
+    assert {"a", "b", "c"} <= app.store.seen_keys(job.id or 0)
+    lines = json.dumps(app.store.log_lines("anna", job.id))
+    assert "not downloaded again into the inbox /Mag inbox of the vault /Vaults/V" in lines
+
+
+def test_where_the_files_go_is_told_in_words():
+    assert destinations.described({"save_to": "library"}, "Mag/") == "/Mag in your library"
+    assert destinations.described({"save_to": "inbox", "vault": "V"}, "/In") == "the inbox /In of the vault /V"
+    assert destinations.described({"save_to": "vault", "vault": "/V/"}, "/") == "/ in the vault /V"
+    assert destinations.described({"save_to": "immich"}, "/Photos") == "your Immich account"
+    before = Job(
+        user="a", name="j", source="feed", target="/Mag", schedule="", options={"save_to": "vault", "vault": "/V"}
+    )
+    assert not destinations.elsewhere(before, Job(**(vars(before) | {"target": "/Mag/"})))
+    assert destinations.elsewhere(before, Job(**(vars(before) | {"options": {"save_to": "vault", "vault": "/W"}})))
+    assert destinations.elsewhere(before, Job(**(vars(before) | {"target": "/Other"})))

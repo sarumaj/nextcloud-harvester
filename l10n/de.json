@@ -759,6 +759,8 @@
         "The album the photos and videos go into, made if there is none of its name; the file’s values may make it, e.g. Magazines {year}. Empty: none.": "Das Album, in das die Fotos und Videos kommen, angelegt, wenn es keines dieses Namens gibt; die Werte der Datei können ihn bilden, z. B. Zeitschriften {year}. Leer: keines.",
         "Only photos and videos go to Immich; the job skips other files for good.": "Nur Fotos und Videos kommen nach Immich; andere Dateien überspringt der Auftrag dauerhaft.",
         "When you unlock the vault in Vaults for Cryptomator, it moves the inbox’s files into the vault and deletes the plain copies. Until then they are plain files on the server.": "Wenn du den Tresor in Vaults for Cryptomator entsperrst, verschiebt die App die Dateien des Eingangs in den Tresor und löscht die unverschlüsselten Kopien. Bis dahin sind es unverschlüsselte Dateien auf dem Server.",
+        "Download the files saved before again, into the new place": "Die zuvor gespeicherten Dateien erneut herunterladen, an den neuen Ort",
+        "The job forgets that it fetched them: its next runs download them again as they find them (Files per run still holds). Off: they stay where they are and are not fetched again. Harvester moves no file itself.": "Der Auftrag vergisst, dass er sie geholt hat: Seine nächsten Durchläufe laden sie erneut herunter, sobald sie sie finden (Dateien pro Durchlauf gilt weiter). Aus: Sie bleiben, wo sie sind, und werden nicht erneut geholt. Harvester verschiebt selbst keine Datei.",
         "In your files, e.g. /Magazines/iX.": "In deinen Dateien, z. B. /Magazines/iX.",
         "A folder of your library, e.g. /Magazines.": "Ein Ordner deiner Bibliothek, z. B. /Zeitschriften.",
         "The inbox: a folder of its own in your files, beside the vault, e.g. /Vaults/Papers inbox.": "Der Eingang: ein eigener Ordner in deinen Dateien, neben dem Tresor, z. B. /Tresore/Papiere Eingang.",
@@ -1054,11 +1056,16 @@
             "Nextcloud konnte nicht gefragt werden, ob %n Datei noch da ist ({error}): nicht erneut heruntergeladen",
             "Nextcloud konnte nicht gefragt werden, ob %n Dateien noch da sind ({error}): nicht erneut heruntergeladen"
         ],
+        "{folder} in your files": "{folder} in deinen Dateien",
         "Off for an inbox: the vault app moves its files away, and a file moved into the vault is not downloaded again.": "Aus für einen Eingang: die Tresor-App verschiebt seine Dateien, und eine in den Tresor verschobene Datei wird nicht erneut heruntergeladen.",
         "Off for an inbox: its files are moved into the vault, where the job cannot save over them.": "Aus für einen Eingang: seine Dateien werden in den Tresor verschoben, wo der Auftrag sie nicht überschreiben kann.",
         "Off for a vault: nothing in it is replaced, so a changed file would have nowhere to go.": "Aus für einen Tresor: darin wird nichts ersetzt, eine geänderte Datei hätte also keinen Platz.",
         "Off for Immich: it replaces no photo or video, so a changed file would have nowhere to go.": "Aus für Immich: es ersetzt kein Foto und kein Video, eine geänderte Datei hätte also keinen Platz.",
         "Off for Immich: it keeps photos and videos, not archives. The ZIP file's photos and videos go there.": "Aus für Immich: es behält Fotos und Videos, keine Archive. Die Fotos und Videos der ZIP-Datei kommen dorthin.",
+        "{folder} in your library": "{folder} in deiner Bibliothek",
+        "the inbox {folder} of the vault {vault}": "den Eingang {folder} des Tresors {vault}",
+        "{folder} in the vault {vault}": "{folder} im Tresor {vault}",
+        "your Immich account": "dein Immich-Konto",
         "Save to must be one of files, library, inbox, vault, immich.": "Speichern in muss files, library, inbox, vault oder immich sein.",
         "Tag as: Nextcloud tags only for files saved in your files (labels or none elsewhere).": "Markieren mit: Nextcloud-Schlagworte nur für Dateien in deinen Dateien (anderswo Labels oder nichts).",
         "Tag as: Immich's tags only for files saved in Immich.": "Markieren mit: Immichs Tags nur für Dateien, die in Immich gespeichert werden.",
@@ -1563,6 +1570,14 @@
             "{reason}; weiterführende Links {selector}, auf %n Seiten, zuerst unter {address}"
         ],
         "No browser is free: {browsers}. Try again in a few minutes.": "Kein Browser ist frei: {browsers}. Versuche es in ein paar Minuten noch einmal.",
+        "_%n file saved before in {old} is downloaded again into {new}, as the next runs find it_::_%n files saved before in {old} are downloaded again into {new}, as the next runs find them_": [
+            "%n zuvor in {old} gespeicherte Datei wird erneut nach {new} heruntergeladen, sobald die nächsten Durchläufe sie finden",
+            "%n zuvor in {old} gespeicherte Dateien werden erneut nach {new} heruntergeladen, sobald die nächsten Durchläufe sie finden"
+        ],
+        "_%n file saved before stays in {old}: not downloaded again into {new}_::_%n files saved before stay in {old}: not downloaded again into {new}_": [
+            "%n zuvor gespeicherte Datei bleibt in {old}: nicht erneut nach {new} heruntergeladen",
+            "%n zuvor gespeicherte Dateien bleiben in {old}: nicht erneut nach {new} heruntergeladen"
+        ],
         "The job's browser has shown nothing to keep yet.": "Der Browser des Jobs hat noch nichts gezeigt, das sich behalten ließe.",
         "The job has no address of its own: fetch one with it.": "Der Job hat keine eigene Adresse: Rufe mit ihm eine ab.",
         "Only a website job with a listing of its own has a recipe to test.": "Nur ein Website-Job mit eigener Übersicht hat ein Rezept zum Testen.",

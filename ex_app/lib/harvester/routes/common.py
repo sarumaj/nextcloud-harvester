@@ -42,6 +42,10 @@ class JobIn(BaseModel):
     timezone: str = Field("UTC", max_length=64)
     # An on-demand job deleted after a run that went through.
     once: bool = False
+    # A change of where its files go (Save to, the vault, the folder): the files it saved before
+    # are downloaded again into the new place; else they stay where they are, not fetched again.
+    # Not the job's: what its Save does.
+    refetch: bool = Field(False, exclude=True)
 
     @field_validator("source")
     @classmethod

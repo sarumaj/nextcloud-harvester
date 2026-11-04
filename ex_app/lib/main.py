@@ -288,6 +288,7 @@ async def update_job(job_id: int, body: JobIn, nc: NC) -> dict:
     saved = store().save(Job(id=job.id, user=job.user, created=job.created, **checked(body).model_dump()))
     warn_of_leaks(saved)
     forget_changed(job, saved)
+    moved_out(job, saved, body.refetch)
     if sign_in_changed(job, saved):
         await nc.preferences_ex.delete(session_key(saved))
     # Another place (another vault, say): the secrets kept for the old one go (a vault's keys:
@@ -336,7 +337,7 @@ def forget_changed(job: Job, saved: Job) -> None:
     address, folder or patterns lists other files, so "known files end the run" waits for its
     first complete pass again (and mail's handled messages are read again). Its file names, files
     per run, schedule or tags change nothing there. Other types or sizes try again the files they
-    refused. Another Save to (or vault) forgets where its files are (not that it fetched them)."""
+    refused. Where its files go is moved_out's."""
 
     # As the source reads them: a job saved before an option has the value it ran with.
     before, after = (
@@ -352,9 +353,41 @@ def forget_changed(job: Job, saved: Job) -> None:
         store().forget_summaries(job.id or 0)
     if saved.source != job.source or changed(REFUSING):
         store().forget_refused(job.id or 0)
-    # Its files go elsewhere now: those saved stay where they are, and are not fetched again.
-    if destinations.place_of(saved.options) != destinations.place_of(job.options):
-        store().forget_places(job.id or 0)
+
+
+def moved_out(job: Job, saved: Job, refetch: bool) -> None:
+    """Where the job's files go changed (Save to, the vault, the folder): with refetch, the files
+    it saved before are forgotten (store.refetch) and its next runs download them again into the
+    new place, as their listing finds them; without, they stay where they are and are not fetched
+    again, and another place (not only another folder) forgets where they are (their IDs are the
+    old place's, no measure of the new one's). The job's log says which."""
+    if not destinations.elsewhere(job, saved):
+        return
+    job_id = job.id or 0
+    old = destinations.described(job.options, job.target)
+    new = destinations.described(saved.options, saved.target)
+    if refetch:
+        count = store().refetch(job_id)
+        line = l10n.said_n(
+            "%n file saved before in {old} is downloaded again into {new}, as the next runs find it",
+            "%n files saved before in {old} are downloaded again into {new}, as the next runs find them",
+            count,
+            old=old,
+            new=new,
+        )
+    else:
+        count = store().placed_count(job_id)
+        if destinations.place_of(saved.options) != destinations.place_of(job.options):
+            store().forget_places(job_id)
+        line = l10n.said_n(
+            "%n file saved before stays in {old}: not downloaded again into {new}",
+            "%n files saved before stay in {old}: not downloaded again into {new}",
+            count,
+            old=old,
+            new=new,
+        )
+    if count:
+        store().log(job_id, "info", line)
 
 
 def weekly_test_from_now(job: Job | None, saved: Job) -> None:

@@ -110,6 +110,28 @@ def test_save_to_shows_each_places_fields_and_switches_off_what_it_cannot_do(pag
 
 
 @needs_chromium
+def test_another_place_or_folder_offers_to_download_the_files_saved_before_again(page):
+    answering(page, {"PUT /jobs/1": {"id": 1, "name": "Mag"}})
+    page.get_by_role("button", name="Edit").click()
+    refetch = page.locator("input[data-field=refetch]")
+    folder = page.get_by_label("Folder", exact=True)
+    assert not refetch.is_visible(), "where the files go has not changed"
+    kept = folder.input_value()
+    folder.fill(kept.rstrip("/") + "/Other")
+    assert refetch.is_visible() and refetch.is_checked(), "another folder: downloaded again by default"
+    folder.fill(kept + "/")
+    assert not refetch.is_visible(), "the same folder, written otherwise"
+    page.locator("select[data-option=save_to]").select_option("library")
+    assert refetch.is_visible()
+    refetch.uncheck()
+    page.get_by_role("button", name="Save", exact=True).click()
+    page.wait_for_function("() => !document.querySelector('#harvester-job-form')")
+    saved = next(body for method, path, body in CALLS if (method, path) == ("PUT", "/jobs/1"))
+    assert saved["refetch"] is False and saved["options"]["save_to"] == "library"
+    assert "refetch" not in saved["options"]
+
+
+@needs_chromium
 def test_save_to_immich_shows_the_album_and_the_persons_account(page):
     answering(
         page,

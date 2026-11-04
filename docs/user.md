@@ -208,10 +208,20 @@ are turned on now*); a key without `userPreference.update` cannot, and the log s
 them on instead.
 
 A job's **Files** (beside it in the list, `GET /api/jobs/<id>/files`) lists the newest 1000
-files it saved, with their tags or labels, and filters them by one. Another *Save to* applies
-to the files of the next runs: those saved stay where they are, and the job does not fetch
-them again; *Download deleted files again* and the checks of changes then concern the new
-place's files only.
+files it saved, with their tags or labels, and filters them by one.
+
+**Changing where the files go.** Harvester moves no file itself. When the form changes where a
+job's files go (another *Save to*, another vault, another folder), it offers **Download the files
+saved before again, into the new place** (on by default): the job forgets that it fetched them
+(`store.refetch`: their records and the marks of what its listing found, such as a complete pass
+or a mail's messages done with; not the files refused by type or size), and its next runs
+download them again into the new place as their listing finds them (*Files per run* still holds;
+a file the site or mailbox no longer lists cannot come back). Off, they stay where they are and
+are not fetched again; another place (not only another folder) forgets where they are, so that
+*Download deleted files again* and the checks of changes concern the new place's files only (a
+file's ID in the old place says nothing about the new one). The job's log says which, with the
+count: *3 files saved before in /Mag in your files are downloaded again into /Mag in your library,
+as the next runs find them*, or *… stay in /Mag in your files: not downloaded again into …*.
 
 ## The private library
 

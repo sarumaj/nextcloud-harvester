@@ -14,6 +14,10 @@
   values and labels.
 - **Move to Files** takes files and folders out of the library into a folder of your Files,
   each checked (read back from Files and compared) before the library's copy goes.
+- Changing where a job's files go (another *Save to*, vault or folder) offers **Download the
+  files saved before again, into the new place**, on by default: the job forgets that it fetched
+  them and its next runs download them again as they find them. Off, they stay where they are,
+  as before. The log says which, with how many files and both places.
 
 ### Fixed
 

@@ -3785,7 +3785,9 @@
 	// person's account), and what it switches off of
 	// the other options, with why (the source's save_rules). Fills inputs and fields (the form's
 	// optionInputs and optionFields) with its options; folderHelp is the Folder field's help.
-	function saveSection(value, chosen, inputs, fields, folderHelp, job) {
+	// With job (editing one) and target (the Folder field): a change of where its files go offers to
+	// download the files saved before again, into the new place (refetch, sent with Save).
+	function saveSection(value, chosen, inputs, fields, folderHelp, job, target) {
 		const options = chosen.options
 		const current = (key) => (key in value.options ? value.options[key] : options[key].default)
 		const place = el('select', { 'data-option': 'save_to' },
@@ -3832,6 +3834,12 @@
 		const account = immichAccount()
 		const immichNote = el('p', { class: 'harvester-muted', text: t('Only photos and videos go to Immich; the job skips other files for good.') })
 		const inboxNote = el('p', { class: 'harvester-muted', text: t('When you unlock the vault in Vaults for Cryptomator, it moves the inbox’s files into the vault and deletes the plain copies. Until then they are plain files on the server.') })
+		const refetch = el('input', { type: 'checkbox', checked: '', 'data-field': 'refetch' })
+		const refetchBox = el('label', { class: 'harvester-check', hidden: '' }, refetch,
+			el('span', {}, el('strong', { text: t('Download the files saved before again, into the new place') }), el('br'),
+				el('small', { class: 'harvester-muted', text: t('The job forgets that it fetched them: its next runs download them again as they find them (Files per run still holds). Off: they stay where they are and are not fetched again. Harvester moves no file itself.') })))
+		// A folder as the server compares them: from the top, without a "/" at its end.
+		const folderOf = (path) => `/${String(path || '').split('/').filter(Boolean).join('/')}`
 		const reasons = {}
 		const update = () => {
 			const where = place.value
@@ -3843,6 +3851,11 @@
 			warning.hidden = where !== 'vault'
 			passwordBox.hidden = where !== 'vault'
 			albumBox.hidden = account.hidden = immichNote.hidden = where !== 'immich'
+			const before = (job && job.options) || {}
+			const vaultBefore = ['inbox', 'vault'].includes(before.save_to) ? folderOf(before.vault) : ''
+			refetchBox.hidden = !job || ((before.save_to || 'files') === where
+				&& (vaulted ? folderOf(vault.value) : '') === vaultBefore
+				&& (!target || folderOf(target.value) === folderOf(job.target)))
 			if (where === 'immich') account.load()
 			folderHelp.textContent = {
 				files: t('In your files, e.g. /Magazines/iX.'),
@@ -3881,6 +3894,8 @@
 		}
 		place.addEventListener('change', update)
 		tagAs.addEventListener('change', update)
+		vault.addEventListener('input', update)
+		if (target) target.addEventListener('input', update)
 		if (job && place.value === 'vault') {
 			api('GET', `/jobs/${job.id}/vault`).then((answer) => {
 				keyState.textContent = answer.key ? t('The vault’s keys are kept: type its password only for another vault.') : t('No keys kept: type the vault’s password, else the job cannot write into it.')
@@ -3890,10 +3905,12 @@
 			el('legend', { text: t('Save to') }),
 			field(t('Save to'), place),
 			vaultBox, insideBox, inboxNote, verifyBox, warning, passwordBox, immichNote, albumBox, account,
-			el('div', { class: 'harvester-field-box' }, field(t('Tag as'), tagAs), tagHelp))
+			el('div', { class: 'harvester-field-box' }, field(t('Tag as'), tagAs), tagHelp), refetchBox)
 		return {
 			section,
 			update,
+			// Whether Save asks for the files saved before again (shown: where they go changed).
+			refetch: () => !refetchBox.hidden && refetch.checked,
 			typed: () => place.value === 'vault' && Boolean(password.value),
 			// After Save: the vault unlocked with the password typed (its keys kept), if one was.
 			save: async (saved) => {
@@ -4128,7 +4145,7 @@
 		options.addEventListener('change', showWhen)
 		showWhen()
 		const folderBox = field(t('Folder'), target, t('In your files, e.g. /Magazines/iX.'))
-		const saving = saveSection(value, chosen, optionInputs, optionFields, folderBox.querySelector('small'), job)
+		const saving = saveSection(value, chosen, optionInputs, optionFields, folderBox.querySelector('small'), job, target)
 		saving.update()
 
 		const save = el('button', { class: 'primary', type: 'submit', form: 'harvester-job-form', text: t('Save') })
@@ -4167,7 +4184,8 @@
 			onsubmit: async (event) => {
 				event.preventDefault()
 				if (save.disabled) return
-				const body = formBody()
+				// Not part of the job (an exported recipe has none): what this Save does.
+				const body = { ...formBody(), refetch: saving.refetch() }
 				save.disabled = true
 				save.textContent = t('Saving…')
 				error.textContent = ''

@@ -29,7 +29,7 @@ the ZIP files).
 import dataclasses
 import unicodedata
 
-from .l10n import said
+from .l10n import Said, said
 from .sources.base import Option
 from .store import Job
 
@@ -140,6 +140,26 @@ def place_of(options: dict) -> tuple[str, str]:
     """Where the job's files are: its destination, and the vault's folder for a vault's."""
     where = save_to(options)
     return where, folder(str(options.get(VAULT) or "")) if where in (INBOX, DIRECT) else ""
+
+
+def described(options: dict, target: str) -> Said:
+    """Where the job's files go, in words for its log: the folder (target) and its place."""
+    where, vault = place_of(options)
+    path = folder(target)
+    if where == LIBRARY:
+        return said("{folder} in your library", folder=path)
+    if where == INBOX:
+        return said("the inbox {folder} of the vault {vault}", folder=path, vault=vault)
+    if where == DIRECT:
+        return said("{folder} in the vault {vault}", folder=path, vault=vault)
+    if where == IMMICH:
+        return said("your Immich account")
+    return said("{folder} in your files", folder=path)
+
+
+def elsewhere(before: Job, after: Job) -> bool:
+    """Whether the job's files go elsewhere now: another place (Save to, vault) or folder."""
+    return place_of(after.options) != place_of(before.options) or folder(after.target) != folder(before.target)
 
 
 def effective(job: Job) -> Job:

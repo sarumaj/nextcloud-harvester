@@ -594,6 +594,30 @@ class Store:  # pylint: disable=too-many-public-methods
             self._db.execute("DELETE FROM placed WHERE job = ?", (job_id,))
             self._db.execute("DELETE FROM contents WHERE job = ?", (job_id,))
 
+    def placed_count(self, job_id: int) -> int:
+        """How many files the job has a record of (placed)."""
+        with self._lock:
+            row = self._db.execute("SELECT COUNT(*) AS count FROM placed WHERE job = ?", (job_id,)).fetchone()
+        return int(row["count"])
+
+    def refetch(self, job_id: int) -> int:
+        """Forgets the files the job saved, as if it never fetched them: where they are and what
+        they hold (placed, contents), that it fetched their items (seen), and the marks of what its
+        listing found (a complete pass, a message done with, a page captured: sources.MARK), so
+        that its next runs download them again; not its refusals by type or size, nor the items
+        that never gave a file. The number of files forgotten."""
+        with self._lock, self._db:
+            count = self._db.execute(
+                "DELETE FROM seen WHERE job = ? AND key IN (SELECT key FROM placed WHERE job = ?)", (job_id, job_id)
+            ).rowcount
+            self._db.execute(
+                "DELETE FROM seen WHERE job = ? AND substr(key, 1, ?) = ? AND substr(key, 1, ?) != ?",
+                (job_id, len(MARK), MARK, len(REFUSED), REFUSED),
+            )
+            self._db.execute("DELETE FROM placed WHERE job = ?", (job_id,))
+            self._db.execute("DELETE FROM contents WHERE job = ?", (job_id,))
+        return count
+
     def job_files(self, job_id: int, label: str = "", most: int = 1000) -> list[dict]:
         """The files the job saved (newest first, most at most): their path, ID and tags (or
         labels), those with the label alone if one is given."""

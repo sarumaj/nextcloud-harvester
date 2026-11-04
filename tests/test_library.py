@@ -517,11 +517,11 @@ def test_another_save_to_forgets_where_the_files_are_not_that_they_were_fetched(
     job = run(app, library_job(store))
     assert store.placed(job.id or 0)
     saved = Job(**(vars(job) | {"options": {"save_to": "files"}}))
-    main.forget_changed(job, saved)
+    main.moved_out(job, saved, False)
     assert store.placed(job.id or 0) == {} and store.seen(job.id or 0, "a")
     same = Job(**(vars(job) | {"options": dict(job.options)}))
     store.record_placed(job.id or 0, "a", 1, {}, [])
-    main.forget_changed(job, same)
+    main.moved_out(job, same, False)
     assert store.placed(job.id or 0), "the same Save to keeps them"
 
 
