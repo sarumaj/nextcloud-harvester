@@ -39,7 +39,8 @@ def test_a_sources_essentials_are_shown_and_its_other_options_grouped():
     essentials = [key for key, option in sources["site"]["options"].items() if not option["group"]]
     assert essentials == ["recipe", "path", "file_type", "max_items"]
     groups = {option["group"] for source in sources.values() for option in source["options"].values()}
-    assert groups == {"", "browser", "files", "runs", "links"}, "each group has its title on the page"
+    # "save": Save to and Tag as, a section of their own (saveSection).
+    assert groups == {"", "browser", "files", "runs", "links", "save"}, "each group has its title on the page"
 
 
 @needs_chromium

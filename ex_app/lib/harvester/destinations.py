@@ -82,12 +82,14 @@ RULES: dict[str, dict[str, str]] = {
     FILES: {},
     LIBRARY: {},
     INBOX: {
-        AGAIN: "Off for an inbox: the vault app moves its files away, and a file moved into the vault is not "
-        "downloaded again.",
-        RECHECK: "Off for an inbox: its files are moved into the vault, where the job cannot save over them.",
+        AGAIN: said(
+            "Off for an inbox: the vault app moves its files away, and a file moved into the vault is not "
+            "downloaded again."
+        ),
+        RECHECK: said("Off for an inbox: its files are moved into the vault, where the job cannot save over them."),
     },
     DIRECT: {
-        RECHECK: "Off for a vault: nothing in it is replaced, so a changed file would have nowhere to go.",
+        RECHECK: said("Off for a vault: nothing in it is replaced, so a changed file would have nowhere to go."),
     },
 }
 

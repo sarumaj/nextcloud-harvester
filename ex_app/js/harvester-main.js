@@ -97,10 +97,10 @@
 		}
 	}
 
-	async function api(method, path, body) {
+	async function api(method, path, body, headers = {}) {
 		const response = await fetch(API + path, {
 			method,
-			headers: { requesttoken: OC.requestToken, 'Content-Type': 'application/json' },
+			headers: { requesttoken: OC.requestToken, 'Content-Type': 'application/json', ...headers },
 			body: body === undefined ? undefined : JSON.stringify(body),
 		})
 		const data = await response.json().catch(() => ({}))
@@ -391,6 +391,7 @@
 								? el('button', { text: t('Run now'), disabled: '', title: t('Queued already: it runs once its turn comes') })
 								: el('button', { text: t('Run now'), onclick: act(job, '/run') })]),
 					onDemand(job) ? el('button', { text: t('Fetch a URL…'), 'aria-expanded': 'false', onclick: (event) => fetchForm(event.currentTarget, job) }) : '',
+					el('button', { text: t('Files'), title: t('The files the job saved, with their tags or labels'), onclick: () => renderJobFiles(root, job) }),
 					el('button', { text: t('Edit'), onclick: (event) => editJob(root, job, event.currentTarget) }),
 					el('button', {
 						class: 'error',
@@ -411,7 +412,9 @@
 				el('div', {},
 					el('h2', { text: 'Harvester' }),
 					el('p', { class: 'harvester-muted', text: t('Fetches files from websites into your folders on a schedule, and tags them.') })),
-				el('button', { class: 'primary', text: t('New job'), onclick: () => renderStart(root) })),
+				el('div', { class: 'harvester-header-buttons' },
+					el('button', { text: t('Library'), title: t('Harvester’s private library: the files of the jobs that save there'), onclick: () => renderLibrary(root) }),
+					el('button', { class: 'primary', text: t('New job'), onclick: () => renderStart(root) }))),
 			load,
 			jobs.length ? table : el('div', { class: 'harvester-empty' },
 				el('p', { text: t('No jobs yet.') }),
@@ -2792,6 +2795,337 @@
 			...notes)
 	}
 
+	// A size for people, in units of 1000 (as the server's size_text): 512 B, 3.4 MB.
+	function sizeText(size) {
+		let value = Number(size) || 0
+		for (const unit of ['B', 'KB', 'MB', 'GB']) {
+			if (value < 1000 || unit === 'GB') return unit === 'B' ? `${value.toFixed(0)} ${unit}` : `${value.toFixed(1)} ${unit}`
+			value /= 1000
+		}
+		return `${value.toFixed(1)} TB`
+	}
+
+	// The files a job saved (GET /api/jobs/<id>/files): their paths and tags or labels, the newest
+	// first, filtered by one.
+	async function renderJobFiles(root, job, label = '') {
+		const back = el('button', { type: 'button', text: t('Back to the jobs'), onclick: () => show(root) })
+		const error = el('p', { class: 'harvester-error', role: 'alert' })
+		let listed = { files: [], labels: [] }
+		try {
+			listed = await api('GET', `/jobs/${job.id}/files${label ? `?label=${encodeURIComponent(label)}` : ''}`)
+		} catch (e) {
+			error.textContent = e.message
+		}
+		const filter = el('select', { onchange: () => renderJobFiles(root, job, filter.value) },
+			el('option', { value: '', text: t('All files') }),
+			...listed.labels.map((name) => el('option', { value: name, text: name })))
+		filter.value = label
+		root.replaceChildren(el('div', { class: 'harvester-job-files' },
+			el('div', { class: 'harvester-header' }, el('h2', { text: t('Files of {name}', { name: job.name }) }), back),
+			error,
+			listed.labels.length ? field(t('Tag or label'), filter) : '',
+			listed.files.length
+				? el('ul', { class: 'harvester-file-list' }, ...listed.files.map((file) => el('li', {},
+					el('code', { text: file.path || t('(where unknown)') }),
+					file.at ? el('small', { class: 'harvester-muted', text: when(file.at) }) : '',
+					...file.tags.map((tag) => el('span', { class: 'harvester-chip', text: tag })))))
+				: el('p', { class: 'harvester-muted', text: t('No files recorded yet.') })))
+		back.focus()
+	}
+
+	// Harvester's private library: the token that opens it to this browser (sessionStorage: the
+	// tab's session), sent with its requests and in its files' addresses.
+	const LIBRARY_TOKEN = 'harvester-library'
+	function libraryToken(value) {
+		try {
+			if (value !== undefined) sessionStorage.setItem(LIBRARY_TOKEN, value)
+			return sessionStorage.getItem(LIBRARY_TOKEN) || ''
+		} catch (e) {
+			return ''
+		}
+	}
+	const libraryApi = (method, path, body) => api(method, path, body, { 'X-Harvester-Library': libraryToken() })
+	const libraryFile = (entry, download) => `${API}/library/files/${entry.id}?unlock=${encodeURIComponent(libraryToken())}${download ? '&download=1' : ''}`
+	// Pictures up to this size are their own thumbnails in the grid; larger ones, and other files, an icon.
+	const THUMBNAIL_MOST = 3000000
+	const isPicture = (entry) => /^image\/(png|jpeg|gif|webp|avif|bmp)$/.test(entry.type)
+	const kindIcon = (entry) => entry.dir ? '📁' : isPicture(entry) ? '🖼' : entry.type.startsWith('video/') ? '🎞' : entry.type.startsWith('audio/') ? '🎵' : entry.type === 'application/pdf' ? '📄' : '📎'
+
+	// The library: by folder (or a label's files), pictures as a grid and other files as a list,
+	// a viewer, downloads and Delete; locked until unlocked when it has a password.
+	async function renderLibrary(root, folder = '/', label = '') {
+		const back = el('button', { type: 'button', text: t('Back to the jobs'), onclick: () => show(root) })
+		const error = el('p', { class: 'harvester-error', role: 'alert' })
+		const heading = el('div', { class: 'harvester-header' },
+			el('div', {}, el('h2', { text: t('Library') }),
+				el('p', { class: 'harvester-muted', text: t('The files of your jobs that save into Harvester’s private library: only you see them here, not in Files, Photos or the search.') })),
+			back)
+		let state
+		try {
+			state = await libraryApi('GET', '/library/state')
+		} catch (e) {
+			root.replaceChildren(heading, el('p', { class: 'harvester-error', role: 'alert', text: e.message }))
+			return
+		}
+		if (state.password && !state.unlocked) {
+			libraryToken('')
+			const password = el('input', { type: 'password', autocomplete: 'current-password', required: '' })
+			const unlock = el('form', {
+				class: 'harvester-form harvester-unlock',
+				onsubmit: async (event) => {
+					event.preventDefault()
+					error.textContent = ''
+					try {
+						libraryToken((await api('POST', '/library/unlock', { password: password.value })).token)
+						await renderLibrary(root, folder, label)
+					} catch (e) {
+						error.textContent = e.message
+						password.select()
+					}
+				},
+			}, field(t('Library password'), password, t('The library locks again after {minutes} minutes without use.', { minutes: state.minutes })),
+			error, el('button', { class: 'primary', type: 'submit', text: t('Unlock') }))
+			root.replaceChildren(heading, unlock)
+			password.focus()
+			return
+		}
+		let listed = { entries: [], labels: [] }
+		try {
+			listed = await libraryApi('GET', `/library?folder=${encodeURIComponent(folder)}&label=${encodeURIComponent(label)}`)
+		} catch (e) {
+			error.textContent = e.message
+		}
+		const again = () => renderLibrary(root, folder, label)
+		const parts = folder.split('/').filter(Boolean)
+		const crumbs = el('nav', { class: 'harvester-crumbs', 'aria-label': t('Folder') },
+			el('button', { type: 'button', class: 'tertiary', text: t('Library'), onclick: () => renderLibrary(root, '/', label) }),
+			...parts.map((part, index) => el('button', { type: 'button', class: 'tertiary', text: `/ ${part}`, onclick: () => renderLibrary(root, `/${parts.slice(0, index + 1).join('/')}`, label) })))
+		const filter = el('select', { onchange: () => renderLibrary(root, folder, filter.value) },
+			el('option', { value: '', text: t('All files') }),
+			...listed.labels.map((name) => el('option', { value: name, text: name })))
+		filter.value = label
+		const remove = async (entry) => {
+			const question = entry.dir ? t('Delete the folder {name} with everything in it?', { name: entry.name }) : t('Delete {name}?', { name: entry.name })
+			if (!await ask(question, t('Delete'), true)) return
+			try {
+				await libraryApi('DELETE', `/library/files/${entry.id}`)
+				await again()
+			} catch (e) {
+				error.textContent = e.message
+			}
+		}
+		const open = (entry) => (entry.dir ? renderLibrary(root, entry.path, '') : libraryViewer(entry, remove))
+		const pictures = listed.entries.filter((entry) => !entry.dir && isPicture(entry))
+		const others = listed.entries.filter((entry) => entry.dir || !isPicture(entry))
+		const usage = state.limit
+			? t('{used} of {limit} used', { used: sizeText(state.usage), limit: sizeText(state.limit) })
+			: t('{used} used', { used: sizeText(state.usage) })
+		root.replaceChildren(el('div', { class: 'harvester-library' },
+			heading,
+			el('p', { class: 'harvester-muted', text: usage }),
+			crumbs,
+			listed.labels.length ? field(t('Label'), filter) : '',
+			error,
+			pictures.length ? el('ul', { class: 'harvester-gallery' }, ...pictures.map((entry) => el('li', {},
+				el('button', { type: 'button', class: 'harvester-thumb', title: entry.name, onclick: () => open(entry) },
+					entry.size <= THUMBNAIL_MOST
+						? el('img', { src: libraryFile(entry), alt: entry.name, loading: 'lazy' })
+						: el('span', { class: 'harvester-thumb-icon', 'aria-hidden': 'true', text: kindIcon(entry) }),
+					el('span', { class: 'harvester-thumb-name', text: entry.name }))))) : '',
+			others.length ? el('ul', { class: 'harvester-file-list' }, ...others.map((entry) => el('li', {},
+				el('span', { 'aria-hidden': 'true', text: kindIcon(entry) }),
+				el('button', { type: 'button', class: 'tertiary', text: entry.dir ? `${entry.name}/` : entry.name, onclick: () => open(entry) }),
+				entry.dir ? '' : el('small', { class: 'harvester-muted', text: sizeText(entry.size) }),
+				...entry.labels.map((name) => el('span', { class: 'harvester-chip', text: name })),
+				entry.dir ? '' : el('a', { class: 'button tertiary', href: libraryFile(entry, true), download: entry.name, text: t('Download') }),
+				el('button', { type: 'button', class: 'tertiary', text: t('Delete'), onclick: () => remove(entry) })))) : '',
+			listed.entries.length ? '' : el('p', { class: 'harvester-muted', text: label ? t('No files with this label here.') : t('Nothing here yet: a job that saves into the library fills it.') }),
+			libraryLock(root, state, again)))
+		back.focus()
+	}
+
+	// A file of the library in a dialog: a picture, a video or sound (streamed, with seeking), a
+	// PDF or plain text; anything else downloaded.
+	function libraryViewer(entry, remove) {
+		const address = libraryFile(entry)
+		let content
+		if (isPicture(entry)) content = el('img', { src: address, alt: entry.name })
+		else if (entry.type.startsWith('video/')) content = el('video', { src: address, controls: '', preload: 'metadata' })
+		else if (entry.type.startsWith('audio/')) content = el('audio', { src: address, controls: '', preload: 'metadata' })
+		else if (entry.type === 'application/pdf') content = el('iframe', { src: address, title: entry.name })
+		else if (entry.type === 'text/plain') {
+			content = el('pre', { class: 'harvester-text-file', text: t('Loading…') })
+			fetch(address).then((answer) => answer.text()).then((text) => { content.textContent = text }).catch((e) => { content.textContent = e.message })
+		} else content = el('p', { class: 'harvester-muted', text: t('No preview of this kind of file: download it.') })
+		const title = el('h3', { id: 'harvester-viewer-title', text: entry.name })
+		const close = el('button', { type: 'button', text: t('Close') })
+		const dialog = el('dialog', { class: 'harvester-dialog harvester-viewer', 'aria-labelledby': title.id },
+			title,
+			el('p', { class: 'harvester-muted' }, sizeText(entry.size), ...entry.labels.map((name) => el('span', { class: 'harvester-chip', text: name }))),
+			content,
+			el('div', { class: 'harvester-dialog-buttons' },
+				el('a', { class: 'button', href: libraryFile(entry, true), download: entry.name, text: t('Download') }),
+				el('button', { type: 'button', class: 'error', text: t('Delete'), onclick: () => { end(); remove(entry) } }),
+				close))
+		const opener = document.activeElement
+		const end = () => {
+			dialog.close()
+			dialog.remove()
+			if (opener && opener.isConnected) opener.focus()
+		}
+		close.addEventListener('click', end)
+		dialog.addEventListener('cancel', (event) => { event.preventDefault(); end() })
+		;(document.getElementById('harvester') || document.body).append(dialog)
+		dialog.showModal()
+		close.focus()
+	}
+
+	// The library's password (folded): set, change or remove it, the minutes it stays unlocked
+	// without use, and Lock now.
+	function libraryLock(root, state, again) {
+		const current = el('input', { type: 'password', autocomplete: 'current-password' })
+		const password = el('input', { type: 'password', autocomplete: 'new-password', minlength: '8' })
+		const minutes = el('input', { type: 'number', min: '1', max: '1440', value: String(state.minutes) })
+		const error = el('p', { class: 'harvester-error', role: 'alert' })
+		const status = el('p', { class: 'harvester-muted', role: 'status' })
+		const save = async (event) => {
+			event.preventDefault()
+			error.textContent = ''
+			try {
+				await api('PUT', '/library/password', { current: current.value, password: password.value, minutes: Number(minutes.value) })
+				libraryToken('')
+				if (password.value) libraryToken((await api('POST', '/library/unlock', { password: password.value })).token)
+				await again()
+			} catch (e) {
+				error.textContent = e.message
+			}
+		}
+		return el('details', { class: 'harvester-group harvester-library-lock' },
+			el('summary', {}, el('span', { text: state.password ? t('Library password: set') : t('Lock with a password') })),
+			el('form', { class: 'harvester-form', onsubmit: save },
+				el('p', { class: 'harvester-muted', text: t('Asked for in each browser, and again after the minutes below without use. The files are not encrypted on the server: the password keeps out whoever uses your open Nextcloud, not the server’s admin. A forgotten password only the admin can remove.') }),
+				state.password ? field(t('Current password'), current) : '',
+				field(state.password ? t('New password (empty: no password)') : t('Password'), password, t('8 characters at least.')),
+				field(t('Minutes unlocked without use'), minutes),
+				error, status,
+				el('button', { class: 'primary', type: 'submit', text: t('Save password') }),
+				state.password ? el('button', {
+					type: 'button',
+					text: t('Lock now'),
+					onclick: async () => {
+						await libraryApi('POST', '/library/lock').catch(() => null)
+						libraryToken('')
+						await renderLibrary(root)
+					},
+				}) : ''))
+	}
+
+	// Save to and Tag as (destinations.py): where the job's files go, the fields each place needs
+	// (the vault's folder, the folder inside it, its password once), and what it switches off of
+	// the other options, with why (the source's save_rules). Fills inputs and fields (the form's
+	// optionInputs and optionFields) with its options; folderHelp is the Folder field's help.
+	function saveSection(value, chosen, inputs, fields, folderHelp, job) {
+		const options = chosen.options
+		const current = (key) => (key in value.options ? value.options[key] : options[key].default)
+		const place = el('select', { 'data-option': 'save_to' },
+			el('option', { value: 'files', text: t('Your files') }),
+			el('option', { value: 'library', text: t('Harvester’s private library') }),
+			el('option', { value: 'inbox', text: t('A Cryptomator vault’s inbox') }),
+			el('option', { value: 'vault', text: t('A Cryptomator vault (encrypted on the server)') }))
+		place.value = current('save_to') || 'files'
+		const tagAs = el('select', { 'data-option': 'tag_as' },
+			el('option', { value: 'nextcloud', text: t('Nextcloud tags') }),
+			el('option', { value: 'labels', text: t('Harvester’s labels') }),
+			el('option', { value: 'none', text: t('None') }))
+		tagAs.value = 'tag_as' in value.options ? value.options.tag_as : (place.value === 'files' ? 'nextcloud' : 'labels')
+		const vault = el('input', { value: current('vault'), placeholder: '/Vaults/Papers', 'data-option': 'vault' })
+		const inside = el('input', { value: current('vault_target'), 'data-option': 'vault_target' })
+		const verify = el('input', { type: 'checkbox', 'data-option': 'vault_verify' })
+		verify.checked = Number(current('vault_verify')) === 1
+		const password = el('input', { type: 'password', autocomplete: 'off', 'data-field': 'vault-password' })
+		const keyState = el('p', { class: 'harvester-muted', role: 'status' })
+		inputs.save_to = place
+		inputs.tag_as = tagAs
+		inputs.vault = vault
+		inputs.vault_target = inside
+		inputs.vault_verify = { get value() { return verify.checked ? 1 : 0 } }
+		Object.assign(fields, { save_to: place, tag_as: tagAs, vault, vault_target: inside, vault_verify: verify })
+		const tagHelp = el('small', { class: 'harvester-field-help' })
+		const vaultBox = field(t('Vault'), vault, t('The vault’s folder in your files: the folder holding vault.cryptomator.'))
+		const insideBox = field(t('Folder in the vault'), inside, t('Where the vault app puts the inbox’s files (/ is the vault’s top). Its name is stored unencrypted in the inbox’s marker.'))
+		const verifyBox = el('label', { class: 'harvester-check' }, verify,
+			el('span', {}, el('strong', { text: t('Read each file back') }), el('br'),
+				el('small', { class: 'harvester-muted', text: t('Each file written into the vault is read back and compared before it counts as saved.') })))
+		const warning = el('div', { class: 'harvester-vault-warning', role: 'alert' },
+			el('p', { text: t('The server then holds this vault’s keys: whoever takes over the server can read the whole vault. Use a vault just for Harvester (or for jobs alike), not one with your other secrets.') }))
+		const passwordBox = el('div', {},
+			field(t('Vault password'), password, t('Typed once: the server unlocks the vault with it and keeps only the vault’s keys (encrypted in Nextcloud), never the password.')),
+			keyState)
+		const inboxNote = el('p', { class: 'harvester-muted', text: t('When you unlock the vault in Vaults for Cryptomator, it moves the inbox’s files into the vault and deletes the plain copies. Until then they are plain files on the server.') })
+		const reasons = {}
+		const update = () => {
+			const where = place.value
+			const vaulted = where === 'inbox' || where === 'vault'
+			vaultBox.hidden = !vaulted
+			insideBox.hidden = where !== 'inbox'
+			inboxNote.hidden = where !== 'inbox'
+			verifyBox.hidden = where !== 'vault'
+			warning.hidden = where !== 'vault'
+			passwordBox.hidden = where !== 'vault'
+			folderHelp.textContent = {
+				files: t('In your files, e.g. /Magazines/iX.'),
+				library: t('A folder of your library, e.g. /Magazines.'),
+				inbox: t('The inbox: a folder of its own in your files, beside the vault, e.g. /Vaults/Papers inbox.'),
+				vault: t('A folder inside the vault, e.g. /Magazines (/ is its top).'),
+			}[where]
+			const nextcloud = tagAs.querySelector('option[value="nextcloud"]')
+			nextcloud.disabled = where !== 'files'
+			if (nextcloud.disabled && tagAs.value === 'nextcloud') tagAs.value = 'labels'
+			tagHelp.textContent = where !== 'files'
+				? t('No Nextcloud tags outside your files: labels (only in Harvester) or none.')
+				: tagAs.value === 'nextcloud'
+					? t('Nextcloud’s tags are everyone’s: other people see the tags’ names in their lists of tags (not your files).')
+					: t('Labels are Harvester’s own: the job’s Files and the library show them; no other app sees them.')
+			// What this place switches off, with why; the others as they were.
+			const rules = (chosen.save_rules || {})[where] || {}
+			for (const [key, node] of Object.entries(fields)) {
+				if (['save_to', 'tag_as', 'vault', 'vault_target', 'vault_verify'].includes(key) || !node || node.disabled === undefined) continue
+				const off = key in rules
+				node.disabled = off
+				if (off && !reasons[key]) {
+					reasons[key] = el('small', { class: 'harvester-off-reason', text: said(rules[key]) })
+					;(node.closest('label') || node).after(reasons[key])
+				} else if (!off && reasons[key]) {
+					reasons[key].remove()
+					delete reasons[key]
+				}
+			}
+		}
+		place.addEventListener('change', update)
+		tagAs.addEventListener('change', update)
+		if (job && place.value === 'vault') {
+			api('GET', `/jobs/${job.id}/vault`).then((answer) => {
+				keyState.textContent = answer.key ? t('The vault’s keys are kept: type its password only for another vault.') : t('No keys kept: type the vault’s password, else the job cannot write into it.')
+			}).catch(() => null)
+		}
+		const section = el('fieldset', { class: 'harvester-save' },
+			el('legend', { text: t('Save to') }),
+			field(t('Save to'), place),
+			vaultBox, insideBox, inboxNote, verifyBox, warning, passwordBox,
+			el('div', { class: 'harvester-field-box' }, field(t('Tag as'), tagAs), tagHelp))
+		return {
+			section,
+			update,
+			typed: () => place.value === 'vault' && Boolean(password.value),
+			// After Save: the vault unlocked with the password typed (its keys kept), if one was.
+			save: async (saved) => {
+				if (place.value !== 'vault' || !password.value) return
+				await api('PUT', `/jobs/${saved.id}/vault`, { password: password.value })
+				password.value = ''
+			},
+		}
+	}
+
 	// The job's form; with sent (an address from ?fetch=), the new job fetches it once saved.
 	function renderForm(root, job, prefill, sent) {
 		const value = job || prefill || BLANK
@@ -2881,6 +3215,8 @@
 			return groups.get(name)
 		}
 		for (const [key, option] of Object.entries(chosen.options)) {
+			// Save to and Tag as: their own section beside the folder (saveSection).
+			if (option.group === 'save') continue
 			// A saved job without the option (saved before it existed) has its value from before.
 			const current = key in value.options ? value.options[key] : value.id && option.before != null ? option.before : option.default
 			const into = groupOf(option.group)
@@ -2988,6 +3324,9 @@
 			box.open = box.count() > 0
 			options.append(box)
 		}
+		const folderBox = field(t('Folder'), target, t('In your files, e.g. /Magazines/iX.'))
+		const saving = saveSection(value, chosen, optionInputs, optionFields, folderBox.querySelector('small'), job)
+		saving.update()
 
 		const save = el('button', { class: 'primary', type: 'submit', form: 'harvester-job-form', text: t('Save') })
 		// The job as the form holds it, as Save sends it (and Export recipe, Save as template).
@@ -3054,6 +3393,15 @@
 					save.textContent = t('Save')
 					return
 				}
+				// The vault's password typed: the vault unlocked with it, its keys kept for the job.
+				try {
+					await saving.save(current)
+				} catch (e) {
+					error.textContent = t('The job is saved, its vault is not unlocked: {error}', { error: e.message })
+					save.disabled = false
+					save.textContent = t('Save')
+					return
+				}
 				// Made from an address sent to Harvester: it fetches that address now.
 				if (sent && onDemand(current)) {
 					try {
@@ -3067,7 +3415,8 @@
 		},
 		el('h2', { class: 'harvester-with-icon' }, icon(chosen.name), heading),
 		field(t('Name'), name),
-		field(t('Folder'), target, t('In your files, e.g. /Magazines/iX.')),
+		folderBox,
+		saving.section,
 		chosen.address ? el('label', { class: 'harvester-check' }, onDemandBox,
 			el('span', {}, el('strong', { text: t('On demand') }), el('br'),
 				el('small', { class: 'harvester-muted', text: t('No schedule: it runs when you send it an address (Fetch a URL…, or Send to Harvester from any page), in place of its own, which may stay empty.') }))) : '',
@@ -3102,7 +3451,7 @@
 			type: 'button',
 			text: t('Back to the jobs'),
 			onclick: async () => {
-				if (!credentials.typed() || await ask(t('Leave without saving the account you typed?'), t('Leave'))) show(root)
+				if ((!credentials.typed() && !saving.typed()) || await ask(t('Leave without saving the account you typed?'), t('Leave'))) show(root)
 			},
 		})
 		// The recipe as a file to keep or share, or as a template of the person's own: the server
@@ -3386,6 +3735,24 @@
 			#harvester .harvester-log li { flex-wrap: wrap; gap: 0 8px; padding: 2px 0; }
 			#harvester .harvester-log-text { flex-basis: 100%; }
 		}
+		#harvester .harvester-vault-warning p { margin: 4px 0; padding: 4px 8px; border-inline-start: 3px solid var(--color-error); font-weight: bold; }
+		#harvester .harvester-header-buttons { display: flex; flex-wrap: wrap; gap: 4px; }
+		#harvester .harvester-save { border: 1px solid var(--color-border); border-radius: var(--border-radius-large); padding: 8px 12px; margin: 8px 0; max-width: 760px; }
+		#harvester .harvester-off-reason { display: block; margin: 0 0 8px 28px; color: var(--color-text-maxcontrast); }
+		#harvester .harvester-crumbs { display: flex; flex-wrap: wrap; gap: 2px; margin: 8px 0; }
+		#harvester .harvester-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; list-style: none; padding: 0; margin: 12px 0; }
+		#harvester .harvester-thumb { display: flex; flex-direction: column; align-items: center; width: 100%; height: auto; min-height: 140px; padding: 4px; margin: 0; overflow: hidden; }
+		#harvester .harvester-thumb img { width: 100%; height: 120px; object-fit: cover; border-radius: var(--border-radius); }
+		#harvester .harvester-thumb-icon { font-size: 48px; line-height: 120px; }
+		#harvester .harvester-thumb-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.9em; }
+		#harvester .harvester-file-list { list-style: none; padding: 0; margin: 12px 0; }
+		#harvester .harvester-file-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 4px 0; border-bottom: 1px solid var(--color-border); }
+		#harvester .harvester-file-list code { overflow-wrap: anywhere; }
+		.harvester-viewer { max-width: min(96vw, 1100px); width: 96vw; }
+		.harvester-viewer img, .harvester-viewer video { max-width: 100%; max-height: 70vh; display: block; margin: 0 auto; }
+		.harvester-viewer audio { width: 100%; }
+		.harvester-viewer iframe { width: 100%; height: 70vh; border: 0; }
+		.harvester-viewer .harvester-text-file { max-height: 70vh; overflow: auto; white-space: pre-wrap; }
 		#harvester .harvester-value { background: var(--color-primary-element-light); border-radius: 4px; padding: 0 4px; margin-inline-end: 4px; font-family: var(--font-face-monospace, monospace); }
 	`))
 

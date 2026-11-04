@@ -403,7 +403,7 @@ def test_the_queues_status_and_why_a_job_waits(page):
     assert page.locator(".harvester-load").inner_text() == "Runners 2/2 · Browsers 3/3 (2 jobs, 1 recording) · 3 queued"
     row = page.locator("tbody tr").nth(1)
     assert "2. in the queue: waits for a runner, all 2 busy (1 job ahead)" in row.inner_text()
-    assert row.locator("button").all_inner_texts() == ["Run now", "Edit", "Delete"]
+    assert row.locator("button").all_inner_texts() == ["Run now", "Files", "Edit", "Delete"]
     assert row.get_by_role("button", name="Run now").is_disabled(), "queued already"
 
 
@@ -466,6 +466,7 @@ def test_an_on_demand_job_fetches_an_address(page):
         "Pause",
         "Stop",
         "Fetch a URL…",
+        "Files",
         "Edit",
         "Delete",
     ]

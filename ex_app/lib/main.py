@@ -96,6 +96,8 @@ def list_sources() -> list[dict]:
             # The option a fetch of an on-demand job replaces ("": no on-demand jobs).
             "address": source.address_option,
             "credential_help": {name: list(help_) for name, help_ in source.credential_help.items()},
+            # What each Save to switches off of the options, and why (the form shows it).
+            "save_rules": destinations.RULES,
             "options": {
                 # "Through the proxy" in the admin's name for it (the page translates the default's).
                 key: vars(option)
