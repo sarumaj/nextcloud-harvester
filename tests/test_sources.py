@@ -10,7 +10,7 @@ import httpx
 import pytest
 
 from fake_site import PDF, SITE, Site
-from harvester.sources import FULL_PASS, ChallengeError, Item, SourceError
+from harvester.sources import FULL_PASS, ChallengeError, Item, SourceError, download
 from harvester.sources.site import Site as SiteSource
 
 ARCHIVE = {
@@ -122,8 +122,35 @@ def test_a_429_is_waited_for():
     made = SiteSource({"recipe": json.dumps(ARCHIVE)}, {}, httpx.Client(transport=httpx.MockTransport(handler)))
     pauses: list[float] = []
     made.sleep = pauses.append
-    made.fetch(Item("k", "p", f"{SITE}/x.pdf"), io.BytesIO())
+    log: list[tuple[str, str]] = []
+    with download.reporting(lambda level, text: log.append((level, text))):
+        made.fetch(Item("k", "p", f"{SITE}/x.pdf"), io.BytesIO())
     assert pauses == [7.0]
+    assert log == [("info", f"{SITE}/x.pdf asks to wait 7 s")], "said in the run's log"
+
+
+def test_a_failed_connection_is_tried_again_and_said():
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        if len(calls) < 3:
+            raise httpx.ConnectError("refused", request=request)
+        return httpx.Response(200, content=PDF, headers={"content-type": "application/pdf"})
+
+    made = SiteSource({"recipe": json.dumps(ARCHIVE)}, {}, httpx.Client(transport=httpx.MockTransport(handler)))
+    pauses: list[float] = []
+    made.sleep = pauses.append
+    log: list[str] = []
+    with download.reporting(lambda level, text: log.append(text)):
+        made.fetch(Item("k", "p", f"{SITE}/x.pdf"), io.BytesIO())
+    assert pauses == [download.RETRY_PAUSE, 2 * download.RETRY_PAUSE]
+    assert log == [
+        f"{SITE}/x.pdf: the connection failed, trying again in {download.RETRY_PAUSE} s",
+        f"{SITE}/x.pdf: the connection failed, trying again in {2 * download.RETRY_PAUSE} s",
+    ]
+    made.fetch(Item("k", "p", f"{SITE}/x.pdf"), io.BytesIO())
+    assert len(log) == 2, "outside a run nothing is told"
 
 
 def test_bad_recipes_are_refused():

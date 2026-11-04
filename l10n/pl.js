@@ -1162,6 +1162,8 @@ OC.L10N.register(
             "przechodzi przez %n wyboru: {choices}"
         ],
         "the choice “{choice}” failed: {why}": "wybór „{choice}” się nie powiódł: {why}",
+        "{address} asks to wait {seconds} s": "{address} prosi o odczekanie {seconds} s",
+        "{address}: the connection failed, trying again in {seconds} s": "{address}: połączenie nie powiodło się, ponowna próba za {seconds} s",
         "_The feed “{title}”: %n entry, {files} file links_::_The feed “{title}”: %n entries, {files} file links_": [
             "Kanał „{title}”: %n wpis, linki do plików: {files}",
             "Kanał „{title}”: %n wpisy, linki do plików: {files}",

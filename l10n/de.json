@@ -1075,6 +1075,8 @@
             "geht %n Auswahlen durch: {choices}"
         ],
         "the choice “{choice}” failed: {why}": "die Auswahl „{choice}“ ist fehlgeschlagen: {why}",
+        "{address} asks to wait {seconds} s": "{address} bittet, {seconds} s zu warten",
+        "{address}: the connection failed, trying again in {seconds} s": "{address}: die Verbindung ist fehlgeschlagen, neuer Versuch in {seconds} s",
         "_The feed “{title}”: %n entry, {files} file links_::_The feed “{title}”: %n entries, {files} file links_": [
             "Der Feed „{title}“: %n Eintrag, {files} Dateilinks",
             "Der Feed „{title}“: %n Einträge, {files} Dateilinks"

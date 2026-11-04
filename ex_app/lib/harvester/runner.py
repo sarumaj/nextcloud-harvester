@@ -263,7 +263,7 @@ def place(  # pylint: disable=too-many-arguments,too-many-positional-arguments,t
     report("info", said("Downloading {file}", file=item.url if item.pending else path))
     with tempfile.TemporaryFile() as content:
         try:
-            with download.checking(download.Check(item.url)) as check:
+            with download.checking(download.Check(item.url)) as check, download.reporting(report):
                 named = source.fetch(item, content)
         finally:
             fetched()
@@ -313,7 +313,7 @@ def _recheck(  # pylint: disable=too-many-arguments,too-many-positional-argument
     with tempfile.TemporaryFile() as content:
         check = download.Check(item.url, known["etag"], known["modified"]) if known else download.Check(item.url)
         try:
-            with download.checking(check):
+            with download.checking(check), download.reporting(report):
                 named = source.fetch(item, content)
         except download.Unchanged:
             contents.checked(item.key, known)

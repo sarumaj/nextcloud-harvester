@@ -20,6 +20,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from ..browser import allowed_url, challenge_in_html, dns_refusal, reachable, unresolved
+from ..l10n import said
 from .impersonate import CurlTransport
 from .base import ChallengeError, Denied, Option, Refused, SourceError, WebPage, check_stop, pattern_search
 
@@ -151,6 +152,28 @@ def checking(check: Check) -> Iterator[Check]:
         yield check
     finally:
         _CHECK.current = None
+
+
+# The progress log this thread's downloads tell of their waits and retries (reporting).
+_TOLD = threading.local()
+
+
+@contextlib.contextmanager
+def reporting(report: Callable[[str, str], None]) -> Iterator[None]:
+    """This thread's downloads tell report (the run's progress log) when they try again after a
+    connection failed, and when the site asks them to wait."""
+    _TOLD.report = report
+    try:
+        yield
+    finally:
+        _TOLD.report = None
+
+
+def _tell(text: str) -> None:
+    """An info line of this thread's download, for its run's log (reporting), if it has one."""
+    report = getattr(_TOLD, "report", None)
+    if report is not None:
+        report("info", text)
 
 
 def _check_of(url: str) -> Check | None:
@@ -409,7 +432,9 @@ def fetch(  # pylint: disable=too-many-arguments
                 raise SourceError(f"{url} could not be fetched: {error}{unresolved(url, error)}") from error
             dest.seek(0)
             dest.truncate()
-            sleep(RETRY_PAUSE * failures)
+            seconds = RETRY_PAUSE * failures
+            _tell(said("{address}: the connection failed, trying again in {seconds} s", address=url, seconds=seconds))
+            sleep(seconds)
             continue
         if isinstance(done, str):
             # Followed once only: a second page is no stand-in.
@@ -457,6 +482,7 @@ def _attempt(  # pylint: disable=too-many-arguments,too-many-positional-argument
     with opener(url) as response:
         wait = pause(response, str(settings.get("wait_pattern", "")))
         if wait is not None:
+            _tell(said("{address} asks to wait {seconds} s", address=url, seconds=f"{wait:g}"))
             sleep(wait)
             return False
         # One file refused is that file's trouble (taken away, kept private): the run decides

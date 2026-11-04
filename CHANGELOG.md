@@ -41,6 +41,8 @@
   “Reports”: 20 entries, 18 file links*, *30 entries listed (Entries per run: 30)* and the live
   or upcoming ones skipped, *rclone listed 12 files in share:Reports* (or that *Files* took
   none), *5 releases looked at (2 drafts or prereleases left out), 7 files match*.
+- A download's waits and retries are lines in the log: *… asks to wait 60 s* (429, 503, a
+  wait pattern) and *…: the connection failed, trying again in 10 s*, not a silent pause.
 - A mail job's progress log says what the mailbox search found (*Folder INBOX: 12 new messages,
   3 from the sender and with the subject asked for*, or no new messages and how many were done
   with before) and names each message of the sender and subject, with what the job takes from it

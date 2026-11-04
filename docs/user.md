@@ -804,7 +804,8 @@ recorder that makes them, and what a run does. Installing and the admin's settin
 - **Downloads:** a pause between files (counted from the end of the site's last answer: saving
   the file into Nextcloud is part of it), and one of a second between listing pages; waits when
   the site asks (429 or 503 with `Retry-After`, for listing pages too, or a wait pattern on the
-  URL it redirects to, like heise's `wait_sec=`) and three retries of a broken transfer; the
+  URL it redirects to, like heise's `wait_sec=`) and three retries of a broken transfer, each
+  a line in the log (*… asks to wait 60 s*, *…: the connection failed, trying again in 10 s*); the
   listing a file is linked from as `Referer`, and the browser's language (`Accept-Language`). A
   web page instead of a file is a sign-in (*signed out?*), or else a page standing in for the
   file (*Your download starts...*), whose meta refresh, or its one link that reads like the
