@@ -150,7 +150,9 @@ move), `DELETE /api/library/files/<id>`; locked, they answer 403. Set up, locked
 `routes/moves.py`: the Files action (`nc.ui.files_dropdown_menu.register_ex`, AppAPI's version
 2 of file actions, `mime="/"` so that every file and folder has it) posts the selected nodes to
 `POST /api/library/from-files`, which proposes a move (`librarymove.py`) and answers
-`{"redirect_handler": "harvester"}`: the browser opens the page with `?fileIds=`. `GET
+`{"redirect_handler": "harvester"}`: the browser opens the page, with `?fileIds=` or (as
+AppAPI does now) without; the page opens the library for either, and for a move not started
+that is younger than 15 minutes (its `age`), so a reload shows it too. `GET
 /api/library/moves`, `POST /api/library/moves/<id>/start` (`{folder}`). The admin's reset is
 the occ command `harvester:library-reset` (`nc.occ_commands.register`), whose handler `POST
 /occ/library-reset` is outside `/api`: no proxy route reaches it, and it refuses a request with a

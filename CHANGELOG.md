@@ -13,6 +13,9 @@
   rather than *Saved /folder/a.jpg* as if it were in Files. The size is the file's.
 - A file name from a value ending in a dot before the extension's (a title "We tried." in
   `{title}.{ext}`, yt-dlp's `{filename}`) has one dot, not `We tried..mp3`.
+- *Move to the private library* in Files opens the Library with the move it proposed although
+  AppAPI's redirect comes without `?fileIds=`, and so does a reload in the next 15 minutes, until
+  the move starts.
 
 ## 0.14.0 - 2026-11-04
 

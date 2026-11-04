@@ -91,6 +91,8 @@ class Move:  # pylint: disable=too-many-instance-attributes
             "problem": self.problem,
             "trash": self.trash,
             "items": [dataclasses.asdict(item) for item in self.items],
+            # Seconds since Files proposed it: the page opens the library for a fresh one.
+            "age": int(time.time() - self.created),
         }
 
 

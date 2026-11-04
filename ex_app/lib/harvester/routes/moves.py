@@ -4,8 +4,9 @@ person's library.
 
 The Files action "Move to the private library" (registered with AppAPI's files actions menu,
 version 2: one request with every node selected) posts the selected files here as the person;
-the answer sends the browser to Harvester's page (redirect_handler, with ?fileIds=), where the
-person picks the library folder and starts the move, and watches it go.
+the answer sends the browser to Harvester's page (redirect_handler, with ?fileIds= or without),
+which opens the library for a move proposed in the last minutes, where the person picks the
+library folder and starts the move, and watches it go.
 
 The reset is an occ command AppAPI runs (harvester:library-reset <user> --confirm): its route is
 outside /api, which AppAPI's proxy does not pass on (appinfo/info.xml), and it answers only a

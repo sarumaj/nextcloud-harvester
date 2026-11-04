@@ -403,3 +403,35 @@ def test_a_moves_states_are_readable_in_light_and_dark(page):
         for state in states:
             ratio = page.locator(f".harvester-move-{state}").evaluate(CONTRAST)
             assert ratio >= 4.5, f"{state} in {theme}: {ratio:.2f}"
+
+
+@needs_chromium
+def test_a_fresh_move_from_files_opens_the_library_without_file_ids_and_after_a_reload(page):
+    move = {
+        "id": "m1",
+        "selected": [{"fileId": 5, "name": "Tax", "directory": "/Docs", "dir": True}],
+        "folder": "/From Files",
+        "started": 0,
+        "ended": 0,
+        "problem": "",
+        "trash": "",
+        "items": [],
+        "age": 2,
+    }
+    answers = {
+        "GET /library/state": LIBRARY | {"unlocked": True},
+        "GET /library/moves": [move],
+        "GET /library": {"folder": "/", "entries": [], "labels": []},
+    }
+    answering(page, answers)
+    for _ in range(2):  # AppAPI's redirect without ?fileIds=, then a reload
+        page.goto(PAGE)
+        page.wait_for_selector("text=Move 1 item from Files")
+    move["age"] = 3600
+    page.goto(PAGE)
+    page.wait_for_selector("table.harvester-jobs")
+    assert not page.locator(".harvester-moves").count(), "an old proposal leaves the jobs page alone"
+    move["age"] = 2
+    page.goto(PAGE + "?fetch=https%3A%2F%2Fsite.example%2Fa")
+    page.wait_for_selector("text=https://site.example/a")
+    assert not page.locator(".harvester-moves").count(), "the bookmarklet's address first"

@@ -4231,16 +4231,21 @@
 		if (placeholder) placeholder.replaceWith(root)
 		else (document.querySelector('#content') || document.body).append(root)
 		root.replaceChildren(el('p', { class: 'harvester-loading', role: 'status' }, el('span', { class: 'icon-loading-small', 'aria-hidden': 'true' }), t('Loading…')))
+		let moves = []
 		try {
-			;[sources, presets] = await Promise.all([api('GET', '/sources'), api('GET', '/presets')])
+			;[sources, presets, moves] = await Promise.all([api('GET', '/sources'), api('GET', '/presets'),
+				api('GET', '/library/moves').catch(() => [])])
 		} catch (e) {
 			// Without the sources no form can be drawn: say why instead of an empty page.
 			root.replaceChildren(el('p', { class: 'harvester-error', role: 'alert', text: `Harvester: ${e.message}` }))
 			return
 		}
-		// Opened by Files' action Move to the private library (?fileIds=): the library, with the
-		// move it proposed; the page's own address loses it.
-		if (new URLSearchParams(location.search).has('fileIds')) {
+		// Opened by Files' action Move to the private library: the library, with the move it
+		// proposed. AppAPI's redirect may come with ?fileIds= (the page's own address loses it) or
+		// without, so a move proposed in the last 15 minutes and not started opens it too (a
+		// reload as well), unless the bookmarklet sent an address.
+		const proposed = Array.isArray(moves) && moves.some((move) => !move.started && move.age < 900) && !new URLSearchParams(location.search).has('fetch')
+		if (proposed || new URLSearchParams(location.search).has('fileIds')) {
 			const rest = new URLSearchParams(location.search)
 			rest.delete('fileIds')
 			history.replaceState(history.state, '', `${location.pathname}${rest.toString() ? `?${rest}` : ''}${location.hash}`)
