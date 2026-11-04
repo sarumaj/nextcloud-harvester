@@ -135,7 +135,7 @@ def test_one_sign_in_at_a_time_and_a_stopped_one_ends_rclone(at_sign_in):
         assert authorization.process is not None and authorization.process.returncode is not None
         assert wizards.authorizing is None
         wizards.authorization("anna", session).kill()
-        # The app's wizards are one object (main.WIZARDS): another's holds its own.
+        # The app's wizards are one object (routes.rclone.WIZARDS): another's holds its own.
         other.authorization("anna", ben).kill()
 
     asyncio.run(flow())

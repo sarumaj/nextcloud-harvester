@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# pylint: disable=too-many-lines  # the app's routes, one after the other
-"""Harvester: fetches files from websites into Nextcloud on a schedule, and tags them."""
+"""Harvester: fetches files from websites into Nextcloud on a schedule, and tags them.
+
+The app's routes for its jobs and the recorder's WebSocket; the other groups are in
+harvester/routes/ (Try the address, recipe files and templates, the rclone wizard)."""
 
 import asyncio
 import base64
@@ -11,16 +13,15 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlparse
-from typing import Annotated, Any
+from typing import Annotated
 
-from croniter import croniter
-from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from nc_py_api import AsyncNextcloudApp
-from nc_py_api.ex_app import AppAPIAuthMiddleware, anc_app, persistent_storage, run_app, set_handlers
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from nc_py_api.ex_app import AppAPIAuthMiddleware, persistent_storage, run_app, set_handlers
+from pydantic import BaseModel, Field
 
-from harvester import browser, dns, l10n, needs, ondemand, recipe_file, schedule, settings, tryout, watch
-from harvester.rclone_wizard import AUTHORIZE_ORIGIN, Authorization, WizardError, Wizards, remote_types
+from harvester import browser, dns, l10n, needs, ondemand, schedule, settings, watch
+from harvester.rclone_wizard import AUTHORIZE_ORIGIN, Authorization, WizardError
 from harvester.browser.recorder import Recorder
 from harvester.executor import (
     RUNNERS,
@@ -34,15 +35,15 @@ from harvester.executor import (
 from harvester.presets import PRESETS, make_job
 from harvester.recipe import leaked_passwords
 from harvester.runner import COMMON_OPTIONS
+from harvester.routes import rclone, recipes, trying
+from harvester.routes.common import NC, STATE, JobIn, checked, own_job, store, switched_on
+from harvester.routes.rclone import WIZARDS
 from harvester.sources.download import DOWNLOAD_OPTIONS
-from harvester.sources import SOURCES, Option, SourceError
+from harvester.sources import SOURCES
 from harvester.store import Job, Store
 
 LOGGER = logging.getLogger("harvester")
 
-STATE: dict = {}
-# The job form's rclone wizards (rclone_wizard.py), in memory: one ends with the app.
-WIZARDS = Wizards()
 # A recording ends after this many seconds without a message from the page.
 RECORDER_IDLE = 900
 
@@ -63,7 +64,8 @@ async def lifespan(app: FastAPI):
 
 APP = FastAPI(lifespan=lifespan)
 APP.add_middleware(AppAPIAuthMiddleware)
-NC = Annotated[AsyncNextcloudApp, Depends(anc_app)]
+for _group in (trying, recipes, rclone):
+    APP.include_router(_group.ROUTER)
 
 
 def allowed_origin(origin: str) -> bool:
@@ -75,134 +77,6 @@ def allowed_origin(origin: str) -> bool:
     allowed = {f"{urlparse(url).scheme}://{urlparse(url).netloc}" for url in [os.environ.get("NEXTCLOUD_URL", "")]}
     allowed |= {item.strip().rstrip("/") for item in os.environ.get("HARVESTER_ORIGINS", "").split(",") if item.strip()}
     return origin.rstrip("/") in allowed
-
-
-def store() -> Store:
-    """The database, opened at start."""
-    return STATE["store"]
-
-
-class JobIn(BaseModel):
-    """A job as the page sends it."""
-
-    name: str = Field(min_length=1, max_length=200)
-    source: str = Field(max_length=40)
-    target: str = Field(min_length=1, max_length=1000)
-    # Cron; "" for an on-demand job, which runs when its person sends it an address.
-    schedule: str = Field("0 6 * * *", max_length=100)
-    # Bounded: a recipe is a few kilobytes; nothing a person types needs more.
-    options: dict[Annotated[str, Field(max_length=60)], Annotated[str, Field(max_length=100_000)] | int] = Field(
-        {}, max_length=40
-    )
-    tags: list[Annotated[str, Field(max_length=200)]] = Field([], max_length=50)
-    enabled: bool = True
-    # The schedule's time zone (the browser's, as the page sends it); UTC when none is sent.
-    timezone: str = Field("UTC", max_length=64)
-    # An on-demand job deleted after a run that went through.
-    once: bool = False
-
-    @field_validator("source")
-    @classmethod
-    def known_source(cls, value: str) -> str:
-        """Only the sources the app has."""
-        if value not in SOURCES:
-            raise ValueError(f"unknown source {value}")
-        return value
-
-    @field_validator("schedule")
-    @classmethod
-    def valid_schedule(cls, value: str) -> str:
-        """A cron expression (minute hour day month weekday), or none (on demand)."""
-        if value.strip() and not croniter.is_valid(value):
-            raise ValueError("not a cron expression")
-        return value.strip()
-
-    @field_validator("timezone")
-    @classmethod
-    def known_zone(cls, value: str) -> str:
-        """An IANA time zone (Europe/Berlin)."""
-        return schedule.checked_zone(value)
-
-    @field_validator("target")
-    @classmethod
-    def absolute_target(cls, value: str) -> str:
-        """A folder of the user's, from the root of their files."""
-        return "/" + value.strip("/")
-
-    @field_validator("tags")
-    @classmethod
-    def clean_tags(cls, value: list[str]) -> list[str]:
-        """Without blanks or repeats."""
-        return list(dict.fromkeys(tag.strip() for tag in value if tag.strip()))
-
-
-async def own_job(job_id: int, nc: AsyncNextcloudApp) -> Job:
-    """The user's job, or 404 (also for another user's)."""
-    job = store().job(job_id)
-    if job is None or job.user != await nc.user:
-        raise HTTPException(404, "no such job")
-    return job
-
-
-def option_problem(option: Option, value: str | int) -> str:
-    """What is wrong with an option's value for its kind ("" if nothing): a flag is 0 or 1, a
-    number a whole number within its bounds, a choice one of its choices (several, comma-separated,
-    where it allows them)."""
-    text = str(value).strip()
-    if option.kind == "flag":
-        return "" if text in ("0", "1") else "must be on or off (1 or 0)"
-    if option.choices:
-        chosen = [part.strip() for part in text.split(",")] if option.multiple else [text]
-        # None chosen of several: the default.
-        if (option.multiple and not text) or all(part in option.choices for part in chosen):
-            return ""
-        return f"must be {'one or several' if option.multiple else 'one'} of {', '.join(option.choices)}"
-    return number_problem(option, text) if isinstance(option.default, int) else ""
-
-
-def number_problem(option: Option, text: str) -> str:
-    """What is wrong with a number option's value ("" if nothing): a whole number within its
-    bounds, its words saying which."""
-    lowest, highest = option.minimum, option.maximum
-    # A minimum of -1 is "no limit" (Files per run): 0 would fetch nothing, ever.
-    unlimited = lowest == -1
-    if unlimited:
-        lowest, bounds = 1, " of at least 1 (or -1: no limit)"
-    elif lowest is not None and highest is not None:
-        bounds = f" from {lowest} to {highest}"
-    else:
-        bounds = f" of at least {lowest}" if lowest is not None else ""
-    try:
-        number = int(text)
-    except ValueError:
-        return f"must be a number{bounds}"
-    if unlimited and number == -1:
-        return ""
-    if (lowest is not None and number < lowest) or (highest is not None and number > highest):
-        return f"must be a number{bounds}"
-    return ""
-
-
-def checked(body: JobIn) -> JobIn:
-    """The job, if each option has a value of its kind (else the refusal names the option as the
-    form does) and its source accepts them (a recipe that can run, for instance). An on-demand
-    job's source must have an address a fetch replaces; its own may be empty."""
-    if not body.schedule and not ondemand.offered(body.source):
-        raise HTTPException(422, f"{SOURCES[body.source].title} has no address to send: it runs on a schedule.")
-    if body.once and body.schedule:
-        raise HTTPException(422, "Only an on-demand job is deleted after its run.")
-    options = SOURCES[body.source].options | COMMON_OPTIONS | watch.options_of(body.source)
-    for name, option in options.items():
-        problem = option_problem(option, body.options[name]) if name in body.options else ""
-        if problem:
-            title = f"Through {browser.PROXY_NAME}" if name == "home" else option.title
-            raise HTTPException(422, f"{title} {problem}")
-    given = body.options if body.schedule else ondemand.checked_options(body.source, body.options)
-    try:
-        SOURCES[body.source](given, {}, None).close()
-    except SourceError as error:
-        raise HTTPException(422, str(error)) from error
-    return body
 
 
 @APP.get("/api/sources")
@@ -505,92 +379,6 @@ async def test_job(job_id: int, nc: NC) -> dict:
     return {}
 
 
-class TryIn(BaseModel):
-    """A try of a job's listing from its form: the job as the form holds it (as Save sends it),
-    the saved job it edits (its history, account and kept session), and the account's fields
-    as typed (empty: the saved job's stay)."""
-
-    job: JobIn
-    id: int | None = None
-    account: dict[Annotated[str, Field(max_length=40)], Annotated[str, Field(max_length=65_536)]] = Field(
-        {}, max_length=10
-    )
-
-
-@APP.post("/api/try")
-async def try_listing(body: TryIn, nc: NC) -> dict:
-    """Lists what the job as the form holds it would fetch, once, downloading nothing (tryout.py):
-    checked as Save checks it (422), not for website jobs (their recorder tests the recipe), one
-    try of the person's at a time (409). In a runner's place (Executor.trial) for at most
-    tryout.LIMIT seconds: what it found by then comes back, cut there. The account typed goes to
-    the source only, never into a log."""
-    if body.job.source == "site":
-        raise HTTPException(422, "A website job is tried with Test the recipe in its recorder.")
-    form = checked(body.job)
-    source_class = SOURCES[form.source]
-    # An on-demand job's own address may be empty: there is nothing to try then.
-    if source_class.address_option and not source_class.address_of(form.options):
-        raise HTTPException(422, "Type the address to try first.")
-    user = await nc.user
-    saved = await own_job(body.id, nc) if body.id is not None else None
-    # The saved job's history, account and session only while it is of the same source.
-    job_id = saved.id if saved is not None and saved.source == form.source else None
-    job = Job(id=job_id, user=user, **form.model_dump())
-    account = {name: value for name, value in body.account.items() if name in source_class.credentials and value}
-    if not STATE["executor"].enter_trial(user):
-        raise HTTPException(409, "A try of yours is still going on: wait for its end.")
-    known = (lambda key: store().seen(job_id, key)) if job_id is not None else None
-    return await tryout.attempt(STATE["executor"], job, account, known)
-
-
-class RecipeText(BaseModel):
-    """A recipe file as the page read it (recipe_file.py), checked by the server."""
-
-    text: str = Field(max_length=recipe_file.MAX_BYTES)
-
-
-@APP.post("/api/recipes/export")
-async def export_recipe(body: JobIn, _nc: NC) -> dict:
-    """The recipe file of the job as the form holds it (checked as Save checks it): its source,
-    options, tags and schedule; never its account, session or folder."""
-    return recipe_file.export(checked(body).model_dump())
-
-
-@APP.post("/api/recipes/import")
-async def import_recipe(body: RecipeText, _nc: NC) -> dict:
-    """The job a recipe file describes, for the form (nothing is saved): 422 with why when the
-    file is refused, by its schema or by the checks of a saved job."""
-    try:
-        job = recipe_file.parse(body.text)
-        checked(JobIn(**(job | {"target": "/"})))
-    except ValueError as error:
-        # pydantic's ValidationError is a ValueError: its problems by field.
-        text = recipe_file.problems(error) if isinstance(error, ValidationError) else str(error)
-        raise HTTPException(422, text) from error
-    return job
-
-
-@APP.get("/api/templates")
-async def list_templates(nc: NC) -> list[dict]:
-    """The user's own templates (recipe files saved from a job's form)."""
-    return store().templates(await nc.user)
-
-
-@APP.post("/api/templates")
-async def save_template(body: JobIn, nc: NC) -> dict:
-    """Keeps the job as the form holds it as one of the user's templates (its recipe file: no
-    account, session or folder)."""
-    return store().add_template(await nc.user, body.name, recipe_file.export(checked(body).model_dump()))
-
-
-@APP.delete("/api/templates/{template_id}")
-async def delete_template(template_id: int, nc: NC) -> dict:
-    """Removes one of the user's templates."""
-    if not store().delete_template(await nc.user, template_id):
-        raise HTTPException(404, "no such template")
-    return {}
-
-
 class FetchIn(BaseModel):
     """An address sent to an on-demand job."""
 
@@ -699,58 +487,6 @@ async def set_credentials(
             changed = True
     if changed:
         await nc.preferences_ex.delete(session_key(job))
-    return {}
-
-
-class WizardStart(BaseModel):
-    """The remote's type the wizard configures."""
-
-    type: str = Field(max_length=40)
-
-
-class WizardAnswer(BaseModel):
-    """The answer to the question the page shows (its state, as rclone gave it)."""
-
-    state: str = Field(max_length=400)
-    result: str = Field("", max_length=65_536)
-
-
-async def wizard_step(action, *arguments) -> Any:
-    """A wizard's step in a thread (rclone takes a moment), its refusal as the HTTP error it is."""
-    try:
-        return await asyncio.to_thread(action, *arguments)
-    except WizardError as error:
-        raise HTTPException(error.status, str(error)) from error
-
-
-@APP.get("/api/rclone/types")
-async def rclone_types(_nc: NC) -> list[dict]:
-    """The remote types the rclone wizard offers (those the remote source allows)."""
-    return await wizard_step(remote_types)
-
-
-@APP.post("/api/rclone/wizard")
-async def start_wizard(body: WizardStart, nc: NC) -> dict:
-    """Starts the user's rclone wizard for a remote of the type: its first question."""
-    return await wizard_step(WIZARDS.start, await nc.user, body.type)
-
-
-@APP.post("/api/rclone/wizard/{session}/answer")
-async def answer_wizard(session: str, body: WizardAnswer, nc: NC) -> dict:
-    """Answers the user's wizard's question: the next one, or the finished configuration."""
-    return await wizard_step(WIZARDS.answer, await nc.user, session, body.state, body.result)
-
-
-@APP.post("/api/rclone/wizard/{session}/back")
-async def back_wizard(session: str, nc: NC) -> dict:
-    """Takes the user's wizard one question back."""
-    return await wizard_step(WIZARDS.back, await nc.user, session)
-
-
-@APP.delete("/api/rclone/wizard/{session}")
-async def cancel_wizard(session: str, nc: NC) -> dict:
-    """Ends the user's wizard and removes its configuration."""
-    WIZARDS.cancel(await nc.user, session)
     return {}
 
 
@@ -941,15 +677,6 @@ async def admit(websocket: WebSocket, nc: AsyncNextcloudApp) -> tuple[bool, Job 
 def busy_browsers() -> l10n.Said:
     """The recorder's refusal when every browser is open: what holds them, without whose."""
     return l10n.said("No browser is free: {browsers}. Try again in a few minutes.", browsers=browsers_in_use())
-
-
-def switched_on(job: Job, name: str) -> bool:
-    """Whether the job's flag is on (a value that is no number, saved before the options were
-    checked, is off)."""
-    try:
-        return bool(int(job.options.get(name, 0) or 0))
-    except (TypeError, ValueError):
-        return False
 
 
 def start_of(job: Job) -> str:

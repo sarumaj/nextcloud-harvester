@@ -21,6 +21,7 @@ from fastapi import HTTPException
 
 import main
 from harvester import browser, rclone_wizard
+from harvester.routes import common
 from harvester.browser import datapicks
 from harvester.browser.recorder import Recorder
 from harvester.presets import PRESETS, make_job
@@ -90,7 +91,7 @@ def test_every_templates_job_passes_the_checks():
             continue  # a parameter the example does not fill: the template's own tests cover it
         for name, value in job["options"].items():
             option = (main.SOURCES[job["source"]].options | main.COMMON_OPTIONS).get(name)
-            assert option is None or not main.option_problem(option, value), (preset_id, name, value)
+            assert option is None or not common.option_problem(option, value), (preset_id, name, value)
 
 
 class FakeRecorder:

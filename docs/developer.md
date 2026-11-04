@@ -3,8 +3,10 @@
 ## Layout
 
 - `appinfo/info.xml`: the app's description for AppAPI (its image, its routes).
-- `ex_app/lib/main.py`: the app (FastAPI): its API, the recorder's WebSocket, the page's
-  registration.
+- `ex_app/lib/main.py`: the app (FastAPI): the jobs' API, the recorder's WebSocket, the page's
+  registration; `ex_app/lib/harvester/routes/` the other groups of routes, each a FastAPI
+  `APIRouter` that `main.py` includes (Try the address, recipe files and templates, the rclone
+  wizard), and what they share (`common.py`: the database, the person's client, the job's checks).
 - `ex_app/lib/harvester/`: the jobs' store (`store.py`, SQLite), the executor and its runners
   (`executor.py`, `runner.py`), the sources (`sources/`), recipes and their patterns, the
   browser, the recorder and the guard (`browser/`), the templates (`presets/`), the admin's DNS

@@ -23,6 +23,7 @@ from test_runner import FakeNextcloud
 
 import main
 from harvester import tryout
+from harvester.routes import trying
 from harvester.executor import Control, Executor, credential_key
 from harvester.sources import SOURCES, Item, Source
 from harvester.sources import download
@@ -125,7 +126,7 @@ def form(source: str = "gallery", **changes) -> dict:
 
 
 def tried(nc, body: dict, job_id: int | None = None, account: dict | None = None) -> dict:
-    return asyncio.run(main.try_listing(main.TryIn(job=main.JobIn(**body), id=job_id, account=account or {}), nc))
+    return asyncio.run(trying.try_listing(trying.TryIn(job=main.JobIn(**body), id=job_id, account=account or {}), nc))
 
 
 def refused(nc, body: dict, status: int = 422, **kwargs) -> str:

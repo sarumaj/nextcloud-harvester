@@ -55,6 +55,10 @@
   (*1 attachment, 2 links*) or why nothing (*nothing to fetch: no attachment of the names, types
   and sizes asked for, no link the patterns take*): up to 50 a run, the rest counted.
 
+- The app's routes in groups: Try the address, recipe files and templates and the rclone wizard
+  in `harvester/routes/` (FastAPI's `APIRouter`), the jobs and the recorder in `main.py`; the API
+  is the same.
+
 ### Fixed
 
 - A long run (a first one of hundreds of files) no longer pushes its own start out of the

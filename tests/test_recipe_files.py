@@ -17,6 +17,7 @@ from test_runner import FakeNextcloud
 
 import main
 from harvester import recipe_file
+from harvester.routes import recipes
 from harvester.store import Store
 
 SIGNED_IN = RECIPE | {
@@ -49,12 +50,12 @@ def nextcloud(user: str = "anna") -> FakeNextcloud:
 
 
 def exported(**changes) -> dict:
-    return asyncio.run(main.export_recipe(form(**changes), nextcloud()))
+    return asyncio.run(recipes.export_recipe(form(**changes), nextcloud()))
 
 
 def imported(file: dict | str) -> dict:
     text = file if isinstance(file, str) else json.dumps(file)
-    return asyncio.run(main.import_recipe(main.RecipeText(text=text), nextcloud()))
+    return asyncio.run(recipes.import_recipe(recipes.RecipeText(text=text), nextcloud()))
 
 
 def refusal(file: dict | str) -> str:
@@ -146,20 +147,20 @@ def test_a_file_that_is_no_recipe_is_refused():
     large = json.dumps(exported() | {"name": "é" * (recipe_file.MAX_BYTES // 2)}, ensure_ascii=False)
     assert len(large) < recipe_file.MAX_BYTES and "larger than a recipe" in refusal(large)
     with pytest.raises(ValueError):
-        main.RecipeText(text="x" * (recipe_file.MAX_BYTES + 1))
+        recipes.RecipeText(text="x" * (recipe_file.MAX_BYTES + 1))
 
 
 def test_own_templates_are_each_persons_and_have_no_folder(tmp_path, monkeypatch):
     monkeypatch.setitem(main.STATE, "store", Store(str(tmp_path / "db")))
-    saved = asyncio.run(main.save_template(form(), nextcloud()))
+    saved = asyncio.run(recipes.save_template(form(), nextcloud()))
     assert saved["name"] == "Mag" and "target" not in saved["file"] and saved["file"] == exported()
-    assert asyncio.run(main.list_templates(nextcloud("ben"))) == [], "another person's are not listed"
-    [listed] = asyncio.run(main.list_templates(nextcloud()))
+    assert asyncio.run(recipes.list_templates(nextcloud("ben"))) == [], "another person's are not listed"
+    [listed] = asyncio.run(recipes.list_templates(nextcloud()))
     assert imported(listed["file"])["options"]["path"] == "{year}/{text}"
     with pytest.raises(HTTPException):
-        asyncio.run(main.delete_template(listed["id"], nextcloud("ben")))
-    asyncio.run(main.delete_template(listed["id"], nextcloud()))
-    assert asyncio.run(main.list_templates(nextcloud())) == []
+        asyncio.run(recipes.delete_template(listed["id"], nextcloud("ben")))
+    asyncio.run(recipes.delete_template(listed["id"], nextcloud()))
+    assert asyncio.run(recipes.list_templates(nextcloud())) == []
 
 
 # The page.

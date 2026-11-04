@@ -8,7 +8,9 @@ on a schedule, and tag them. A website is described by a recipe, recorded in the
 ## Layout
 
 - `appinfo/info.xml`: the app for AppAPI (version, image, routes).
-- `ex_app/lib/main.py`: the app (FastAPI, nc_py_api): its API and the recorder's WebSocket.
+- `ex_app/lib/main.py`: the app (FastAPI, nc_py_api): the jobs' API and the recorder's WebSocket;
+  `ex_app/lib/harvester/routes/`: the other groups of routes (FastAPI's `APIRouter`), with what
+  they share (`common.py`).
 - `ex_app/lib/harvester/`: the store (SQLite), the executor and runners, `sources/`, the recipes
   and patterns, `browser/` (the recorder, the guard), `presets/` (the templates).
 - `ex_app/js/harvester-main.js`: the page in Nextcloud (plain JavaScript, no build).
