@@ -19,6 +19,9 @@
 
 ### Fixed
 
+- The run's reasons *the start page has none of the recipe's links* and *… asks for a person*,
+  and the log's line of a page that loads none of the types to capture, are translated (German,
+  Polish), as their neighbours were.
 - A recorded click that closes its own window (a sign-in popup's **Allow**) no longer fails its
   step now and then: the window may close before the browser reports the click as done.
 

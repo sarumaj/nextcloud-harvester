@@ -135,3 +135,32 @@ def test_the_recorders_warnings_and_refusal_are_templates(monkeypatch):
     refusal = main.busy_browsers()
     assert refusal == "No browser is free: 0 of 1 in use (0 by jobs, 0 by recordings). Try again in a few minutes."
     assert refusal.template["params"]["browsers"]["text"].startswith("{used} of {limit} in use")
+
+
+def test_a_failed_runs_reason_keeps_its_template(tmp_path):
+    from harvester.sources import ChallengeError  # pylint: disable=import-outside-toplevel
+    from harvester.sources.walk import StartEmpty  # pylint: disable=import-outside-toplevel
+
+    store = Store(str(tmp_path / "h.db"))
+    executor = Executor(store, runners=1)
+    executor.notify = lambda *args, **kwargs: None  # type: ignore[method-assign]
+    job = store.save(Job(user="anna", name="S", source="site", target="/x", schedule="0 6 * * *"))
+    empty = StartEmpty(said("the start page has none of the recipe's links: signed out, or the site changed?"))
+    executor._failed(job, None, empty, False)  # type: ignore[arg-type]
+    failed = store.job(job.id or 0)
+    assert (
+        failed
+        and failed.last_status == "failed"
+        and failed.last_message_l10n
+        == {"text": "the start page has none of the recipe's links: signed out, or the site changed?"}
+    ), "translated on the page, not English in every language"
+    assert store.log_lines("anna")[-1]["message_l10n"] == failed.last_message_l10n
+    executor._failed(job, None, ChallengeError("https://x.example/", "reCAPTCHA"), False)  # type: ignore[arg-type]
+    asked = store.job(job.id or 0)
+    assert asked and asked.last_message == "https://x.example/ asks for a person (reCAPTCHA): continue in the browser"
+    assert asked.last_message_l10n and asked.last_message_l10n["params"] == {
+        "url": "https://x.example/",
+        "kind": "reCAPTCHA",
+    }
+    executor._failed(job, None, RuntimeError(), False)  # type: ignore[arg-type]
+    assert (store.job(job.id or 0) or job).last_message == "RuntimeError", "plain errors as before"

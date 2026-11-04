@@ -1099,6 +1099,7 @@
             "w dniach {days} w miesiącach: {months}, o {times}",
             "w dniach {days} w miesiącach: {months}, o {times}"
         ],
+        "{url} asks for a person ({kind}): continue in the browser": "{url} pyta, czy jesteś człowiekiem ({kind}): kontynuuj w przeglądarce",
         "_going through %n choice: {choices}_::_going through %n choices: {choices}_": [
             "przechodzi przez %n wybór: {choices}",
             "przechodzi przez %n wybory: {choices}",
@@ -1111,6 +1112,8 @@
         "“{choice}”: the listing has none of the recipe's links": "„{choice}”: lista nie ma żadnego z linków przepisu",
         "step {number} ({label}): pausing {seconds} s before it": "krok {number} ({label}): pauza {seconds} s przed nim",
         "step {number} ({label}) failed, trying again in {seconds} s (attempt {attempt} of {of}): {why}": "krok {number} ({label}) nie powiódł się, ponowna próba za {seconds} s (próba {attempt} z {of}): {why}",
+        "{url}: none of the files it loads is of the types to capture": "{url}: żaden z plików, które wczytuje, nie jest z typów do przechwycenia",
+        "the start page has none of the recipe's links: signed out, or the site changed?": "strona startowa nie ma żadnego z linków przepisu: wylogowano czy strona się zmieniła?",
         "the listing (page {number}, {address}) gave nothing: {why}": "lista (strona {number}, {address}) nic nie dała: {why}",
         "a level {level} page (page {number}, {address}) gave nothing: {why}": "strona poziomu {level} (strona {number}, {address}) nic nie dała: {why}",
         "the next page {address} was read already (a loop): its listing ends": "następna strona {address} była już czytana (pętla): jej lista się tu kończy",

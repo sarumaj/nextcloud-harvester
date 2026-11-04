@@ -1024,6 +1024,7 @@ OC.L10N.register(
             "am Tag {days} im {months} um {times}",
             "an den Tagen {days} im {months} um {times}"
         ],
+        "{url} asks for a person ({kind}): continue in the browser": "{url} fragt nach einem Menschen ({kind}): im Browser fortsetzen",
         "_going through %n choice: {choices}_::_going through %n choices: {choices}_": [
             "geht %n Auswahl durch: {choices}",
             "geht %n Auswahlen durch: {choices}"
@@ -1034,6 +1035,8 @@ OC.L10N.register(
         "“{choice}”: the listing has none of the recipe's links": "„{choice}“: Die Übersicht hat keinen der Links des Rezepts",
         "step {number} ({label}): pausing {seconds} s before it": "Schritt {number} ({label}): {seconds} s Pause davor",
         "step {number} ({label}) failed, trying again in {seconds} s (attempt {attempt} of {of}): {why}": "Schritt {number} ({label}) fehlgeschlagen, neuer Versuch in {seconds} s (Versuch {attempt} von {of}): {why}",
+        "{url}: none of the files it loads is of the types to capture": "{url}: keine der Dateien, die sie lädt, ist von den zu erfassenden Typen",
+        "the start page has none of the recipe's links: signed out, or the site changed?": "Die Startseite hat keinen der Links des Rezepts: abgemeldet, oder hat sich die Website geändert?",
         "the listing (page {number}, {address}) gave nothing: {why}": "die Übersicht (Seite {number}, {address}) lieferte nichts: {why}",
         "a level {level} page (page {number}, {address}) gave nothing: {why}": "eine Seite der Ebene {level} (Seite {number}, {address}) lieferte nichts: {why}",
         "the next page {address} was read already (a loop): its listing ends": "die nächste Seite {address} wurde schon gelesen (eine Schleife): Die Übersicht endet hier",

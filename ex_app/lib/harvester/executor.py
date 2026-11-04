@@ -22,7 +22,7 @@ from nc_py_api import AsyncNextcloudApp
 
 from . import browser, dns, needs, ondemand, runner, settings, versions
 from .deleted import Deleted
-from .l10n import Said, said, said_n
+from .l10n import Said, error_text, said, said_n
 from .schedule import zone
 from .watch import Watch, test_due
 from .nextcloud import NextcloudLibrary
@@ -720,9 +720,7 @@ class Executor:
                         source.close()
             self._tested(job, result, watch, source, nc)
         except Exception as error:  # pylint: disable=broad-exception-caught
-            self.store.log(
-                job_id, "error", said("The recipe's test failed: {error}", error=str(error) or type(error).__name__)
-            )
+            self.store.log(job_id, "error", said("The recipe's test failed: {error}", error=error_text(error)))
         finally:
             watch_stop(None)
             with self._lock:
@@ -839,7 +837,7 @@ class Executor:
         job_id = job.id or 0
         if not self.store.job(job_id):
             return
-        message = str(error) or type(error).__name__
+        message = error_text(error)
         line = self.store.log(job_id, "error", message)
         if shot:
             self.store.keep_shot(job_id, line, shot)

@@ -77,6 +77,14 @@ def listed(items: list, kind: str = "and") -> Said:
     return Said(english, {"list": [_value(item) for item in items], "kind": kind})
 
 
+def error_text(error: BaseException) -> str:
+    """Why something failed, as its exception says it: the said() it was raised with (which the
+    page translates), else its English text, else the exception's name."""
+    if error.args and isinstance(error.args[0], Said) and len(error.args) == 1:
+        return error.args[0]
+    return str(error) or type(error).__name__
+
+
 def template_of(text: object) -> dict | None:
     """The text's template, if it has one (a plain string has none: the page shows it as it is)."""
     return text.template if isinstance(text, Said) else None

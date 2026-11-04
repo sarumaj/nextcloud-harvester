@@ -15,6 +15,7 @@ import httpx
 import regex
 
 from .. import cookies as cookie_jar
+from ..l10n import said
 
 # The beginning of the keys a job records that are no items: a complete pass, a source's own marks
 # (forgotten when the job's listing changes) and refused files (forgotten when its types or sizes
@@ -186,7 +187,7 @@ class ChallengeError(SourceError):
     user to answer it in the recorder's browser, whose session the next run then uses."""
 
     def __init__(self, url: str, kind: str):
-        super().__init__(f"{url} asks for a person ({kind}): continue in the browser")
+        super().__init__(said("{url} asks for a person ({kind}): continue in the browser", url=url, kind=kind))
         self.url = url
         self.kind = kind
 

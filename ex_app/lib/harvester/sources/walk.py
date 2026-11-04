@@ -103,7 +103,7 @@ class Walk:  # pylint: disable=too-many-instance-attributes,too-many-public-meth
             return
         found, title, url = self.driver.capture(entry.trigger or entry.url, self.site.settings, self.recipe["links"])
         if not found:
-            self.site.report("info", f"{url}: none of the files it loads is of the types to capture")
+            self.site.report("info", said("{url}: none of the files it loads is of the types to capture", url=url))
             return
         made = [keep.captured_item(entry, file, title, url, str(self.site.settings["path"])) for file in found]
         for item in made:
@@ -208,7 +208,7 @@ class Walk:  # pylint: disable=too-many-instance-attributes,too-many-public-meth
         if found:
             raise ChallengeError(*found)
         if level == 0 and number == 1:
-            raise StartEmpty("the start page has none of the recipe's links: signed out, or the site changed?")
+            raise StartEmpty(said("the start page has none of the recipe's links: signed out, or the site changed?"))
         why = "" if json else self.driver.trouble(page)
         if why:
             self.site.gaps += 1
