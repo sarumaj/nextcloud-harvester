@@ -64,6 +64,10 @@ class FakePage:
         self.done: list[tuple] = []
         self.failing = failing
 
+    def is_closed(self) -> bool:
+        """Open, as a page whose click failed by itself."""
+        return False
+
     def click(self, selector: str, **options) -> None:
         if selector in self.failing:
             raise PlaywrightError("Page.click: Timeout 5000ms exceeded.\nCall log: ...")
