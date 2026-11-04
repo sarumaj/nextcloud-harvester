@@ -25,8 +25,8 @@ the app's browser or taken from a template, not by code.
   encrypted on the server that no other Nextcloud app sees (thumbnails, a viewer, uploads, a
   password and a recovery key; files and folders moved there from Files), or into a
   **Cryptomator vault**: its inbox, which the vault app empties into the vault, or the vault
-  itself, encrypted on the server;
-  tagged with Nextcloud's tags, Harvester's own labels, or not at all.
+  itself, encrypted on the server; or photos and videos into your **Immich** account, into an
+  album; tagged with Nextcloud's or Immich's tags, Harvester's own labels, or not at all.
 - **Versions and duplicates:** a file whose content the job saved already from another address
   is not saved again; a known file that changed (asked cheaply with `ETag` and `Last-Modified`) is
   saved over its own, and Nextcloud keeps the one before as a version.

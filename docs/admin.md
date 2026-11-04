@@ -41,7 +41,9 @@ JSON names a folder the Nextcloud server can read, `"translations_folder": "/pat
   numbers of jobs and browsers at once (1 to 8 each), the proxy, and the **Browser network
   guard** (on by default; see *Safety*), the limits of the private library (**Private library
   per person (GB)**, 10 by default, and **Private libraries in all (GB)**, none by default; 0:
-  no limit; `HARVESTER_LIBRARY_LIMIT`, `HARVESTER_LIBRARY_TOTAL`), and in a form of its own the
+  no limit; `HARVESTER_LIBRARY_LIMIT`, `HARVESTER_LIBRARY_TOTAL`), the [Immich
+  server](#immich) people save to (`HARVESTER_IMMICH_URL`, `HARVESTER_IMMICH_HTTP`), and in a
+  form of its own the
   [DNS servers](#dns-servers); the environment's values (`HARVESTER_RUNNERS`,
   `HARVESTER_BROWSERS`, `HARVESTER_PROXY`, `HARVESTER_PROXY_NAME`, `HARVESTER_GUARD`: off with
   `0`, `false` or `off`) are the defaults. The app reads them each minute, so a change needs no
@@ -68,6 +70,30 @@ JSON names a folder the Nextcloud server can read, `"translations_folder": "/pat
   closing the page, the time limits, or (rclone's sign-in) the wizard's end. Its screen comes as
   every second frame of Chromium's (some third less CPU than every frame), and not at all while
   the page is hidden (another tab, a minimized window): again at once when it shows.
+
+## Immich
+
+*Save to: Immich* uploads a job's photos and videos into the person's own Immich account
+(`immich.py`; Immich's API of version 3, checked against 3.3.5). Each person enters an API key
+of theirs (kept as a sensitive preference of theirs, encrypted by Nextcloud, never logged nor
+sent back to the page) and, unless the admin presets one, their server's address:
+
+- **Immich server** (`HARVESTER_IMMICH_URL`, e.g. `https://photos.example.org`): the server
+  people's jobs save to unless they type another; a homelab presets its own, and people then
+  enter only their key. Harvester reaches this server directly, as it reaches Nextcloud, so it
+  may be on the private network (an address the External Apps' network can reach). A server a
+  person types is reached as the web is: only on a public address (the guard's check, on every
+  request), never one of the private network or the cloud's metadata service. No redirect is
+  followed, so the key goes to the server named alone.
+- **Immich over plain http** (`HARVESTER_IMMICH_HTTP`, off by default): off, the servers people
+  type must be `https://` (the key goes with every request); the preset server may be `http://`
+  all the same (a private address the admin trusts).
+
+Uploads are streamed from the run's temporary file (never whole in memory), after Immich was
+asked whether it has the content (`POST /api/assets/bulk-upload-check`, its SHA-1). The key needs
+the permissions `user.read`, `asset.upload`, `asset.read`, `album.read`, `album.create`,
+`albumAsset.create`, `tag.read`, `tag.create` and `tag.asset`. Harvester records, per job, which
+asset each of its files is (`immich_assets` in its database), nothing of their content.
 
 ## Proxy
 

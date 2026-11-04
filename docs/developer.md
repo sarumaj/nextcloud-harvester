@@ -63,15 +63,25 @@ A job's *Save to* (`destinations.py`: its options, rules and checks) picks a `De
 Nextcloud's tags or it keeps Harvester's labels itself, and the person's secrets it keeps for a job
 (deleted with the job or when its place changes). `files` is `nextcloud.py`, `library` `library.py`
 (with its routes, `routes/library.py`), `inbox` `inbox.py`, `vault` `vaultlib.py` over
-`davstorage.py` (vault.py's storage on WebDAV; its keys set by `routes/vault.py`). The library's
+`davstorage.py` (vault.py's storage on WebDAV; its keys set by `routes/vault.py`), `immich`
+`immich.py` (Immich's API; the person's account set by `routes/immich.py`: `GET /api/immich`
+gives the address they typed, the admin's, whether a key is kept and whether http is allowed,
+never the key; `PUT` tests and keeps `{url, key}`, answering the account's email and name or 422
+with why; `POST /api/immich/test`; `DELETE` forgets it). The library's
 routes are in [The private library's routes](#the-private-librarys-routes). A job's `options`
-carry its place (`save_to`, `vault`, `vault_target`, `vault_verify`) and `tag_as`; a job without
+carry its place (`save_to`, `vault`, `vault_target`, `vault_verify`, `immich_album`) and
+`tag_as` (`nextcloud`, `immich`, `labels`, `none`); a job without
 them saves into the person's files with Nextcloud's tags, so API clients that send a job's
 options back as they got them (Talk AI) keep its place. Another destination is one more
 `Destination` with its `Library`, its form's options in `destinations.OPTIONS` (group `save`)
-and what it switches off in `destinations.RULES`.
+and what it switches off in `destinations.RULES`. Two calls of the runner serve a server that
+files by more than a path: `Library.item(values)` gives the values of the item whose files come
+next (Immich's date and album), and `Library.found(file_id)` says that `put` found the content
+there already (counted as already there); `put` may raise `Refused` for a file the place keeps
+none of (skipped for good; an unpacked ZIP's member left out).
 Its tests run against fakes of Nextcloud whose files are a folder (`tests/test_destinations.py`),
-and the vault's files are read by the sister app's code where it is there (`tests/vault_js.mjs`).
+the vault's files are read by the sister app's code where it is there (`tests/vault_js.mjs`), and
+Immich's are against a fake of its API on httpx's `MockTransport` (`tests/test_immich.py`).
 
 ## The private library's format
 
