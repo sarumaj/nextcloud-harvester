@@ -132,8 +132,10 @@ def test_a_new_run_clears_the_last_message_and_logs_its_end(tmp_path, monkeypatc
     assert started == [None], "the old error is gone as soon as the run starts"
     messages = [(line["level"], line["message"]) for line in store.log_lines("u")]
     assert messages[0] == ("info", "Looking for new files")
-    assert messages[-1] == ("error", "the listing broke")
-    assert (store.job(saved.id or 0) or saved).last_message == "the listing broke"
+    failed = "1 downloaded; then the listing failed: the listing broke"
+    assert messages[-1] == ("error", failed), "what the run did is kept in its reason"
+    assert (store.job(saved.id or 0) or saved).last_message == failed
+    assert (store.job(saved.id or 0) or saved).last_status == "failed"
 
 
 def test_the_runs_upload_in_chunks_nextcloud_takes_on_s3(monkeypatch):

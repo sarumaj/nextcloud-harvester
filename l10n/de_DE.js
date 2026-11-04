@@ -937,6 +937,7 @@ OC.L10N.register(
         ],
         "Looking for new files at {address}": "Suche nach neuen Dateien auf {address}",
         "Looking for new files": "Suche nach neuen Dateien",
+        "{outcome}; then the listing failed: {error}": "{outcome}; dann schlug die Übersicht fehl: {error}",
         "_%n listed file is known already: not downloaded again_::_%n listed files are known already: not downloaded again_": [
             "%n gelistete Datei ist schon bekannt: nicht erneut heruntergeladen",
             "%n gelistete Dateien sind schon bekannt: nicht erneut heruntergeladen"

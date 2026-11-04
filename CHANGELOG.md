@@ -40,6 +40,9 @@
 
 ### Fixed
 
+- A run whose listing breaks after files came (a next page that fails, a feed cut short) still
+  fails, but its reason keeps what it did: *3 downloaded; then the listing failed: …* (only the
+  listing's error before).
 - A linked file whose site cannot be reached (a name that does not resolve, a failed connection,
   an error 5xx, a redirect to a private address) no longer fails a mail job's run when nothing
   else came: it is skipped this time with a line in the log (*skipped this time* in the run's

@@ -909,7 +909,9 @@ recorder that makes them, and what a run does. Installing and the admin's settin
   page linking to itself, or back to the first) ends its listing, with a line in the log. A link
   shown on another listing's page whose values disagree with the levels above it (each year's
   page showing the newest issue) is taken on its own listing, with its own values. After files
-  came, ten failures in a row end the run; the rest comes next run.
+  came, ten failures in a row end the run; the rest comes next run. A listing that breaks after
+  files came fails the run all the same, its reason saying what it did first (*3 downloaded; then
+  the listing failed: …*).
 - **Pause and stop:** while a job runs, **Run now** becomes **Pause** (then **Resume**) and
   **Stop**. Both act before the next file: a paused run waits (its time does not count against
   the two hours; after six hours unresumed it stops), a stopped one ends and keeps what it saved,

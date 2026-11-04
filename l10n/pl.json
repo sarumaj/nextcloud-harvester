@@ -980,6 +980,7 @@
         ],
         "Looking for new files at {address}": "Szukanie nowych plików na {address}",
         "Looking for new files": "Szukanie nowych plików",
+        "{outcome}; then the listing failed: {error}": "{outcome}; potem lista zawiodła: {error}",
         "_%n listed file is known already: not downloaded again_::_%n listed files are known already: not downloaded again_": [
             "%n wymieniony plik jest już znany: nie jest pobierany ponownie",
             "%n wymienione pliki są już znane: nie są pobierane ponownie",

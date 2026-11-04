@@ -714,6 +714,16 @@ def run(  # pylint: disable=too-many-arguments,too-many-locals,too-many-branches
         report("info", said("Stopped: the rest comes {later}", later=later))
         halted = True
         complete = False
+    except (AuthError, ChallengeError):
+        raise
+    except SourceError as error:
+        # The listing broke after files came: the run fails, and its reason keeps what it did.
+        if not (tally.downloaded or tally.adopted or tally.updated or tally.duplicates):
+            raise
+        tally.known = len(known - taken)
+        outcome = tally.sentence()
+        failed = said("{outcome}; then the listing failed: {error}", outcome=outcome, error=error_text(error))
+        raise SourceError(failed) from error
     tally.known = len(known - taken)
     if tally.known:
         report(
