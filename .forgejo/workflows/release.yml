@@ -20,11 +20,11 @@
 #   registry part of the image's name.
 # Without a token the image is built and checked, not pushed.
 #
-# Published on the Nextcloud app store when APPSTORE_TOKEN is set (set it once harvester is
-# registered there); without it the release alone.
+# Published on the Nextcloud app store when NC_APPSTORE_TOKEN is set (set it once harvester is
+# registered there) and the variable NC_APP_STORE is not false; otherwise the release alone.
 #
-# Secrets: APP_SIGNING_KEY, the private key of the app store certificate for harvester (PEM);
-# APPSTORE_TOKEN, the store account's API token; PACKAGES_TOKEN and GHCR_TOKEN as above. Variables: GHCR_USER, GHCR_OWNER.
+# Secrets: NC_APP_SIGNING_KEY, the private key of the app store certificate for harvester (PEM);
+# NC_APPSTORE_TOKEN, the store account's API token; PACKAGES_TOKEN and GHCR_TOKEN as above. Variables: GHCR_USER, GHCR_OWNER, NC_APP_STORE.
 #
 # Run by hand ("tag": an existing tag) to make the release of a tag pushed before this
 # workflow existed: fj actions dispatch release.yml main -I tag=v0.3.0.
@@ -93,11 +93,12 @@ jobs:
           archive: harvester-${{ env.VERSION }}.tar.gz
           tag: ${{ env.TAG }}
           token: ${{ secrets.GITHUB_TOKEN }}
-          signing-key: ${{ secrets.APP_SIGNING_KEY }}
+          signing-key: ${{ secrets.NC_APP_SIGNING_KEY }}
           attach-signature: "true"
-          # Published only when the app store's token is set (empty: the release alone).
-          app-store: ${{ secrets.APPSTORE_TOKEN != '' }}
-          app-store-token: ${{ secrets.APPSTORE_TOKEN }}
+          # Published only when the app store's token is set and the variable NC_APP_STORE is not
+          # false (a secret cannot be empty, so the variable turns a shared token off here).
+          app-store: ${{ vars.NC_APP_STORE != 'false' && secrets.NC_APPSTORE_TOKEN != '' }}
+          app-store-token: ${{ secrets.NC_APPSTORE_TOKEN }}
 
   image:
     needs: release
