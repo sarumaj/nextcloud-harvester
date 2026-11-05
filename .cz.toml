@@ -1,0 +1,7 @@
+# The release bot (release-bot on git.ciepiela.org) tags the releases due from the
+# Conventional Commits and CHANGELOG.md's "## Unreleased" section; cz works locally too.
+[tool.commitizen]
+name = "cz_conventional_commits"
+tag_format = "v$version"
+version_provider = "scm"
+version_files = ["appinfo/info.xml:<version>", "appinfo/info.xml:<image-tag>"]

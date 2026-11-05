@@ -288,8 +288,11 @@ server's `l10n/<language>.json`), filled the same way. German as Nextcloud's: *d
 
 ## Releases
 
-A tag `vX.Y.Z` (the version and the image tag in `appinfo/info.xml`) runs
-`.forgejo/workflows/release.yml`:
+The release bot (`release-bot` on git.ciepiela.org) tags a release weekly when one is due, from
+the Conventional Commits since the last tag and the `## Unreleased` entries of `CHANGELOG.md`: it
+writes the version and the image tag into `appinfo/info.xml` (`.cz.toml`) and the changelog's
+section, commits `chore(release): X.Y.Z` and tags it. A tag `vX.Y.Z` (the version and the image
+tag in `appinfo/info.xml`), the bot's or one pushed by hand, runs `.forgejo/workflows/release.yml`:
 
 - **Archive:** `harvester-X.Y.Z.tar.gz`, the source the image is built from, on the Forgejo
   release (signed with `NC_APP_SIGNING_KEY` when set), with the translations (`l10n/`) AppAPI

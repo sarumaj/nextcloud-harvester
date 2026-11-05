@@ -39,10 +39,12 @@ loopback; CI runs them all.
 
 ## Conventions
 
-- Commit messages: one line, no trailers. A change comes with its README or `docs/` text (the
-  README and the guides are updated with every change; `tests/test_readme.py` requires each
-  source and template in `docs/user.md` and lines of at most 100 characters) and an entry under
-  `## Unreleased` in `CHANGELOG.md` (Keep a Changelog: `### Added`, `### Changed`, `### Fixed`).
+- Commit messages: one line, no trailers, as Conventional Commits with the area as scope
+  (`feat(vault): …`, `fix(inbox): …`, `docs: …`, `chore: …`), which the release bot reads. A change
+  comes with its README or `docs/` text (the README and the guides are updated with every change;
+  `tests/test_readme.py` requires each source and template in `docs/user.md` and lines of at most
+  100 characters) and an entry under `## Unreleased` in `CHANGELOG.md` (Keep a Changelog:
+  `### Added`, `### Changed`, `### Fixed`).
 - Markdown: lines of at most 100 characters (tables excepted), tables aligned.
 - Python formatted by black (120 characters), pylint at 10; JavaScript indented with tabs
   (`.editorconfig`).
@@ -52,12 +54,17 @@ loopback; CI runs them all.
 
 ## Releasing
 
-1. Move the `## Unreleased` entries under `## X.Y.Z - YYYY-MM-DD` and set `<version>` and
-   `<image-tag>` in `appinfo/info.xml` to `X.Y.Z`.
-2. Commit as `release X.Y.Z`.
-3. Tag it, annotated and signed as the earlier tags: `git tag -s vX.Y.Z -m "Harvester X.Y.Z"`,
-   and push the tag. `.forgejo/workflows/release.yml` makes the release archive and builds and
-   pushes the image (`docs/developer.md#releases`).
+The release bot (`release-bot` on git.ciepiela.org, weekly) releases what is due, from the
+Conventional Commits since the last tag (`feat` a minor, `fix`, `perf`, `refactor` and `fix(deps)` a
+patch, `!` a major) and the `## Unreleased` entries (an `### Added` makes it at least a minor). It
+moves the entries under `## X.Y.Z - YYYY-MM-DD` (adding Renovate's updates as `### Dependencies`),
+sets `<version>` and `<image-tag>` in `appinfo/info.xml` (`.cz.toml`), commits
+`chore(release): X.Y.Z`, tags `vX.Y.Z` signed and pushes; `.forgejo/workflows/release.yml` then
+releases it.
+
+To release at once by hand: move the entries, set the version, commit `chore(release): X.Y.Z`, tag
+it annotated and signed as the earlier tags (`git tag -s vX.Y.Z -m "Harvester X.Y.Z"`) and push the
+tag.
 
 ## Screenshots
 
