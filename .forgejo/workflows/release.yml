@@ -26,9 +26,10 @@
 # Secrets: NC_APP_SIGNING_KEY, the private key of the app store certificate for harvester (PEM);
 # NC_APPSTORE_TOKEN, the store account's API token; PACKAGES_TOKEN and GHCR_TOKEN as above. Variables: GHCR_USER, GHCR_OWNER, NC_APPSTORE.
 #
-# Run by hand to make the release of a tag pushed before this workflow existed: pick the tag
-# as the run's ref, or name it in "tag" (fj actions dispatch release.yml main -I tag=v0.3.0).
-# Neither (a branch and no tag) fails at once: the branch is not a release tag.
+# Run by hand to retry a tag's release, or make one of a tag pushed before this workflow existed:
+# from main, with the tag in "tag" (fj actions dispatch release.yml main -I tag=v0.3.0). Picking
+# the tag as the run's ref works only for tags made since 2026-11-06: Forgejo reads the workflow
+# from that ref, where the field was required before. A branch and no tag fails at once.
 name: Release
 # A failed job mails whoever started the run. Renovate's bot has no mailbox: when its
 # branch fails, Renovate opens a pull request, which mails the repository's watchers.
