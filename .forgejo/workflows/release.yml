@@ -26,8 +26,9 @@
 # Secrets: NC_APP_SIGNING_KEY, the private key of the app store certificate for harvester (PEM);
 # NC_APPSTORE_TOKEN, the store account's API token; PACKAGES_TOKEN and GHCR_TOKEN as above. Variables: GHCR_USER, GHCR_OWNER, NC_APPSTORE.
 #
-# Run by hand ("tag": an existing tag) to make the release of a tag pushed before this
-# workflow existed: fj actions dispatch release.yml main -I tag=v0.3.0.
+# Run by hand to make the release of a tag pushed before this workflow existed: pick the tag
+# as the run's ref, or name it in "tag" (fj actions dispatch release.yml main -I tag=v0.3.0).
+# Neither (a branch and no tag) fails at once: the branch is not a release tag.
 name: Release
 # A failed job mails whoever started the run. Renovate's bot has no mailbox: when its
 # branch fails, Renovate opens a pull request, which mails the repository's watchers.
@@ -38,8 +39,8 @@ enable-email-notifications: true
   workflow_dispatch:
     inputs:
       tag:
-        description: The tag to release (vX.Y.Z)
-        required: true
+        description: The tag to release (vX.Y.Z); empty for the tag chosen above
+        required: false
 
 jobs:
   release:
