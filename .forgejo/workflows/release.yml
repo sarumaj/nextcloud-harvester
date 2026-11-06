@@ -41,6 +41,7 @@ enable-email-notifications: true
     inputs:
       tag:
         description: The tag to release (vX.Y.Z); empty for the tag chosen above
+        type: string
         required: false
 
 jobs:
