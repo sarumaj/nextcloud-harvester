@@ -15,7 +15,8 @@
 - `l10n/`: the translations (German `de` and formal `de_DE`, Polish `pl`), `.json` and `.js`
   alike; `scripts/l10n.py` collects the texts and writes the `.js` files (see
   [Translations](#translations)).
-- `tests/`: pytest, against fake sites and servers, without network.
+- `tests/`: pytest, against fake sites and servers, without network; `tests/server/check.sh`
+  the image's check on a real Nextcloud (see [On a real Nextcloud](#on-a-real-nextcloud)).
 - `scripts/rclone_backends.py`: the review of a new rclone's remotes (see
   [Sources](user.md#sources)).
 - `Dockerfile`, `start.sh`, `healthcheck.sh`: the image (frpc, rclone and dnsproxy pinned with
@@ -41,6 +42,30 @@ template has its entry in the user's guide ([Sources](user.md#sources),
 characters outside code and tables. CI also checks `appinfo/info.xml` against the app store's schema
 (without AppAPI's routes, which the schema does not know) and lints the Markdown
 (`npx --yes markdownlint-cli2 "*.md" "docs/**/*.md"`).
+
+### On a real Nextcloud
+
+CI's job `server` checks the image on a real Nextcloud with PostgreSQL, 32 and 35, with the
+shared action `nextcloud-app-server` of `dawid/ci-actions`: AppAPI registers the image on a
+deploy daemon without Docker (`manual_install`, the container started by the action, no HaRP),
+which enables it, disables it and enables it again, and `nextcloud.log` may hold no error of
+`harvester`. Then `tests/server/check.sh` tests what people get, where pytest has fakes of
+Nextcloud: the page in the top menu and its script, the API through AppAPI's proxy (and refused
+without a person), the admin settings' forms, the occ command `harvester:library-reset`, a
+website job against the fake site (`tests/fake_site.py`, in a container of its own at an address
+of `192.88.99.0/24`, which the guard counts as public) whose run saves its file into the admin's
+files over WebDAV, tagged, and the recorder: its Chromium starts behind the guard and opens the
+fake site. AppAPI's proxy does not carry WebSockets, so the check reaches the recorder's on the
+app's container with AppAPI's headers; HaRP, frpc and `healthcheck.sh` are not part of it. With
+Docker, the same as CI (the server at `http://localhost:8080`, user `admin`; `--keep` leaves it
+running):
+
+```bash
+curl -fsSLO https://git.ciepiela.org/dawid/ci-actions/raw/branch/main/nextcloud-app-server.py
+docker build -t harvester:ci .
+python3 nextcloud-app-server.py run --app-dir . --nextcloud 32 --exapp-image harvester:ci \
+    --check tests/server/check.sh
+```
 
 The image (`Dockerfile`, from Nextcloud's app-skeleton-python, with Chromium) is built and
 registered by the homelab's `nextcloud` role (`nextcloud_harvester`), as

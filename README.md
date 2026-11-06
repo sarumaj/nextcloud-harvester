@@ -132,8 +132,8 @@ python3 -m venv .venv && URLLIB3_NO_OVERRIDE=1 .venv/bin/pip install --no-binary
 npx --yes markdownlint-cli2 "*.md" "docs/**/*.md"
 ```
 
-More in the [developer's guide](docs/developer.md), also how a text is translated; the changes
-are in the [changelog](CHANGELOG.md).
+More in the [developer's guide](docs/developer.md), also how a text is translated and how CI
+checks the image on a real Nextcloud; the changes are in the [changelog](CHANGELOG.md).
 
 ## Reporting problems
 

@@ -1,6 +1,8 @@
 ---
 # The tests (no Nextcloud, no network; the browser's in Chromium against a fake site), formatting and lint of the app's Python, its
-# page's script and its shell scripts, info.xml against the app store's schema, and the Markdown.
+# page's script and its shell scripts, info.xml against the app store's schema, and the Markdown; and the image on a real
+# Nextcloud with AppAPI and PostgreSQL (job server): registered and enabled there, its page, settings and occ command, a
+# website job saving into the admin's files over WebDAV, and the recorder's browser (tests/server/check.sh).
 name: CI
 # A failed job mails whoever started the run. Renovate's bot has no mailbox: when its
 # branch fails, Renovate opens a pull request, which mails the repository's watchers.
@@ -65,7 +67,43 @@ jobs:
         run: node --check ex_app/js/harvester-main.js && node --check ex_app/lib/harvester/browser/recorder.js && node --check ex_app/lib/harvester/browser/consent.js
 
       - name: Check the shell scripts
-        run: shellcheck start.sh healthcheck.sh
+        run: shellcheck start.sh healthcheck.sh tests/server/check.sh
+
+  server:
+    # A whole Ubuntu with rootless Docker: the image built and registered with AppAPI on a real
+    # Nextcloud (the shared action, a manual-install deploy daemon without HaRP), where pytest
+    # has fakes of Nextcloud.
+    runs-on: ubuntu-latest
+    # The image's build takes some 3 minutes without a cache, a server's check about one.
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # The oldest Nextcloud info.xml supports and the newest released one (36 has no image yet).
+        nextcloud: ["32", "35"]
+    steps:
+      - name: Check out
+        run: |
+          git init -q . && git remote add origin "${{ github.server_url }}/${{ github.repository }}.git"
+          git fetch -q --depth 1 origin "${{ github.sha }}"
+          git checkout -q FETCH_HEAD
+
+      - name: Build the image
+        run: docker build -t harvester:ci .
+
+      - name: Check the app on Nextcloud ${{ matrix.nextcloud }}
+        uses: https://git.ciepiela.org/dawid/ci-actions/nextcloud-app-server@main
+        with:
+          app-id: harvester
+          app-dir: .
+          nextcloud: ${{ matrix.nextcloud }}
+          exapp-image: harvester:ci
+          check: tests/server/check.sh
+          # Docs, translations or the other tests alone need no server (the image is built all
+          # the same: the action decides).
+          paths: >-
+            ex_app/** appinfo/** Dockerfile start.sh healthcheck.sh requirements.txt
+            tests/server/** tests/fake_site.py .forgejo/workflows/ci.yml
 
   markdown:
     runs-on: docker

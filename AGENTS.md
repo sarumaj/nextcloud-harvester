@@ -14,7 +14,8 @@ on a schedule, and tag them. A website is described by a recipe, recorded in the
 - `ex_app/lib/harvester/`: the store (SQLite), the executor and runners, `sources/`, the recipes
   and patterns, `browser/` (the recorder, the guard), `presets/` (the templates).
 - `ex_app/js/harvester-main.js`: the page in Nextcloud (plain JavaScript, no build).
-- `tests/`: pytest against fake sites and servers, without network.
+- `tests/`: pytest against fake sites and servers, without network; `tests/server/check.sh`: the
+  image on a real Nextcloud (CI's job `server`).
 - `docs/user.md`, `docs/admin.md`, `docs/developer.md`: the guides the README links.
 - `Dockerfile`, `start.sh`, `healthcheck.sh`: the image (`start.sh` and `healthcheck.sh` from
   Nextcloud's app-skeleton-python).
@@ -28,9 +29,14 @@ Run what CI runs for what you changed, and look at each exit code:
 .venv/bin/black --check ex_app tests
 .venv/bin/pylint ex_app/lib tests
 node --check ex_app/js/harvester-main.js && node --check ex_app/lib/harvester/browser/recorder.js && node --check ex_app/lib/harvester/browser/consent.js
-shellcheck start.sh healthcheck.sh
+shellcheck start.sh healthcheck.sh tests/server/check.sh
 npx --yes markdownlint-cli2 "*.md" "docs/**/*.md"
 ```
+
+CI's job `server` builds the image and registers it with AppAPI on a real Nextcloud (32 and 35),
+then runs `tests/server/check.sh` (the page, the settings, a website job saving over WebDAV, the
+recorder's browser): for a change of the app, its image or that script, run it with Docker as
+`docs/developer.md` says (some two minutes per version).
 
 CI also checks `appinfo/info.xml` against `https://apps.nextcloud.com/schema/apps/info.xsd` with
 `xmllint --noout --schema`, without `<routes>` (AppAPI's, which the schema does not know). Tests

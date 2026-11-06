@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- CI checks the image on a real Nextcloud (32 and 35, job `server`): registered with AppAPI on a
+  deploy daemon without Docker (the shared action `nextcloud-app-server`), disabled and enabled
+  again, its page, settings and occ command there, a website job against the fake site saving
+  its file into the admin's files over WebDAV, tagged, and the recorder's browser opening it
+  (`tests/server/check.sh`).
+
 ## 0.14.2 - 2026-11-05
 
 ### Added
