@@ -107,7 +107,7 @@ jobs:
 
   markdown:
     runs-on: docker
-    container: docker.io/library/node:24-bookworm
+    container: docker.io/library/node:26-bookworm
     timeout-minutes: 10
     steps:
       - name: Check out
