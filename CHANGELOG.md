@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.15.0 - 2026-11-09
+
 ### Added
 
 - CI checks the image on a real Nextcloud (32 and 35, job `server`): registered with AppAPI on a
