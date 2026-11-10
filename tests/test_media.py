@@ -147,7 +147,7 @@ def test_errors_and_refused_pages():
         with pytest.raises(SourceError, match="may not be opened"):
             Media({"url": url}, {}, None)
     # A name that cannot be made: that entry fails alone, in the run, saying what lacks the value.
-    (item,) = media({CHANNEL: video(6, webpage_url=CHANNEL)}, path="{nothing}").items(lambda key: False)
+    (item,) = list(media({CHANNEL: video(6, webpage_url=CHANNEL)}, path="{nothing}").items(lambda key: False))
     assert "names nothing, which the entry's information does not give" in str(item.problem)
 
 

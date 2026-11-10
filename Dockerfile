@@ -3,7 +3,7 @@
 #############################
 # Stage 1: Builder
 #############################
-FROM python:3.12-slim-bookworm AS builder
+FROM python:3.15-slim-bookworm AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y curl && \
@@ -98,7 +98,7 @@ RUN set -ex; \
 #############################
 # Stage 2: Final Runtime Image
 #############################
-FROM python:3.12-slim-bookworm
+FROM python:3.15-slim-bookworm
 
 # Copy installed Python packages and FRP client from the builder.
 COPY --from=builder /usr/local/ /usr/local/

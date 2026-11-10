@@ -150,7 +150,7 @@ def test_a_release_without_a_date_names_what_is_missing():
         undated = release("v1", "", ["app.AppImage"])
         return httpx.Response(200, json=[undated])
 
-    (item,) = releases_source(handler, path="{year}/{filename}").items(lambda key: False)
+    (item,) = list(releases_source(handler, path="{year}/{filename}").items(lambda key: False))
     assert str(item.problem) == "{year}/{filename} names year, which this release does not give"
 
 
@@ -426,7 +426,7 @@ def test_an_entry_that_cannot_be_had_is_logged_and_a_large_one_refused():
     made = media({CHANNEL: flat, video(1)["webpage_url"]: video(1, filesize=5_000_000)}, max_size=4)
     log: list[str] = []
     made.report = lambda level, text: log.append(text)
-    (item,) = made.items(lambda key: False)
+    (item,) = list(made.items(lambda key: False))
     assert log == [
         "2 entries listed (Entries per run: 30)",
         "Skipped https://video.example/watch?v=9: yt-dlp: Unsupported URL: https://video.example/watch?v=9",
