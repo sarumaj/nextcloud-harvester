@@ -14,7 +14,7 @@ patchright==1.64.4
 pillow==13.0.0
 # The public suffixes (co.uk, github.io) the cookies panel never sets a cookie for: its bundled
 # list, offline.
-publicsuffixlist==1.1.2.20261107
+publicsuffixlist==1.1.2.20261109
 # The recorder's patterns, with a time limit (a pattern that backtracks without end).
 regex==2026.9.29
 # SOCKS proxies: the downloads (httpx) and gallery-dl (requests).
