@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.15.1 - 2026-11-16
+
+### Dependencies
+
+- update dependency publicsuffixlist to v1.1.2.20261112
+- update all non-major dependencies (#2)
+
 ## 0.15.0 - 2026-11-09
 
 ### Added
