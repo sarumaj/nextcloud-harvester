@@ -1,5 +1,5 @@
 beautifulsoup4==4.15.0
-croniter==6.2.4
+croniter==7.0.0
 # Cryptomator vaults (harvester/vault.py): AES-GCM, AES-CTR, CMAC, AES key wrap, scrypt.
 cryptography==50.0.2
 feedparser==6.0.14
