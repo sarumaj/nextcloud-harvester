@@ -48,18 +48,8 @@ jobs:
           python3 -c "import zipfile; z = zipfile.ZipFile('/tmp/rclone.zip'); open('/usr/local/bin/rclone', 'wb').write(z.read(next(n for n in z.namelist() if n.endswith('/rclone'))))"
           chmod +x /usr/local/bin/rclone
 
-      # On Renovate's branches (dawid/ci-actions' renovate-regenerate, committed as
-      # regenerate-bot): the code as a new black formats it, only when the branch
-      # changes black's version in requirements-dev.txt.
-      - name: Format the code anew for a new black
-        uses: https://git.ciepiela.org/dawid/ci-actions/renovate-regenerate@main
-        with:
-          run: black -q ex_app tests
-          paths: ex_app tests
-          message: "style: the code as the new black formats it"
-          when: requirements-dev.txt black==
-          token: ${{ secrets.REGENERATE_TOKEN }}
-
+      # On Renovate's branches the regenerate bot (bots/regenerate, set up in HomeLab) commits the
+      # files these checks compare, from a build of its own without any token.
       # The store's schema does not know AppAPI's routes (external-app/routes), which AppAPI
       # reads from info.xml: everything else is checked.
       - name: Check info.xml against the app store's schema
