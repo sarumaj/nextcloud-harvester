@@ -66,16 +66,39 @@ def fulfill(route) -> None:
     route.fulfill(status=200, headers={"Content-Type": "text/html"}, body=body.encode())
 
 
-def walked(monkeypatch, recipe: dict, pages: int = 10) -> tuple[list[str], float]:
+def waits(monkeypatch, spent: list[float]) -> None:
+    """Puts the seconds of each wait under test (listing_shown, grown) into spent as the walk
+    spends them: the tests time these, not the whole walk, whose browser start and page loads a
+    busy machine makes seconds slower (CI failed by half a second that way, 2026-11-20)."""
+
+    def timing(function):
+        def timed(*args, **kwargs):
+            started = time.monotonic()
+            try:
+                return function(*args, **kwargs)
+            finally:
+                spent.append(time.monotonic() - started)
+
+        return timed
+
+    # site imports listing_shown by name; scroll_for_more finds grown in tabs.
+    monkeypatch.setattr(site_module, "listing_shown", timing(tabs.listing_shown))
+    monkeypatch.setattr(tabs, "grown", timing(tabs.grown))
+
+
+def walked(monkeypatch, recipe: dict, pages: int = 10, spent: list[float] | None = None) -> tuple[list[str], float]:
+    """The paths a walk of the recipe finds, and the seconds it waited (waits; also into spent,
+    for a walk that raises)."""
     monkeypatch.setattr(site_module, "guard", fulfill)
+    spent = [] if spent is None else spent
+    waits(monkeypatch, spent)
     source = site_module.Site(
         {"recipe": json.dumps(recipe), "stop_at_seen": 0, "browser": 1, "max_pages": pages}, {}, None
     )
     source.sleep = lambda seconds: None
     source.page_pause = 0.0
-    started = time.monotonic()
     try:
-        return [item.path for item in source.items(lambda key: False)], time.monotonic() - started
+        return [item.path for item in source.items(lambda key: False)], sum(spent)
     finally:
         source.close()
 
@@ -122,8 +145,8 @@ def test_a_page_without_the_levels_links_still_waits_for_the_network(monkeypatch
         "follow": [{"selector": "a.year", "pattern": "x"}],
         "links": {"selector": "a.file", "pattern": r"\.pdf$"},
     }
-    started = time.monotonic()
+    spent: list[float] = []
     with pytest.raises(site_module.SourceError, match="the start page has none of the recipe's links"):
-        walked(monkeypatch, recipe)
+        walked(monkeypatch, recipe, spent=spent)
     # The level's links never show: LISTING_WAIT, then the network's wait up to IDLE in all.
-    assert 2.5 < time.monotonic() - started < 6
+    assert 2.5 < sum(spent) < 6, spent

@@ -3,6 +3,7 @@
 # page's script and its shell scripts, info.xml against the app store's schema, and the Markdown; and the image on a real
 # Nextcloud with AppAPI and PostgreSQL (job server): registered and enabled there, its page, settings and occ command, a
 # website job saving into the admin's files over WebDAV, and the recorder's browser (tests/server/check.sh).
+# The tests' results go to the pull request as a comment (dawid/ci-actions' test-report).
 name: CI
 # A failed job mails whoever started the run. Renovate's bot has no mailbox: when its
 # branch fails, Renovate opens a pull request, which mails the repository's watchers.
@@ -23,8 +24,9 @@ jobs:
   python:
     runs-on: docker
     container: docker.io/library/python:3.15-slim-bookworm
-    # The suite runs browsers against fake sites: some 8 minutes on an idle runner.
-    timeout-minutes: 30
+    # The suite runs browsers against fake sites: some 8 minutes on an idle runner, over 25
+    # on a busy one (2026-11-20: all tests passed, then 30 minutes ran out).
+    timeout-minutes: 45
     steps:
       - name: Check out
         run: |
@@ -67,7 +69,16 @@ jobs:
           xmllint --noout --schema /tmp/info.xsd /tmp/info.xml
 
       - name: Run the tests
-        run: python -m pytest -q
+        id: tests
+        run: python -m pytest -q --junitxml=/tmp/pytest.xml
+
+      # The results as one comment on the pull request (dawid/ci-actions), also when
+      # tests failed; not when an earlier step failed and they did not run.
+      - name: Test report
+        if: always() && steps.tests.outcome != 'skipped'
+        uses: https://git.ciepiela.org/dawid/ci-actions/test-report@main
+        with:
+          junit: /tmp/pytest.xml
 
       - name: Check the formatting
         run: black --check ex_app tests
