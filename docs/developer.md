@@ -41,7 +41,8 @@ template has its entry in the user's guide ([Sources](user.md#sources),
 [Templates](user.md#templates)), each guide is linked from the README, and lines wrap at 100
 characters outside code and tables. CI also checks `appinfo/info.xml` against the app store's schema
 (without AppAPI's routes, which the schema does not know) and lints the Markdown
-(`npx --yes markdownlint-cli2 "*.md" "docs/**/*.md"`).
+(`npx --yes markdownlint-cli2 "*.md" "docs/**/*.md"`). The tests' results go to a pull request as a
+comment, with the end of each failure's message.
 
 ### On a real Nextcloud
 
