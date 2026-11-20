@@ -1,0 +1,16 @@
+# The regenerate bot (bots/regenerate, set up in HomeLab) commits these generated files
+# on Renovate's branches, so that the checks of ci.yml that compare them pass. It builds
+# in the image of the CI job named here, with no token in reach of the dependencies'
+# code, and pushes only commits with these messages that change these paths.
+jobs:
+  python:
+    image_from: {file: .forgejo/workflows/ci.yml, job: python}
+    prepare: apt-get update -qq && apt-get install -qq -y git >/dev/null
+    # black alone, at the version requirements-dev.txt pins.
+    install: pip install -q "$(grep -i '^black==' requirements-dev.txt)"
+    steps:
+      # The code as a new black formats it, only when the branch changes black.
+      - run: black -q ex_app tests
+        paths: ex_app tests
+        message: "style: the code as the new black formats it"
+        when: [requirements-dev.txt black==]
