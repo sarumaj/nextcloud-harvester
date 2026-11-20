@@ -75,8 +75,9 @@ tag.
 ## Screenshots
 
 `screenshots/1-jobs.png` to `4-recorder.png` are the homelab guide's shots
-(`docs/assets/screenshots/harvester-*.png` in `dawid/HomeLab`), recorded against a demo
-Nextcloud with demo people and data only, scaled down to 1600 pixels wide
-(`vips resize in.png out.png[compression=9,palette,strip] 0.625`); the recorder's shows the
-server's address, blurred. `appinfo/info.xml` links them by their raw URLs on `main`. Never show
-real accounts, addresses or host names.
+(`docs/assets/screenshots/harvester-*.png` in `dawid/HomeLab`), recorded against a demo Nextcloud
+with demo people and data only, scaled down to 1600 pixels wide
+(`vips resize in.png out.png[compression=9,palette,strip] 0.625`); the recorder's shows the server's
+address, blurred. `appinfo/info.xml` links them by their media URLs on `main`
+(`/media/`: they are in Git LFS, and `/raw/` would serve its pointer). Never show real accounts,
+addresses or host names.
