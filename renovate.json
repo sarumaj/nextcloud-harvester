@@ -1,4 +1,14 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["local>dawid/renovate-config"]
+  "extends": ["local>dawid/renovate-config"],
+  "packageRules": [
+    {
+      "description": "Patchright starts Playwright's Chromium, so the two move together, in a pull request of their own (the Dockerfile's build fails while they want different Chromium revisions): a Playwright newer than the latest Patchright waits there, without holding back the other updates. Monday mornings, as the shared rules' groups, also for their patches",
+      "matchPackageNames": ["playwright", "patchright"],
+      "groupName": "playwright",
+      "groupSlug": "playwright",
+      "schedule": ["* 0-5 * * 1"],
+      "automerge": false
+    }
+  ]
 }

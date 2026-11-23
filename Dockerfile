@@ -5,8 +5,9 @@
 #############################
 FROM python:3.15-slim-bookworm AS builder
 
-# Install build dependencies
-RUN apt-get update && apt-get install -y curl && \
+# Install build dependencies; libatomic1 for Playwright's Node.js (26 since Playwright 1.65), which
+# the check of Patchright below runs.
+RUN apt-get update && apt-get install -y curl libatomic1 && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install Python dependencies using a cache mount.
@@ -20,11 +21,12 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     --no-binary=urllib3-future -r requirements.txt && rm requirements.txt
 
 # Patchright (the disguised browser, harvester/browser/engine.py) starts Playwright's Chromium:
-# the build fails when their versions want different ones. Its own copy of Node.js (some 120 MB)
-# gives way to Playwright's, which runs its driver alike (Node.js 24 both).
+# the build fails when their versions want different ones (Renovate updates them together, in the
+# group playwright; a Playwright newer than the latest Patchright waits there). Its own copy of
+# Node.js (some 120 MB) gives way to Playwright's, which runs its driver alike (the same major).
 RUN set -ex; \
     SITE=$(python3 -c "import sysconfig; print(sysconfig.get_paths()['purelib'])"); \
-    python3 -c "import json, sys; revision = lambda package: [b['revision'] for b in json.load(open(f'{sys.argv[1]}/{package}/driver/package/browsers.json'))['browsers'] if b['name'] == 'chromium']; sys.exit(revision('playwright') != revision('patchright'))" "$SITE"; \
+    python3 -c "import json, sys; revision = lambda package: ' '.join(b['revision'] for b in json.load(open(f'{sys.argv[1]}/{package}/driver/package/browsers.json'))['browsers'] if b['name'] == 'chromium'); wanted = revision('playwright'), revision('patchright'); sys.exit(wanted[0] != wanted[1] and 'Playwright wants Chromium %s, Patchright %s: update them together' % wanted)" "$SITE"; \
     ln -sf "$SITE/playwright/driver/node" "$SITE/patchright/driver/node"; \
     python3 -m patchright --version
 
@@ -104,8 +106,9 @@ FROM python:3.15-slim-bookworm
 COPY --from=builder /usr/local/ /usr/local/
 
 # pgrep for the health check; ffmpeg for yt-dlp, which joins a video's separate video and audio
-# streams with it (the best formats of YouTube and most sites come so).
-RUN apt-get update && apt-get install -y --no-install-recommends procps ffmpeg && \
+# streams with it (the best formats of YouTube and most sites come so); libatomic1, which
+# Playwright's Node.js needs since Playwright 1.65 (Node.js 26): its driver and yt-dlp's scripts.
+RUN apt-get update && apt-get install -y --no-install-recommends procps ffmpeg libatomic1 && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # yt-dlp starts ffmpeg and ffprobe through these (sources/media.py, FFMPEG): without the app's
@@ -120,7 +123,7 @@ RUN mkdir -p /usr/local/lib/harvester-ffmpeg && \
     /usr/local/lib/harvester-ffmpeg/ffmpeg -version | head -1
 
 # yt-dlp solves YouTube's challenges with yt-dlp-ejs's scripts in a JavaScript runtime
-# (sources/media.py, NODE): Playwright's Node.js 24, started as ffmpeg is, without the app's
+# (sources/media.py, NODE): Playwright's Node.js, started as ffmpeg is, without the app's
 # environment; yt-dlp runs it with Node's permission model (no files, no other programs). Without
 # it YouTube's formats are missing ("n challenge solving failed").
 RUN SITE=$(python3 -c "import sysconfig; print(sysconfig.get_paths()['purelib'])") && \

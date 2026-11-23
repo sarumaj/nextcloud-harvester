@@ -132,6 +132,10 @@ python3 -m venv .venv && URLLIB3_NO_OVERRIDE=1 .venv/bin/pip install --no-binary
 npx --yes markdownlint-cli2 "*.md" "docs/**/*.md"
 ```
 
+Renovate updates Playwright and Patchright together, in a pull request of their own
+(`renovate.json`): Patchright starts Playwright's Chromium, and the image's build fails while they
+want different ones, so a Playwright newer than the latest Patchright waits there.
+
 More in the [developer's guide](docs/developer.md), also how a text is translated and how CI
 checks the image on a real Nextcloud; the changes are in the [changelog](CHANGELOG.md).
 

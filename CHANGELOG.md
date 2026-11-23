@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+
+- The image and CI have libatomic1, which Playwright's Node.js needs since Playwright 1.65
+  (Node.js 26); Renovate updates Playwright and Patchright together, apart from the other
+  dependencies, as Patchright starts Playwright's Chromium.
+
 ## 0.15.2 - 2026-11-23
 
 ### Dependencies
