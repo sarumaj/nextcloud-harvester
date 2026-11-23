@@ -28,9 +28,10 @@ jobs:
     # on a busy one (2026-11-20: all tests passed, then 30 minutes ran out).
     timeout-minutes: 45
     steps:
+      # libatomic1: Playwright's Node.js (26 since Playwright 1.65) needs it, as in the Dockerfile.
       - name: Check out
         run: |
-          apt-get update -qq && apt-get install -qq -y git nodejs shellcheck curl libxml2-utils >/dev/null
+          apt-get update -qq && apt-get install -qq -y git nodejs shellcheck curl libxml2-utils libatomic1 >/dev/null
           git init -q . && git remote add origin "${{ github.server_url }}/${{ github.repository }}.git"
           git fetch -q --depth 1 origin "${{ github.sha }}"
           git checkout -q FETCH_HEAD
